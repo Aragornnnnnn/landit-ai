@@ -14,3 +14,12 @@
 - [x] AI 서버용 AGENTS.md 작성 범위 확인.
 - [x] Project Context와 Backend Code Convention만 AI 서버 기준으로 변환.
 - [x] 문서 변경 diff 검토.
+- [x] 이슈 번호 없이 진행하기로 사용자 예외 확인.
+- [x] `feat/llm-config` 작업 브랜치 생성.
+- [x] 기존 LLM provider, env, secret 관리 방식 조사.
+- [x] OpenRouter env 설정 변경 계획 작성.
+- [x] OpenRouter 설정 RED 테스트 작성 및 실패 확인.
+- [x] OpenRouter 설정 구현.
+- [x] env 예시를 secret 없는 placeholder로 갱신.
+- [x] unittest 검증 실행.
+- [x] 변경 파일과 남은 결정 사항 정리.

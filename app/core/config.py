@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     app_name: str = "landit-ai"
     app_env: str = "local"
     log_level: str = "INFO"
-    openai_api_key: SecretStr | None = None
+    llm_provider: str = "openrouter"
+    openrouter_api_key: SecretStr | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str | None = None
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
