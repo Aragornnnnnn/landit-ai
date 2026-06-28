@@ -10,3 +10,4 @@
 - 이 환경은 `python` 명령이 없고 `python3.12` 명령만 확인되었다. 검증 명령은 `python3.12 -m unittest discover -s tests`로 맞춘다.
 - FastAPI 0.138.1에서는 `app.routes`에 `path` 속성이 없는 내부 라우터 객체가 포함된다. 라우트 등록 검증은 공개 스키마인 `app.openapi()["paths"]` 기준으로 한다.
 - `.venv/bin/python -m unittest discover -s tests` 기준으로 설정 기본값, `/health` 등록, 헬스체크 반환값, OpenAI API 키 누락 가드를 검증한다.
+- BE AGENTS.md를 AI 저장소에 맞게 옮길 때는 `Project Context`와 `Backend Code Convention`의 내용만 AI 서버 기준으로 바꾸고, 나머지 공통 개발 규칙은 원문 그대로 유지한다.

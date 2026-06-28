@@ -11,3 +11,6 @@
 - [x] unittest 재실행으로 GREEN 확인.
 - [x] 최종 diff와 검증 결과 확인.
 - [x] 의미 있는 단위 커밋 생성.
+- [x] AI 서버용 AGENTS.md 작성 범위 확인.
+- [x] Project Context와 Backend Code Convention만 AI 서버 기준으로 변환.
+- [x] 문서 변경 diff 검토.
