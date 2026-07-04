@@ -21,3 +21,4 @@
 - dev Worker 배포 workflow는 push 자동 실행 없이 개발자가 GitHub Actions UI에서 `workflow_dispatch`로 직접 실행한다.
 - prod Worker 배포 workflow도 `workflow_dispatch`만 사용한다. 단, `GITHUB_REF`가 `refs/heads/main`이 아니면 즉시 실패시켜 prod 배포를 main 브랜치로 제한한다.
 - dev Worker 배포 설정 값은 GitHub `develop` environment variables를 기준으로 읽는다. 이미지 태그는 `ECR_REGISTRY/ECR_REPOSITORY` 조합에 commit SHA와 `latest`를 붙여 push한다.
+- ECR 업로드 검증은 `docker push` 성공으로 판단한다. `ecr:DescribeImages` 권한이 없는 배포 role에서도 ECS update까지 진행하기 위해 별도 `describe-images` 단계는 두지 않는다.
