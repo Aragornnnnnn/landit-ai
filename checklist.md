@@ -28,3 +28,5 @@
 - [x] 최소 Dockerfile과 GitHub Actions workflow 작성.
 - [x] unittest 검증 및 Docker build 가능 여부 확인.
 - [x] git diff와 status 확인.
+- [x] prod Worker 수동 배포 workflow 추가.
+- [x] prod 배포를 main 브랜치에서만 실행하도록 제한.
