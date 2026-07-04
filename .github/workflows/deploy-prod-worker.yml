@@ -1,0 +1,105 @@
+name: Deploy prod worker
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-northeast-2
+  AWS_ROLE_ARN: ${{ vars.PROD_AWS_ROLE_ARN || secrets.PROD_AWS_ROLE_ARN }}
+  ECR_REPOSITORY: ${{ vars.PROD_WORKER_ECR_REPOSITORY }}
+  ECR_IMAGE_URI: ${{ vars.PROD_WORKER_ECR_IMAGE_URI }}
+  ECS_CLUSTER: ${{ vars.PROD_WORKER_ECS_CLUSTER }}
+  ECS_SERVICE: ${{ vars.PROD_WORKER_ECS_SERVICE }}
+
+jobs:
+  deploy:
+    name: Build and deploy prod worker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate main branch
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Production deploy must run from main branch"
+            exit 1
+          fi
+
+      - name: Validate deployment settings
+        run: |
+          test -n "$AWS_ROLE_ARN"
+          test -n "$ECR_REPOSITORY"
+          test -n "$ECR_IMAGE_URI"
+          test -n "$ECS_CLUSTER"
+          test -n "$ECS_SERVICE"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "$ECR_IMAGE_URI:${GITHUB_SHA}" \
+            -t "$ECR_IMAGE_URI:latest" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "$ECR_IMAGE_URI:${GITHUB_SHA}"
+          docker push "$ECR_IMAGE_URI:latest"
+
+      - name: Verify ECR image
+        run: |
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="${GITHUB_SHA}" imageTag=latest \
+            --query 'imageDetails[].imageTags' \
+            --output json
+
+      - name: Force ECS service deployment
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment \
+            --query 'service.{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
+            --output json
+
+      - name: Verify ECS service
+        run: |
+          desired_count="$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].desiredCount' \
+            --output text)"
+
+          if [ "$desired_count" = "None" ] || [ "$desired_count" = "null" ]; then
+            echo "ECS service not found"
+            exit 1
+          fi
+
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
+            --output json
+
+          if [ "$desired_count" -gt 0 ]; then
+            aws ecs wait services-stable \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE"
+          else
+            echo "desired count is 0; skipping services-stable wait"
+          fi
