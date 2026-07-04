@@ -23,3 +23,8 @@
 - [x] env 예시를 secret 없는 placeholder로 갱신.
 - [x] unittest 검증 실행.
 - [x] 변경 파일과 남은 결정 사항 정리.
+- [x] dev Worker 배포 workflow 요구사항 확인.
+- [x] repo 구조, Dockerfile, 기존 workflow, git 상태 조사.
+- [x] 최소 Dockerfile과 GitHub Actions workflow 작성.
+- [x] unittest 검증 및 Docker build 가능 여부 확인.
+- [x] git diff와 status 확인.
