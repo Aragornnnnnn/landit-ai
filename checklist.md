@@ -30,3 +30,4 @@
 - [x] git diff와 status 확인.
 - [x] prod Worker 수동 배포 workflow 추가.
 - [x] prod 배포를 main 브랜치에서만 실행하도록 제한.
+- [x] dev Worker workflow가 GitHub `develop` environment 변수를 읽도록 변경.
