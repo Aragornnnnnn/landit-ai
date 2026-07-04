@@ -1,0 +1,97 @@
+name: Deploy dev worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_ACCOUNT_ID: "982529430654"
+  AWS_REGION: ap-northeast-2
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+  ECR_REPOSITORY: develop-landit-worker
+  ECR_IMAGE_URI: 982529430654.dkr.ecr.ap-northeast-2.amazonaws.com/develop-landit-worker
+  ECS_CLUSTER: develop-landit-cluster
+  ECS_SERVICE: develop-landit-worker
+
+jobs:
+  deploy:
+    name: Build and deploy dev worker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate AWS role
+        run: test -n "$AWS_ROLE_ARN"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "$ECR_IMAGE_URI:${GITHUB_SHA}" \
+            -t "$ECR_IMAGE_URI:latest" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "$ECR_IMAGE_URI:${GITHUB_SHA}"
+          docker push "$ECR_IMAGE_URI:latest"
+
+      - name: Verify ECR image
+        run: |
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="${GITHUB_SHA}" imageTag=latest \
+            --query 'imageDetails[].imageTags' \
+            --output json
+
+      - name: Force ECS service deployment
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment \
+            --query 'service.{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
+            --output json
+
+      - name: Verify ECS service
+        run: |
+          desired_count="$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].desiredCount' \
+            --output text)"
+
+          if [ "$desired_count" = "None" ] || [ "$desired_count" = "null" ]; then
+            echo "ECS service not found"
+            exit 1
+          fi
+
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
+            --output json
+
+          if [ "$desired_count" -gt 0 ]; then
+            aws ecs wait services-stable \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE"
+          else
+            echo "desired count is 0; skipping services-stable wait"
+          fi
