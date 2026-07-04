@@ -7,26 +7,35 @@ permissions:
   contents: read
   id-token: write
 
-env:
-  AWS_ACCOUNT_ID: "982529430654"
-  AWS_REGION: ap-northeast-2
-  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
-  ECR_REPOSITORY: develop-landit-worker
-  ECR_IMAGE_URI: 982529430654.dkr.ecr.ap-northeast-2.amazonaws.com/develop-landit-worker
-  ECS_CLUSTER: develop-landit-cluster
-  ECS_SERVICE: develop-landit-worker
-
 jobs:
   deploy:
     name: Build and deploy dev worker
     runs-on: ubuntu-latest
+    environment: develop
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate AWS role
-        run: test -n "$AWS_ROLE_ARN"
+      - name: Validate deployment settings
+        run: |
+          test -n "$AWS_ACCOUNT_ID"
+          test -n "$AWS_REGION"
+          test -n "$AWS_ROLE_ARN"
+          test -n "$ECR_REGISTRY"
+          test -n "$ECR_REPOSITORY"
+          test -n "$ECS_CLUSTER"
+          test -n "$ECS_SERVICE"
+          test -n "$ECS_CONTAINER_NAME"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -40,14 +49,14 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            -t "$ECR_IMAGE_URI:${GITHUB_SHA}" \
-            -t "$ECR_IMAGE_URI:latest" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
             .
 
       - name: Push Docker image
         run: |
-          docker push "$ECR_IMAGE_URI:${GITHUB_SHA}"
-          docker push "$ECR_IMAGE_URI:latest"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
       - name: Verify ECR image
         run: |
