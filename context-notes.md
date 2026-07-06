@@ -45,3 +45,12 @@
 - exception handler 테스트는 구현 전 `ApiException` import 실패로 RED를 확인했다.
 - `.venv/bin/python -m unittest discover -s tests` 기준 14개 테스트가 통과했다.
 - 이 환경에는 `python` 명령이 없어 `python -m compileall app tests`는 실행되지 않았다. 대체 명령 `.venv/bin/python -m compileall app tests`는 통과했다.
+
+## 2026-07-07 ECS 배포 검증 fail-fast 개선
+
+- 사용자가 `origin/develop` 직접 수정을 요청해 별도 이슈 브랜치 없이 `develop`에서 작업한다.
+- 기존 Worker deploy workflow는 `aws ecs wait services-stable` 동안 중간 deployment 상태와 ECS 이벤트를 충분히 보여주지 못했다.
+- `Verify ECS service`는 최대 10분 동안 15초 간격으로 service 상태를 출력하고, PRIMARY deployment가 `FAILED`가 되면 최근 ECS 이벤트를 출력한 뒤 즉시 실패한다.
+- step-level `timeout-minutes`는 12분으로 둔다. 루프가 직접 10분 실패를 반환하고 이벤트를 출력할 시간을 남기기 위해서다.
+- Worker workflow에는 외부 health check URL이 없으므로 API 서버처럼 curl 검증은 추가하지 않는다.
+- workflow만 변경했으므로 애플리케이션 테스트 대신 GitHub Actions YAML parse와 `git diff --check`로 검증한다.
