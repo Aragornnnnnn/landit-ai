@@ -12,7 +12,7 @@
 - [x] 최종 diff와 검증 결과 확인.
 - [x] 의미 있는 단위 커밋 생성.
 - [x] AI 서버용 AGENTS.md 작성 범위 확인.
-- [x] Project Context와 Backend Code Convention만 AI 서버 기준으로 변환.
+- [x] Project Context와 AI Server Code Convention만 AI 서버 기준으로 변환.
 - [x] 문서 변경 diff 검토.
 - [x] 이슈 번호 없이 진행하기로 사용자 예외 확인.
 - [x] `feat/llm-config` 작업 브랜치 생성.
@@ -31,3 +31,14 @@
 - [x] prod Worker 수동 배포 workflow 추가.
 - [x] prod 배포를 main 브랜치에서만 실행하도록 제한.
 - [x] dev Worker workflow가 GitHub `develop` environment 변수를 읽도록 변경.
+
+## 2026-07-06 LAN-66 문서 보강
+
+- [x] `README.md`와 `AGENTS.md`를 끝까지 읽음.
+- [x] 현재 코드 구조, `/health` API, 설정, OpenAI client, Sentry, 테스트, 배포 workflow 확인.
+- [x] `README.md`에 Landit AI Server 역할, 아키텍처 방향, 디렉터리 구조, API 책임, 개발/검증 명령, 운영 원칙 보강.
+- [x] `AGENTS.md`에 작업 규칙, 의존성 방향, stateless 원칙, LLM 호출 규칙, 테스트 규칙, 보안/로그 규칙, 추가하지 말아야 할 것 보강.
+- [x] `README.md`와 `AGENTS.md`를 다시 읽고 충돌 여부 확인.
+- [x] `.venv/bin/python -m unittest discover -s tests` 실행.
+- [x] 최종 diff와 git 상태 확인.
+- [x] 문서 변경 커밋 생성.
