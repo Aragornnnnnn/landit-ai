@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.common.exception_handlers import register_exception_handlers
 from app.core.config import Settings
 from app.core.sentry import init_sentry
 
@@ -12,6 +13,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     fastapi_app = FastAPI(title=resolved_settings.app_name)
     fastapi_app.include_router(health_router)
+    register_exception_handlers(fastapi_app)
     return fastapi_app
 
 

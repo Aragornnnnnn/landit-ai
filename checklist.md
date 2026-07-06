@@ -42,3 +42,18 @@
 - [x] `.venv/bin/python -m unittest discover -s tests` 실행.
 - [x] 최종 diff와 git 상태 확인.
 - [x] 문서 변경 커밋 생성.
+
+## 2026-07-06 LAN-66 공통 응답과 에러 처리
+
+- [x] `README.md`, `AGENTS.md`, 현재 앱 구조와 테스트 파일 확인.
+- [x] 공통 응답 helper 테스트를 먼저 추가하고 실패 확인.
+- [x] `app/common/response.py`, `app/common/errors.py` 추가.
+- [x] exception handler 테스트를 먼저 추가하고 실패 확인.
+- [x] `app/common/exception_handlers.py` 추가.
+- [x] `app/main.py`에서 exception handler 등록.
+- [x] README.md에 공통 응답 형태만 짧게 보강.
+- [x] `.venv/bin/python -m unittest discover -s tests` 실행.
+- [x] `python -m compileall app tests` 또는 가능한 대체 명령 실행.
+- [x] `git diff --check` 실행.
+- [x] 최종 diff와 git 상태 확인.
+- [x] 변경 커밋 생성.

@@ -34,3 +34,14 @@
 - 문서에는 과한 Clean Architecture, LangChain, Redis, Celery, AI 서버 DB, 불필요한 interface/port/repository 추상화를 기본 선택지로 쓰지 않는다고 명시한다.
 - 전역 `python3.12 -m unittest discover -s tests`는 FastAPI 의존성을 찾지 못해 실패했다. 이 저장소의 실행 가능한 검증 명령은 `.venv/bin/python -m unittest discover -s tests`로 둔다.
 - `.venv/bin/python -m unittest discover -s tests` 기준 8개 테스트가 통과했다.
+
+## 2026-07-06 LAN-66 공통 응답과 에러 처리
+
+- 현재 public API는 `GET /health`뿐이며, health는 ALB/ECS 헬스체크 호환을 위해 plain `{"status": "ok"}` 응답을 유지한다.
+- 공통 응답 래퍼는 앞으로 추가될 외부 HTTP 생성 API 경계에만 적용하고, LLM 내부 응답이나 prompt 결과까지 감싸지 않는다.
+- 새 의존성 없이 FastAPI exception handler, Pydantic 모델, unittest, 이미 설치된 FastAPI TestClient만 사용한다.
+- 현재 `app/core/sentry.py`에는 Sentry 초기화 함수만 있고 별도 capture helper는 없다. 예상하지 못한 예외 handler는 secret이나 사용자 입력 전문을 로그로 남기지 않는다.
+- 공통 응답 테스트는 구현 전 `app.common` import 실패로 RED를 확인했다.
+- exception handler 테스트는 구현 전 `ApiException` import 실패로 RED를 확인했다.
+- `.venv/bin/python -m unittest discover -s tests` 기준 14개 테스트가 통과했다.
+- 이 환경에는 `python` 명령이 없어 `python -m compileall app tests`는 실행되지 않았다. 대체 명령 `.venv/bin/python -m compileall app tests`는 통과했다.
