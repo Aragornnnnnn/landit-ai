@@ -73,6 +73,8 @@ python3.12 -m venv .venv
 
 - `GET /health`는 서버 프로세스가 살아 있고 FastAPI 라우터가 등록되었는지 확인합니다.
 - 생성 API는 Landit backend가 전달한 입력만 사용해 결과를 반환해야 합니다.
+- 생성 API 성공 응답은 `{"success": true, "data": ..., "error": null}` 형태로 반환합니다.
+- 생성 API 실패 응답은 `{"success": false, "data": null, "error": {"code": "...", "message": "..."}}` 형태로 반환합니다.
 - AI 서버는 세션 상태, 턴 저장, 완료 여부, 사용자별 장기 상태를 직접 저장하지 않습니다.
 - 저장과 상태 전환은 Landit backend 책임으로 둡니다.
 

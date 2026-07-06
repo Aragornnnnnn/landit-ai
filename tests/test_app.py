@@ -4,6 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from app.api.health import health_check
+from app.common.errors import ErrorCode
+from app.common.response import error_response, success_response
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.main import create_app
@@ -59,6 +61,35 @@ class AppFactoryTests(unittest.TestCase):
 
     def test_health_check_returns_ok_status(self):
         self.assertEqual(health_check(), {"status": "ok"})
+
+
+class CommonResponseTests(unittest.TestCase):
+    def test_success_response_wraps_data(self):
+        response = success_response({"message": "ok"})
+
+        self.assertEqual(
+            response.model_dump(mode="json"),
+            {
+                "success": True,
+                "data": {"message": "ok"},
+                "error": None,
+            },
+        )
+
+    def test_error_response_wraps_code_and_message(self):
+        response = error_response(ErrorCode.INVALID_REQUEST, "요청이 올바르지 않습니다.")
+
+        self.assertEqual(
+            response.model_dump(mode="json"),
+            {
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": "INVALID_REQUEST",
+                    "message": "요청이 올바르지 않습니다.",
+                },
+            },
+        )
 
 
 class OpenAIClientTests(unittest.TestCase):
