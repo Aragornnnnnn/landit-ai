@@ -54,3 +54,21 @@
 - step-level `timeout-minutes`는 12분으로 둔다. 루프가 직접 10분 실패를 반환하고 이벤트를 출력할 시간을 남기기 위해서다.
 - Worker workflow에는 외부 health check URL이 없으므로 API 서버처럼 curl 검증은 추가하지 않는다.
 - workflow만 변경했으므로 애플리케이션 테스트 대신 GitHub Actions YAML parse와 `git diff --check`로 검증한다.
+
+## 2026-07-08 LAN-95 다음 AI 메시지 생성 API
+
+- 작업 브랜치는 사용자 요청에 따라 `feat/LAN-95`로 만든다.
+- SayNow 참고 기준은 로컬 `develop`이 아니라 `/Users/sangmin8817/Soma/saynow-ai`의 `origin/develop` 커밋 `6cf01f3`이다.
+- 프롬프트는 기능이 같은 속마음 정책, 안전 정책, 응답 JSON 정책을 SayNow 문구 중심으로 가져온다. 초기에는 자유 생성으로 보았지만, 사용자 정정 후 SayNow의 `Fixed Question Policy`도 가져오는 방향으로 바꾼다.
+- Landit AI Server는 stateless 경계를 유지한다. SayNow의 turn feedback cache, 대량 후처리, fallback 응답 생성은 이번 요구사항과 맞지 않아 추가하지 않는다.
+- LLM 응답 필드 누락, blank 값, enum 오류, JSON 파싱 실패는 `AI_RESPONSE_INVALID` 502로 처리한다.
+- OpenRouter 호출 자체 실패, 설정 누락, 빈 모델명은 `AI_GENERATION_FAILED` 503으로 처리한다.
+- `next-message` 성공 응답도 기존 Landit 공통 응답 계약에 맞춰 `data` 안에 `aiMessage`, `translatedMessage`, `innerThought`, `innerThoughtType`, `goalCompletionStatus`를 담는다.
+- `.venv/bin/python -m unittest discover -s tests` 기준 18개 테스트가 통과했다.
+- 사용자 정정으로 `next-message`의 다음 질문은 자유 생성이 아니라 SayNow `origin/develop`의 `nextQuestion`과 같은 고정 질문 체계로 본다.
+- 요청에는 `nextQuestion.questionId`, `nextQuestion.sequence`, `nextQuestion.questionEn`, `nextQuestion.questionKo`를 추가한다.
+- LLM은 짧은 acknowledgement를 붙일 수 있지만, `aiMessage`에는 `questionEn`, `translatedMessage`에는 `questionKo`가 그대로 포함되어야 한다.
+- 고정 질문 누락 응답은 응답 계약 오류로 보고 `AI_RESPONSE_INVALID` 502로 반환한다.
+- 고정 질문 체계 반영 후 `.venv/bin/python -m unittest discover -s tests` 기준 19개 테스트가 통과했다.
+- 리뷰에서 `submittedMessageId`, `submittedTurnNumber`가 `conversationHistory`의 방금 제출된 사용자 메시지와 일치하는지 검증하지 않는 문제가 확인되었다.
+- `next-message`는 사용자가 방금 제출한 메시지를 기준으로 다음 고정 질문 응답을 만드는 API이므로, 히스토리 마지막 메시지가 해당 `USER` 메시지와 일치하지 않으면 요청 검증 오류로 처리한다.
