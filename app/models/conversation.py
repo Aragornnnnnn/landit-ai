@@ -265,3 +265,56 @@ class MessageFeedbackData(BaseModel):
         if self.correctionReason is not None:
             raise ValueError("correctionReason must be null for GOOD")
         return self
+
+
+class SessionFeedbackRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    scenario: ScenarioContext
+    expectedMessageIds: list[int]
+
+    @field_validator("expectedMessageIds")
+    @classmethod
+    def expected_message_ids_must_be_valid(cls, value: list[int]) -> list[int]:
+        if not value:
+            raise ValueError("expectedMessageIds must not be empty")
+        if any(message_id <= 0 for message_id in value):
+            raise ValueError("expectedMessageIds must contain positive ids")
+        if len(value) != len(set(value)):
+            raise ValueError("expectedMessageIds must not contain duplicates")
+        return value
+
+
+class SessionFeedbackSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    sessionId: int = Field(gt=0)
+    highlightMessage: str
+    summaryMessage: str
+
+    @field_validator("highlightMessage", "summaryMessage")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class SessionFeedbackResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    nativeScore: int = Field(ge=0, le=100)
+    starRating: float
+    highlightMessage: str
+    summaryMessage: str
+    messageFeedbacks: list[MessageFeedbackData]
+
+    @field_validator("starRating")
+    @classmethod
+    def star_rating_must_be_supported_value(cls, value: float) -> float:
+        if value not in {1.0, 1.5, 2.0, 2.5, 3.0}:
+            raise ValueError("starRating must be one of 1.0, 1.5, 2.0, 2.5, 3.0")
+        return value
+
+    @field_validator("highlightMessage", "summaryMessage")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
