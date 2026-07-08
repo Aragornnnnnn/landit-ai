@@ -62,6 +62,40 @@ def valid_next_message_payload():
     }
 
 
+def valid_closing_message_payload():
+    return {
+        "sessionId": 100,
+        "submittedMessageId": 1007,
+        "submittedTurnNumber": 4,
+        "scenario": {
+            "scenarioId": 10,
+            "title": "기숙사에서 조용히 해달라고 말하기",
+            "briefing": "룸메이트에게 밤에 조용히 해달라고 말하는 상황입니다.",
+            "conversationGoal": "불편함을 공격적이지 않게 전달하고 조용히 해달라고 요청합니다.",
+            "counterpartRole": "roommate",
+            "serviceAudience": "KOREAN_LEARNER",
+        },
+        "conversationHistory": [
+            {
+                "messageId": 1006,
+                "turnNumber": 4,
+                "role": "AI",
+                "content": "What do you want me to do?",
+                "translatedContent": "내가 어떻게 해주면 좋겠어?",
+            },
+            {
+                "messageId": 1007,
+                "turnNumber": 4,
+                "role": "USER",
+                "content": "Could you keep it down at night? I have an early class tomorrow.",
+                "translatedContent": None,
+            },
+        ],
+        "closingReason": "GOAL_COMPLETED",
+        "goalCompletionStatus": "COMPLETED",
+    }
+
+
 class FakeCompletions:
     def __init__(self, content=None, error=None):
         self.content = content
@@ -246,6 +280,141 @@ class NextMessageApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI") as openai_class:
             response = make_client(app).post(
                 "/api/v1/conversation/next-message",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
+        openai_class.assert_not_called()
+
+    def test_closing_message_returns_final_ai_message_and_prompt_context(self):
+        ai_response = {
+            "aiMessage": "Sure, I'll keep it down tonight. Good luck with your class tomorrow.",
+            "translatedMessage": "물론이야, 오늘 밤은 조용히 할게. 내일 수업 잘 다녀와.",
+            "innerThought": "정중하게 부탁했네. 상황도 분명해서 바로 맞춰주면 되겠다.",
+            "innerThoughtType": "GOOD",
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
+                json=valid_closing_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "success": True,
+                "data": ai_response,
+                "error": None,
+            },
+        )
+        messages = fake_openai.completions.kwargs["messages"]
+        self.assertIn("Do not ask a new follow-up question.", messages[0]["content"])
+        self.assertIn("Closing reason: GOAL_COMPLETED", messages[1]["content"])
+        self.assertIn("Goal completion status: COMPLETED", messages[1]["content"])
+        self.assertIn("Counterpart role: roommate", messages[1]["content"])
+        self.assertIn("Last AI message: AI turn 4 message 1006", messages[1]["content"])
+        self.assertIn("Last user message: USER turn 4 message 1007", messages[1]["content"])
+        self.assertIn(
+            "USER turn 4 message 1007: Could you keep it down at night?",
+            messages[1]["content"],
+        )
+
+    def test_closing_message_tail_question_returns_502(self):
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "aiMessage": "Sure, I'll keep it down tonight. Anything else?",
+                    "translatedMessage": "물론이야, 오늘 밤은 조용히 할게. 또 필요한 거 있어?",
+                    "innerThought": "정중하게 부탁했네.",
+                    "innerThoughtType": "GOOD",
+                },
+            ),
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
+                json=valid_closing_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_closing_message_invalid_ai_response_returns_502(self):
+        fake_openai = FakeOpenAI(content='{"aiMessage":"Only one field"}')
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
+                json=valid_closing_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_closing_message_generation_failure_returns_503(self):
+        fake_openai = FakeOpenAI(error=RuntimeError("network failed"))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
+                json=valid_closing_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json(),
+            {
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": "AI_GENERATION_FAILED",
+                    "message": "대화 종료 메시지 생성에 실패했습니다.",
+                },
+            },
+        )
+
+    def test_closing_message_rejects_mismatched_submitted_history(self):
+        payload = valid_closing_message_payload()
+        payload["submittedMessageId"] = 9999
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI") as openai_class:
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
                 json=payload,
             )
 
