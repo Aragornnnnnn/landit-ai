@@ -16,6 +16,7 @@ from app.models.conversation import (
     ClosingMessageResponse,
     ConversationHistoryMessage,
     FeedbackStatus,
+    FeedbackType,
     MessageFeedbackData,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
@@ -349,10 +350,11 @@ def _native_score_from_message_feedback_entries(
     if not feedback_entries:
         return 0
 
+    # ponytail: cache-only heuristic이다. 더 정교한 점수 근거가 필요해지면 피드백 캐시에 evidence를 추가한다.
     good_count = sum(
         1
         for entry in feedback_entries
-        if entry.feedback.feedbackType == "GOOD"
+        if entry.feedback.feedbackType == FeedbackType.GOOD
     )
     if good_count == 0:
         return 50
@@ -400,7 +402,7 @@ def _sentence_complexity_score(user_message: str) -> int:
 
 
 def _comprehensibility_score(feedback: MessageFeedbackData) -> int:
-    if feedback.feedbackType == "GOOD":
+    if feedback.feedbackType == FeedbackType.GOOD:
         return 90
     return 65
 
@@ -746,12 +748,12 @@ def _session_feedback_user_prompt(
     good_count = sum(
         1
         for feedback in message_feedbacks
-        if feedback.feedbackType == "GOOD"
+        if feedback.feedbackType == FeedbackType.GOOD
     )
     needs_count = sum(
         1
         for feedback in message_feedbacks
-        if feedback.feedbackType == "NEEDS_IMPROVEMENT"
+        if feedback.feedbackType == FeedbackType.NEEDS_IMPROVEMENT
     )
     feedback_json = json.dumps(
         [feedback.model_dump(mode="json") for feedback in message_feedbacks],
@@ -795,7 +797,7 @@ def _quantitative_highlight_candidates(message_feedbacks: list[MessageFeedbackDa
     seen_candidates: set[str] = set()
     for feedback in message_feedbacks:
         if (
-            feedback.feedbackType == "GOOD"
+            feedback.feedbackType == FeedbackType.GOOD
             and feedback.benchmarkMessage
             and _contains_quantitative_hook(feedback.benchmarkMessage)
             and feedback.benchmarkMessage not in seen_candidates
