@@ -135,3 +135,11 @@
 - [x] cache의 단일 프로세스 한계를 주석으로 명시.
 - [x] 전체 unittest, compileall, diff check 재실행.
 - [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-97 문서 구조 분리
+
+- [x] README에 섞인 개발, 아키텍처, API 세부 내용을 분리할 범위 확인.
+- [x] README를 프로젝트 진입점과 문서 링크 중심으로 축소.
+- [x] 아키텍처 세부 문서를 `docs/architecture.md`로 분리.
+- [x] conversation API 책임과 정책을 `docs/api/conversation.md`로 분리.
+- [x] 개발 환경과 검증 명령을 `docs/development.md`로 분리.
