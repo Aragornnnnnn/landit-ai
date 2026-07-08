@@ -1,5 +1,6 @@
 # 대화 생성 API의 LLM 호출과 응답 검증을 담당하는 모듈
 import json
+import re
 import time
 from dataclasses import dataclass
 from json import JSONDecodeError
@@ -280,6 +281,118 @@ def _purge_expired_message_feedbacks_locked(current_time: float) -> None:
 
 def _cache_now() -> float:
     return time.monotonic()
+
+
+def _native_score_from_message_feedback_entries(
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> int:
+    if not feedback_entries:
+        return 0
+
+    good_count = sum(
+        1
+        for entry in feedback_entries
+        if entry.feedback.feedbackType == "GOOD"
+    )
+    if good_count == 0:
+        return 50
+
+    attempted_word_score = round(
+        sum(_attempted_word_score(entry.user_message) for entry in feedback_entries)
+        / len(feedback_entries),
+    )
+    sentence_complexity_score = round(
+        sum(_sentence_complexity_score(entry.user_message) for entry in feedback_entries)
+        / len(feedback_entries),
+    )
+    comprehensibility_score = round(
+        sum(_comprehensibility_score(entry.feedback) for entry in feedback_entries)
+        / len(feedback_entries),
+    )
+    raw_score = round(
+        attempted_word_score * 0.2
+        + sentence_complexity_score * 0.3
+        + comprehensibility_score * 0.5,
+    )
+    band_min, band_max = _native_score_band_for_good_count(good_count)
+    return _clamp_score(raw_score, band_min, band_max)
+
+
+def _attempted_word_score(user_message: str) -> int:
+    return _clamp_score(len(_english_words(user_message)) * 8, 0, 100)
+
+
+def _sentence_complexity_score(user_message: str) -> int:
+    words = _english_words(user_message)
+    normalized = f" {_normalize_visible_text(user_message)} "
+    score = 35
+    if len(words) >= 6:
+        score += 10
+    if len(words) >= 10:
+        score += 10
+    if any(marker in normalized for marker in [" because ", " since ", " and ", " but ", " so "]):
+        score += 15
+    if any(marker in normalized for marker in [" would ", " could ", " should ", " have ", " has "]):
+        score += 10
+    if _contains_indirect_question_pattern(normalized):
+        score += 20
+    return _clamp_score(score, 0, 100)
+
+
+def _comprehensibility_score(feedback: MessageFeedbackData) -> int:
+    if feedback.feedbackType == "GOOD":
+        return 90
+    return 65
+
+
+def _native_score_band_for_good_count(good_count: int) -> tuple[int, int]:
+    if good_count == 1:
+        return (55, 64)
+    if good_count == 2:
+        return (65, 74)
+    if good_count == 3:
+        return (75, 89)
+    return (90, 100)
+
+
+def _star_rating_from_native_score(native_score: int) -> float:
+    if native_score <= 54:
+        return 1.0
+    if native_score <= 64:
+        return 1.5
+    if native_score <= 74:
+        return 2.0
+    if native_score <= 89:
+        return 2.5
+    return 3.0
+
+
+def _english_words(user_message: str) -> list[str]:
+    return re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", user_message)
+
+
+def _normalize_visible_text(value: str) -> str:
+    return " ".join(value.lower().split())
+
+
+def _contains_indirect_question_pattern(normalized_message: str) -> bool:
+    return any(
+        marker in normalized_message
+        for marker in [
+            " know what ",
+            " know where ",
+            " know why ",
+            " know how ",
+            " wonder what ",
+            " wonder where ",
+            " wonder why ",
+            " wonder how ",
+        ]
+    )
+
+
+def _clamp_score(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
 
 
 def _next_message_system_prompt() -> str:
