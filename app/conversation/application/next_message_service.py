@@ -21,6 +21,9 @@ from app.models.conversation import (
     MessageFeedbackResponse,
     NextMessageRequest,
     NextMessageResponse,
+    SessionFeedbackRequest,
+    SessionFeedbackResponse,
+    SessionFeedbackSummary,
 )
 
 
@@ -629,6 +632,125 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
         f"Last user message: {_conversation_history_line(last_user_message)}\n\n"
         f"Closing reason: {request.closingReason}\n"
         f"Goal completion status: {request.goalCompletionStatus}"
+    )
+
+
+def _session_feedback_system_prompt() -> str:
+    return "\n\n".join([
+        (
+            "Role:\n"
+            "You generate the final session-level highlight badge and summary for a Korean learner's English role-play session."
+        ),
+        (
+            "Priority:\n"
+            "Quality is more important than speed or token savings. "
+            "The final feedback must be grounded in the cached message-level feedback, not generic encouragement."
+        ),
+        _shared_safety_policy(),
+        (
+            "Highlight Policy:\n"
+            "highlightMessage must be written in Korean. "
+            "It is a title-like badge phrase that hooks the user into reading message-level feedback. "
+            "Prefer a concise badge phrase such as 한국인의 23%가 놓치는 복수+s를 챙긴 사람. "
+            "Only cached GOOD benchmarkMessage may provide a quantitative highlight candidate. "
+            "Do not invent a new percentage hook that is not present in cached benchmarkMessage. "
+            "If Allowed quantitative highlight candidates JSON is empty, highlightMessage must not contain %, 퍼센트, or count-based claims. "
+            "When allowed candidates exist, copy one candidate exactly. "
+            "When no quantitative candidate exists, use repeated concrete themes from the cached feedback without adding numbers."
+        ),
+        (
+            "Summary Policy:\n"
+            "summaryMessage must be written in Korean. "
+            "It must summarize the session as a whole in one or two natural sentences. "
+            "Mention what the learner did well and, if needed, one broad improvement direction based only on cached feedback. "
+            "Do not introduce corrections or examples that are not present in cached message feedback."
+        ),
+        (
+            "Self-check before final JSON:\n"
+            "1. highlightMessage is Korean and badge-like. "
+            "2. summaryMessage is Korean and sounds natural to a learner. "
+            "3. Both fields are grounded in cached message feedback. "
+            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+        ),
+        (
+            "Output Schema:\n"
+            "Return ONLY valid JSON matching this schema exactly: "
+            '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"..."}. '
+            "Return one JSON object, not an array."
+        ),
+    ])
+
+
+def _session_feedback_user_prompt(
+    request: SessionFeedbackRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> str:
+    message_feedbacks = [entry.feedback for entry in feedback_entries]
+    good_count = sum(
+        1
+        for feedback in message_feedbacks
+        if feedback.feedbackType == "GOOD"
+    )
+    needs_count = sum(
+        1
+        for feedback in message_feedbacks
+        if feedback.feedbackType == "NEEDS_IMPROVEMENT"
+    )
+    feedback_json = json.dumps(
+        [feedback.model_dump(mode="json") for feedback in message_feedbacks],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    user_message_json = json.dumps(
+        [
+            {
+                "messageId": entry.feedback.messageId,
+                "userMessage": entry.user_message,
+            }
+            for entry in feedback_entries
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    quantitative_candidate_json = json.dumps(
+        _quantitative_highlight_candidates(message_feedbacks),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        f"Session ID: {request.sessionId}\n"
+        f"Scenario ID: {request.scenario.scenarioId}\n"
+        f"Scenario title: {request.scenario.title}\n"
+        f"Scenario briefing: {request.scenario.briefing}\n"
+        f"Scenario conversation goal: {request.scenario.conversationGoal}\n"
+        f"Counterpart role: {request.scenario.counterpartRole}\n"
+        f"Service audience: {request.scenario.serviceAudience}\n"
+        f"Expected message IDs: {request.expectedMessageIds}\n\n"
+        f"Cached message feedback counts: GOOD={good_count}, NEEDS_IMPROVEMENT={needs_count}\n\n"
+        f"Cached message feedback JSON:\n{feedback_json}\n\n"
+        f"Cached user message JSON:\n{user_message_json}\n\n"
+        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}"
+    )
+
+
+def _quantitative_highlight_candidates(message_feedbacks: list[MessageFeedbackData]) -> list[str]:
+    candidates: list[str] = []
+    seen_candidates: set[str] = set()
+    for feedback in message_feedbacks:
+        if (
+            feedback.feedbackType == "GOOD"
+            and feedback.benchmarkMessage
+            and _contains_quantitative_hook(feedback.benchmarkMessage)
+            and feedback.benchmarkMessage not in seen_candidates
+        ):
+            seen_candidates.add(feedback.benchmarkMessage)
+            candidates.append(feedback.benchmarkMessage)
+    return candidates
+
+
+def _contains_quantitative_hook(value: str) -> bool:
+    return bool(re.search(r"\d+(?:\.\d+)?%", value)) or bool(
+        re.search(r"\d+\s*번\s*중\s*\d+", value),
     )
 
 
