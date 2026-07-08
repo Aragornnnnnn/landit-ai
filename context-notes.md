@@ -84,3 +84,9 @@
 - LLM 호출 실패와 설정 누락은 Landit 기존 `next-message`와 같이 `AI_GENERATION_FAILED` 503으로 처리한다.
 - 성공 응답은 bare object가 아니라 Landit 공통 응답 래퍼 `ApiResponse[ClosingMessageResponse]`에 담는다.
 - FastAPI OpenAPI 스키마에서 `/api/v1/conversation/closing-message` 경로가 노출되는 것을 확인했다.
+
+## 2026-07-08 LAN-96 리뷰 점검
+
+- `INVALID_REQUEST` 기본 메시지가 LAN-96 명세의 "잘못된 요청입니다."와 달라 공통 에러 기본 문구를 맞췄다.
+- `next-message`와 `closing-message`의 OpenAI 호출, 예외 변환, JSON 파싱 흐름이 중복되어 `_request_json_completion`으로 공통화했다.
+- closing prompt 본문은 SayNow `origin/develop`의 closing system prompt를 유지하고, Landit 요청 구조 차이 때문에 user prompt만 전체 `conversationHistory` 기반으로 구성한다.

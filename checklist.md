@@ -104,3 +104,11 @@
 - [x] 전체 unittest, compileall, diff check 실행.
 - [x] OpenAPI 스키마에 `closing-message` 경로 노출 확인.
 - [x] 의미 단위 커밋 생성.
+
+## 2026-07-08 LAN-96 리뷰 점검
+
+- [x] `ponytail`과 `review` 기준으로 중복, 과구현, 오류 가능성 점검.
+- [x] `INVALID_REQUEST` 기본 메시지를 LAN-96 명세 문구와 일치하도록 수정.
+- [x] next-message와 closing-message의 LLM 호출 중복을 공통 helper로 축소.
+- [x] 수정 후 전체 unittest, compileall, diff check 실행.
+- [x] 리뷰 수정 커밋 생성.
