@@ -1,4 +1,4 @@
-# 다음 AI 메시지 생성 API의 HTTP 계약을 검증하는 unittest 모듈
+# 대화 생성 API의 HTTP 계약을 검증하는 unittest 모듈
 import json
 import unittest
 import warnings

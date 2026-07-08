@@ -126,3 +126,12 @@
 - [x] 전체 unittest, compileall, diff check 실행.
 - [x] OpenAPI 스키마에 `message-feedback` 경로 노출 확인.
 - [x] 의미 단위 커밋 생성.
+
+## 2026-07-08 LAN-97 리뷰 점검
+
+- [x] `ponytail` 기준으로 과구현, 사용처 없는 helper, 불필요한 프롬프트 출력 필드 확인.
+- [x] 사용처 없는 cache entry 조회 helper 제거.
+- [x] 서버가 저장하지 않는 `detectedPatterns`를 프롬프트 출력 스키마에서 제거.
+- [x] cache의 단일 프로세스 한계를 주석으로 명시.
+- [x] 전체 unittest, compileall, diff check 재실행.
+- [x] 리뷰 수정 커밋 생성.

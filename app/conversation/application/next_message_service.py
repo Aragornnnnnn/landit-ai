@@ -1,4 +1,4 @@
-# 다음 AI 메시지 생성을 위한 LLM 호출과 응답 검증을 담당하는 모듈
+# 대화 생성 API의 LLM 호출과 응답 검증을 담당하는 모듈
 import json
 import time
 from dataclasses import dataclass
@@ -33,6 +33,7 @@ class _MessageFeedbackCacheEntry:
     expires_at: float
 
 
+# ponytail: 단일 프로세스 TTL cache다. 여러 인스턴스 공유가 필요해지면 외부 저장소로 옮긴다.
 _message_feedback_cache: dict[int, dict[int, _MessageFeedbackCacheEntry]] = {}
 _message_feedback_cache_lock = RLock()
 
@@ -144,22 +145,6 @@ def get_expected_message_feedbacks(
     *,
     now: float | None = None,
 ) -> list[MessageFeedbackData]:
-    return [
-        entry.feedback
-        for entry in get_expected_message_feedback_entries(
-            session_id,
-            expected_message_ids,
-            now=now,
-        )
-    ]
-
-
-def get_expected_message_feedback_entries(
-    session_id: int,
-    expected_message_ids: list[int],
-    *,
-    now: float | None = None,
-) -> list[_MessageFeedbackCacheEntry]:
     current_time = _cache_now() if now is None else now
     with _message_feedback_cache_lock:
         _purge_expired_message_feedbacks_locked(current_time)
@@ -171,7 +156,10 @@ def get_expected_message_feedback_entries(
         ]
         if missing_message_ids:
             raise MessageFeedbackNotReadyError(missing_message_ids)
-        return [session_feedbacks[message_id] for message_id in expected_message_ids]
+        return [
+            session_feedbacks[message_id].feedback
+            for message_id in expected_message_ids
+        ]
 
 
 def _request_json_completion(
@@ -587,20 +575,19 @@ def _message_feedback_system_prompt() -> str:
             "4. baseLocaleAnalogy sounds like a Korean analogy, not a correction explanation. "
             "5. GOOD feedbackDetail is Korean and matches the feedbackType. "
             "6. NEEDS_IMPROVEMENT correctionReason explains the issue and correction direction without arrow notation or repeating correctionExpression. "
-            "7. detectedPatterns includes only status correct, incorrect, or attempted. "
-            "8. No legacy fields are present."
+            "7. No legacy fields are present."
         ),
         (
             "Feedback Examples:\n"
             "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"한국인의 79%가 틀리는 a/an을 정확히 썼어요","detectedPatterns":[{"errorType":"article_a_omission","status":"correct","evidence":"an apple"}]}\n'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
             "NEEDS_IMPROVEMENT JSON example for a friend or casual partner: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null,"detectedPatterns":[]}'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null}'
         ),
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD|NEEDS_IMPROVEMENT","baseLocaleAnalogy":"...","positiveFeedback":null,"feedbackDetail":"GOOD explanation or null","correctionExpression":"improved English expression or null","correctionReason":"Korean correction reason or null","benchmarkMessage":"short Korean feedback sentence for GOOD or null for NEEDS_IMPROVEMENT","detectedPatterns":[{"errorType":"article_a_omission","status":"correct","evidence":"an apple"}]}. '
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD|NEEDS_IMPROVEMENT","baseLocaleAnalogy":"...","positiveFeedback":null,"feedbackDetail":"GOOD explanation or null","correctionExpression":"improved English expression or null","correctionReason":"Korean correction reason or null","benchmarkMessage":"short Korean feedback sentence for GOOD or null for NEEDS_IMPROVEMENT"}. '
             "Return one JSON object, not an array. "
             "messageId is a server identifier, not a value to infer. Copy it exactly."
         ),

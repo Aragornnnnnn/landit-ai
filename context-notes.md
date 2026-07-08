@@ -103,3 +103,10 @@
 - 필수 필드 누락이나 조건부 필드 정책 위반은 SayNow처럼 기본값으로 보정하지 않고 `AI_RESPONSE_INVALID` 502로 처리한다. 단, 프롬프트 품질에 영향을 주지 않는 문자열 trim이나 framing prefix 제거는 허용한다.
 - `detectedPatterns`와 점수 breakdown은 LAN-97의 캐시 저장 계약에는 필요하지 않아 저장하지 않는다. 모델이 `detectedPatterns`를 반환해도 현재는 계약 검증 전에 버리고, 최종 피드백에서 실제 필요성이 확인되면 그때 추가한다.
 - 메시지별 피드백 생성은 route, DTO, service, cache helper를 기존 `next_message_service.py`와 `conversation.py`에 추가해 최소 변경으로 구현한다. 아직 구현체가 하나뿐이므로 별도 repository, interface, worker 계층은 만들지 않는다.
+- cache entry 메타데이터를 반환하는 helper는 아직 실제 사용처가 없어 만들지 않는다. 최종 피드백에서 사용자 메시지나 추가 점수가 필요해지면 그때 entry 조회 helper를 추가한다.
+
+## 2026-07-08 LAN-97 리뷰 점검
+
+- `ponytail` 검토 결과 `get_expected_message_feedback_entries`는 아직 실제 사용처가 없는 공개 helper라 제거했다. 최종 피드백 구현 시 entry 메타데이터가 필요하면 그때 추가한다.
+- message-feedback 프롬프트는 SayNow 판단 정책을 유지하되, 현재 서버가 저장하지 않는 `detectedPatterns` 출력 요구는 제거했다. 기존 SayNow식 응답이 섞여 들어오는 경우를 대비해 서비스에서는 `detectedPatterns`를 pop으로 무시한다.
+- in-memory cache는 현재 HTTP API 범위에서만 쓰는 단일 프로세스 TTL cache다. 여러 인스턴스가 같은 cache 결과를 공유해야 하는 SQS 흐름에서는 외부 저장소로 옮겨야 한다.

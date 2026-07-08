@@ -59,7 +59,7 @@ Expected: route tests still fail until service and router are connected, but DTO
 
 **Interfaces:**
 - Consumes: `_request_json_completion`, `MessageFeedbackRequest`, `MessageFeedbackData`.
-- Produces: `generate_message_feedback`, `get_cached_message_feedback`, `get_expected_message_feedback_entries`, `clear_message_feedback_cache`.
+- Produces: `generate_message_feedback`, `get_cached_message_feedback`, `get_expected_message_feedbacks`, `clear_message_feedback_cache`.
 
 - [ ] **Step 1: Write failing generation and cache tests.**
 
