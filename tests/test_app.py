@@ -113,6 +113,9 @@ class CommonResponseTests(unittest.TestCase):
             },
         )
 
+    def test_invalid_request_default_message_matches_api_spec(self):
+        self.assertEqual(ErrorCode.INVALID_REQUEST.default_message, "잘못된 요청입니다.")
+
 
 class ExceptionHandlerTests(unittest.TestCase):
     def test_validation_error_returns_invalid_request_response(self):
