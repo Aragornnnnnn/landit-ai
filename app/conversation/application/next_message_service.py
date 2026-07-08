@@ -125,6 +125,42 @@ def generate_message_feedback(
     )
 
 
+def generate_session_feedback(
+    request: SessionFeedbackRequest,
+    settings: Settings | None = None,
+) -> SessionFeedbackResponse:
+    feedback_entries = _get_expected_message_feedback_entries(
+        request.sessionId,
+        request.expectedMessageIds,
+    )
+    message_feedbacks = [entry.feedback for entry in feedback_entries]
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_session_feedback_system_prompt(),
+        user_prompt=_session_feedback_user_prompt(request, feedback_entries),
+        max_tokens=512,
+    )
+    try:
+        summary = SessionFeedbackSummary.model_validate(data)
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+
+    if summary.sessionId != request.sessionId:
+        raise AiResponseInvalidError
+
+    native_score = _native_score_from_message_feedback_entries(feedback_entries)
+    response = SessionFeedbackResponse(
+        sessionId=request.sessionId,
+        nativeScore=native_score,
+        starRating=_star_rating_from_native_score(native_score),
+        highlightMessage=summary.highlightMessage,
+        summaryMessage=summary.summaryMessage,
+        messageFeedbacks=message_feedbacks,
+    )
+    _delete_message_feedback_cache(request.sessionId)
+    return response
+
+
 def clear_message_feedback_cache() -> None:
     with _message_feedback_cache_lock:
         _message_feedback_cache.clear()
@@ -149,6 +185,22 @@ def get_expected_message_feedbacks(
     *,
     now: float | None = None,
 ) -> list[MessageFeedbackData]:
+    return [
+        entry.feedback
+        for entry in _get_expected_message_feedback_entries(
+            session_id,
+            expected_message_ids,
+            now=now,
+        )
+    ]
+
+
+def _get_expected_message_feedback_entries(
+    session_id: int,
+    expected_message_ids: list[int],
+    *,
+    now: float | None = None,
+) -> list[_MessageFeedbackCacheEntry]:
     current_time = _cache_now() if now is None else now
     with _message_feedback_cache_lock:
         _purge_expired_message_feedbacks_locked(current_time)
@@ -161,7 +213,7 @@ def get_expected_message_feedbacks(
         if missing_message_ids:
             raise MessageFeedbackNotReadyError(missing_message_ids)
         return [
-            session_feedbacks[message_id].feedback
+            session_feedbacks[message_id]
             for message_id in expected_message_ids
         ]
 
@@ -264,6 +316,11 @@ def _store_message_feedback(
             user_message=user_message,
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
         )
+
+
+def _delete_message_feedback_cache(session_id: int) -> None:
+    with _message_feedback_cache_lock:
+        _message_feedback_cache.pop(session_id, None)
 
 
 def _purge_expired_message_feedbacks_locked(current_time: float) -> None:
