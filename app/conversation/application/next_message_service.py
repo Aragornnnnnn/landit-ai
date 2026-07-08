@@ -1,6 +1,9 @@
 # 다음 AI 메시지 생성을 위한 LLM 호출과 응답 검증을 담당하는 모듈
 import json
+import time
+from dataclasses import dataclass
 from json import JSONDecodeError
+from threading import RLock
 from typing import Any
 
 from pydantic import ValidationError
@@ -11,9 +14,27 @@ from app.models.conversation import (
     ClosingMessageRequest,
     ClosingMessageResponse,
     ConversationHistoryMessage,
+    FeedbackStatus,
+    MessageFeedbackData,
+    MessageFeedbackRequest,
+    MessageFeedbackResponse,
     NextMessageRequest,
     NextMessageResponse,
 )
+
+
+_MESSAGE_FEEDBACK_CACHE_TTL_SECONDS = 3 * 60 * 60
+
+
+@dataclass(frozen=True)
+class _MessageFeedbackCacheEntry:
+    feedback: MessageFeedbackData
+    user_message: str
+    expires_at: float
+
+
+_message_feedback_cache: dict[int, dict[int, _MessageFeedbackCacheEntry]] = {}
+_message_feedback_cache_lock = RLock()
 
 
 class AiResponseInvalidError(Exception):
@@ -22,6 +43,14 @@ class AiResponseInvalidError(Exception):
 
 class AiGenerationFailedError(Exception):
     """AI 호출 자체가 실패했을 때 발생한다."""
+
+
+class MessageFeedbackNotReadyError(Exception):
+    """최종 피드백에 필요한 메시지별 피드백이 캐시에 없을 때 발생한다."""
+
+    def __init__(self, missing_message_ids: list[int]):
+        self.missing_message_ids = missing_message_ids
+        super().__init__(f"message feedback is not ready: {missing_message_ids}")
 
 
 def generate_next_message(
@@ -58,6 +87,91 @@ def generate_closing_message(
         raise AiResponseInvalidError from exc
     _validate_closing_message_policy(response)
     return response
+
+
+def generate_message_feedback(
+    request: MessageFeedbackRequest,
+    settings: Settings | None = None,
+) -> MessageFeedbackResponse:
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_message_feedback_system_prompt(),
+        user_prompt=_message_feedback_user_prompt(request),
+        max_tokens=768,
+    )
+    data.pop("detectedPatterns", None)
+    try:
+        feedback = MessageFeedbackData.model_validate(data)
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+
+    if feedback.messageId != request.messageId:
+        raise AiResponseInvalidError
+
+    _store_message_feedback(
+        request.sessionId,
+        feedback,
+        user_message=request.messageContext.userMessage,
+    )
+    return MessageFeedbackResponse(
+        sessionId=request.sessionId,
+        messageId=request.messageId,
+        feedbackStatus=FeedbackStatus.PREPARING,
+    )
+
+
+def clear_message_feedback_cache() -> None:
+    with _message_feedback_cache_lock:
+        _message_feedback_cache.clear()
+
+
+def get_cached_message_feedback(
+    session_id: int,
+    message_id: int,
+    *,
+    now: float | None = None,
+) -> MessageFeedbackData | None:
+    current_time = _cache_now() if now is None else now
+    with _message_feedback_cache_lock:
+        _purge_expired_message_feedbacks_locked(current_time)
+        entry = _message_feedback_cache.get(session_id, {}).get(message_id)
+        return entry.feedback if entry else None
+
+
+def get_expected_message_feedbacks(
+    session_id: int,
+    expected_message_ids: list[int],
+    *,
+    now: float | None = None,
+) -> list[MessageFeedbackData]:
+    return [
+        entry.feedback
+        for entry in get_expected_message_feedback_entries(
+            session_id,
+            expected_message_ids,
+            now=now,
+        )
+    ]
+
+
+def get_expected_message_feedback_entries(
+    session_id: int,
+    expected_message_ids: list[int],
+    *,
+    now: float | None = None,
+) -> list[_MessageFeedbackCacheEntry]:
+    current_time = _cache_now() if now is None else now
+    with _message_feedback_cache_lock:
+        _purge_expired_message_feedbacks_locked(current_time)
+        session_feedbacks = _message_feedback_cache.get(session_id, {})
+        missing_message_ids = [
+            message_id
+            for message_id in expected_message_ids
+            if message_id not in session_feedbacks
+        ]
+        if missing_message_ids:
+            raise MessageFeedbackNotReadyError(missing_message_ids)
+        return [session_feedbacks[message_id] for message_id in expected_message_ids]
 
 
 def _request_json_completion(
@@ -140,6 +254,44 @@ def _validate_closing_message_policy(response: ClosingMessageResponse) -> None:
 def _looks_like_question(value: str) -> bool:
     stripped = value.strip()
     return stripped.endswith("?") or stripped.endswith("？")
+
+
+def _store_message_feedback(
+    session_id: int,
+    feedback: MessageFeedbackData,
+    *,
+    user_message: str,
+    now: float | None = None,
+) -> None:
+    current_time = _cache_now() if now is None else now
+    with _message_feedback_cache_lock:
+        _purge_expired_message_feedbacks_locked(current_time)
+        session_feedbacks = _message_feedback_cache.setdefault(session_id, {})
+        session_feedbacks[feedback.messageId] = _MessageFeedbackCacheEntry(
+            feedback=feedback,
+            user_message=user_message,
+            expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
+        )
+
+
+def _purge_expired_message_feedbacks_locked(current_time: float) -> None:
+    expired_sessions: list[int] = []
+    for session_id, feedbacks in _message_feedback_cache.items():
+        expired_message_ids = [
+            message_id
+            for message_id, entry in feedbacks.items()
+            if entry.expires_at <= current_time
+        ]
+        for message_id in expired_message_ids:
+            feedbacks.pop(message_id, None)
+        if not feedbacks:
+            expired_sessions.append(session_id)
+    for session_id in expired_sessions:
+        _message_feedback_cache.pop(session_id, None)
+
+
+def _cache_now() -> float:
+    return time.monotonic()
 
 
 def _next_message_system_prompt() -> str:
@@ -376,6 +528,100 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
         f"Last user message: {_conversation_history_line(last_user_message)}\n\n"
         f"Closing reason: {request.closingReason}\n"
         f"Goal completion status: {request.goalCompletionStatus}"
+    )
+
+
+def _message_feedback_system_prompt() -> str:
+    return "\n\n".join([
+        (
+            "Role:\n"
+            "You generate one high-quality message-level feedback item for a Korean learner's English free talk answer."
+        ),
+        (
+            "Priority:\n"
+            "For this MVP, quality is more important than speed or token savings. "
+            "Judge the actual user utterance, not a generic grammar checklist."
+        ),
+        _shared_safety_policy(),
+        (
+            "Judgement Policy:\n"
+            "Classify the message as GOOD or NEEDS_IMPROVEMENT using these gates in order. "
+            "Actionable Issue Gate: first check whether grammar, word choice, word order, tense, preposition, nuance, politeness, or relevance creates a real correction point. "
+            "GOOD Gate: mark GOOD when the answer fits the AI message, the meaning is clear without guesswork, and there is no actionable correction point. "
+            "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression that preserves the user's intent. "
+            "More detail alone is not an actionable issue; a short direct answer can be GOOD. "
+            "Use the provided Counterpart role when judging nuance, politeness, and relevance. "
+            "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
+            "Boundary examples: 'I like pizza because it is spicy.' is GOOD; "
+            "'I like pizza because spicy.' is NEEDS_IMPROVEMENT because because needs a clause; "
+            "'Why do you wanna know that?' is NEEDS_IMPROVEMENT because it can sound defensive or blunt in casual practice. "
+            "When several issues exist, handle the most important one first. "
+            "Use cautious wording such as can sound when the nuance depends on context."
+        ),
+        (
+            "Field Policy:\n"
+            "baseLocaleAnalogy is required for every response and should explain how the English sounds through a Korean analogy. "
+            "baseLocaleAnalogy must not start with Korean framing phrases such as '한국어로 비유하자면', '한국어로 비유하면', or '한국어로 치면'. "
+            "baseLocaleAnalogy must start directly with the example or explanation, following this format: \"...\"라고 ...하는 것과 같아요. "
+            "The quoted Korean sentence must show what the English sounds like in Korean. "
+            "For NEEDS_IMPROVEMENT, baseLocaleAnalogy should use one intentionally awkward Korean example as a quoted Korean sentence plus one short feeling explanation. "
+            "feedbackDetail is required for GOOD and must be null for NEEDS_IMPROVEMENT. "
+            "For NEEDS_IMPROVEMENT, positiveFeedback is required and must praise the user's attempt or challenge before correction. "
+            "For NEEDS_IMPROVEMENT, correctionExpression is required and must be the improved English expression only. "
+            "Generate at most one correctionExpression for one message. "
+            "Do not return multiple alternatives, numbered options, slash-separated options, or extra explanation in correctionExpression. "
+            "For NEEDS_IMPROVEMENT, correctionReason is required and must explain why correctionExpression is better in Korean. "
+            "correctionReason must explain the original problem and the type of change made, not restate the improved expression. "
+            "Do not use arrow notation such as A -> B inside correctionReason. "
+            "For GOOD, feedbackDetail must explain how well the user did and why in one natural Korean explanation. "
+            "For GOOD, positiveFeedback must be null. "
+            "For GOOD, correctionExpression and correctionReason must be null. "
+            "For NEEDS_IMPROVEMENT, benchmarkMessage must be null. "
+            "Do not include legacy fields such as betterExpression, correctionPoint, plusOneExpression, praiseSummary, or praiseReason."
+        ),
+        (
+            "Self-check before final JSON:\n"
+            "1. messageId copied exactly from the Message ID line. "
+            "2. NEEDS_IMPROVEMENT has positiveFeedback, correctionExpression, correctionReason, feedbackDetail=null, and benchmarkMessage=null. "
+            "3. GOOD has positiveFeedback=null, correctionExpression=null, correctionReason=null, and feedbackDetail. "
+            "4. baseLocaleAnalogy sounds like a Korean analogy, not a correction explanation. "
+            "5. GOOD feedbackDetail is Korean and matches the feedbackType. "
+            "6. NEEDS_IMPROVEMENT correctionReason explains the issue and correction direction without arrow notation or repeating correctionExpression. "
+            "7. detectedPatterns includes only status correct, incorrect, or attempted. "
+            "8. No legacy fields are present."
+        ),
+        (
+            "Feedback Examples:\n"
+            "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"한국인의 79%가 틀리는 a/an을 정확히 썼어요","detectedPatterns":[{"errorType":"article_a_omission","status":"correct","evidence":"an apple"}]}\n'
+            "NEEDS_IMPROVEMENT JSON example for a friend or casual partner: "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null,"detectedPatterns":[]}'
+        ),
+        (
+            "Output Schema:\n"
+            "Return ONLY valid JSON matching this schema exactly: "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD|NEEDS_IMPROVEMENT","baseLocaleAnalogy":"...","positiveFeedback":null,"feedbackDetail":"GOOD explanation or null","correctionExpression":"improved English expression or null","correctionReason":"Korean correction reason or null","benchmarkMessage":"short Korean feedback sentence for GOOD or null for NEEDS_IMPROVEMENT","detectedPatterns":[{"errorType":"article_a_omission","status":"correct","evidence":"an apple"}]}. '
+            "Return one JSON object, not an array. "
+            "messageId is a server identifier, not a value to infer. Copy it exactly."
+        ),
+    ])
+
+
+def _message_feedback_user_prompt(request: MessageFeedbackRequest) -> str:
+    return (
+        f"Session ID: {request.sessionId}\n"
+        f"Message ID: {request.messageId}\n"
+        f"Turn number: {request.turnNumber}\n"
+        f"Message sequence: {request.messageSequence}\n"
+        f"Scenario ID: {request.scenario.scenarioId}\n"
+        f"Scenario title: {request.scenario.title}\n"
+        f"Scenario briefing: {request.scenario.briefing}\n"
+        f"Scenario conversation goal: {request.scenario.conversationGoal}\n"
+        f"Counterpart role: {request.scenario.counterpartRole}\n"
+        f"Service audience: {request.scenario.serviceAudience}\n\n"
+        f"AI message: {request.messageContext.aiMessage}\n"
+        f"AI message Korean: {request.messageContext.aiMessageTranslation or '(none)'}\n"
+        f"User utterance: {request.messageContext.userMessage}"
     )
 
 
