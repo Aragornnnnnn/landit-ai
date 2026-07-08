@@ -90,3 +90,16 @@
 - `INVALID_REQUEST` 기본 메시지가 LAN-96 명세의 "잘못된 요청입니다."와 달라 공통 에러 기본 문구를 맞췄다.
 - `next-message`와 `closing-message`의 OpenAI 호출, 예외 변환, JSON 파싱 흐름이 중복되어 `_request_json_completion`으로 공통화했다.
 - closing prompt 본문은 SayNow `origin/develop`의 closing system prompt를 유지하고, Landit 요청 구조 차이 때문에 user prompt만 전체 `conversationHistory` 기반으로 구성한다.
+
+## 2026-07-08 LAN-97 메시지별 피드백 생성 API
+
+- 작업 브랜치는 현재 `feat/LAN-96` HEAD에서 `feat/LAN-97`로 분기했다.
+- SayNow 참고 기준은 로컬 `develop`을 `origin/develop`으로 동기화한 `/Users/sangmin8817/Soma/saynow-ai`의 `origin/develop` 커밋 `6cf01f3`이다.
+- SQS, worker, retry, DLQ는 나중에 한 번에 처리하기로 했으므로 LAN-97에서는 HTTP API 요청 안에서 LLM 생성과 cache 저장까지 수행한다.
+- 성공 응답은 HTTP 202와 Landit 공통 응답 래퍼 `ApiResponse[MessageFeedbackResponse]`를 사용한다.
+- cache는 Redis나 DB 없이 TTL 있는 in-memory dict로 구현한다. 추후 최종 피드백 생성에서 읽을 수 있도록 내부 `store`, `get`, `get_expected`, `clear` helper만 둔다.
+- API 명세의 필드명과 enum은 사용자가 준 LAN-97 명세를 기준으로 한다. SayNow의 `turnId`, `sequence`, `koreanAnalogy`는 Landit의 `messageId`, `messageSequence`, `baseLocaleAnalogy`로 맞춘다.
+- SayNow의 turn-feedback 프롬프트와 GOOD, NEEDS_IMPROVEMENT 판단 정책은 기능상 동일하므로 최대한 재사용한다.
+- 필수 필드 누락이나 조건부 필드 정책 위반은 SayNow처럼 기본값으로 보정하지 않고 `AI_RESPONSE_INVALID` 502로 처리한다. 단, 프롬프트 품질에 영향을 주지 않는 문자열 trim이나 framing prefix 제거는 허용한다.
+- `detectedPatterns`와 점수 breakdown은 LAN-97의 캐시 저장 계약에는 필요하지 않아 저장하지 않는다. 모델이 `detectedPatterns`를 반환해도 현재는 계약 검증 전에 버리고, 최종 피드백에서 실제 필요성이 확인되면 그때 추가한다.
+- 메시지별 피드백 생성은 route, DTO, service, cache helper를 기존 `next_message_service.py`와 `conversation.py`에 추가해 최소 변경으로 구현한다. 아직 구현체가 하나뿐이므로 별도 repository, interface, worker 계층은 만들지 않는다.

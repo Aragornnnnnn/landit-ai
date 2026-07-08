@@ -112,3 +112,17 @@
 - [x] next-message와 closing-message의 LLM 호출 중복을 공통 helper로 축소.
 - [x] 수정 후 전체 unittest, compileall, diff check 실행.
 - [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-97 메시지별 피드백 생성 API
+
+- [x] `feat/LAN-97` 브랜치 생성.
+- [x] SayNow `origin/develop`의 turn-feedback 모델, 프롬프트, cache 구조 확인.
+- [x] LAN-97 구현 계획 문서 작성.
+- [x] message-feedback 요청/응답 DTO 실패 테스트 작성.
+- [x] GOOD, NEEDS_IMPROVEMENT 필드 정책 실패 테스트 작성.
+- [x] 메시지 피드백 TTL cache 테스트 작성.
+- [x] DTO, 서비스, cache helper, 라우터 구현.
+- [x] README 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `message-feedback` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.
