@@ -28,26 +28,12 @@ def generate_next_message(
     request: NextMessageRequest,
     settings: Settings | None = None,
 ) -> NextMessageResponse:
-    resolved_settings = settings or Settings()
-    model = _required_openrouter_model(resolved_settings)
-
-    try:
-        client = create_openai_client(resolved_settings)
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _next_message_system_prompt()},
-                {"role": "user", "content": _next_message_user_prompt(request)},
-            ],
-            temperature=0,
-            max_tokens=512,
-        )
-    except AiGenerationFailedError:
-        raise
-    except Exception as exc:
-        raise AiGenerationFailedError from exc
-
-    data = _parse_json_object(_extract_message_content(completion))
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_next_message_system_prompt(),
+        user_prompt=_next_message_user_prompt(request),
+        max_tokens=512,
+    )
     try:
         response = NextMessageResponse.model_validate(data)
     except ValidationError as exc:
@@ -60,32 +46,43 @@ def generate_closing_message(
     request: ClosingMessageRequest,
     settings: Settings | None = None,
 ) -> ClosingMessageResponse:
-    resolved_settings = settings or Settings()
-    model = _required_openrouter_model(resolved_settings)
-
-    try:
-        client = create_openai_client(resolved_settings)
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _closing_message_system_prompt()},
-                {"role": "user", "content": _closing_message_user_prompt(request)},
-            ],
-            temperature=0,
-            max_tokens=320,
-        )
-    except AiGenerationFailedError:
-        raise
-    except Exception as exc:
-        raise AiGenerationFailedError from exc
-
-    data = _parse_json_object(_extract_message_content(completion))
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_closing_message_system_prompt(),
+        user_prompt=_closing_message_user_prompt(request),
+        max_tokens=320,
+    )
     try:
         response = ClosingMessageResponse.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
     _validate_closing_message_policy(response)
     return response
+
+
+def _request_json_completion(
+    settings: Settings,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+) -> dict[str, Any]:
+    model = _required_openrouter_model(settings)
+    try:
+        client = create_openai_client(settings)
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    except AiGenerationFailedError:
+        raise
+    except Exception as exc:
+        raise AiGenerationFailedError from exc
+    return _parse_json_object(_extract_message_content(completion))
 
 
 def _required_openrouter_model(settings: Settings) -> str:
