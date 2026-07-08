@@ -143,3 +143,18 @@
 - [x] 아키텍처 세부 문서를 `docs/architecture.md`로 분리.
 - [x] conversation API 책임과 정책을 `docs/api/conversation.md`로 분리.
 - [x] 개발 환경과 검증 명령을 `docs/development.md`로 분리.
+
+## 2026-07-08 LAN-98 세션 최종 피드백 생성 API
+
+- [x] SayNow `origin/develop`의 session-feedback DTO, 라우터, 프롬프트, 캐시 정책 확인.
+- [x] LAN-98 구현 계획 문서 작성.
+- [x] session-feedback 요청/응답 DTO 실패 테스트 작성.
+- [x] `expectedMessageIds` 검증과 409 에러 계약 실패 테스트 작성.
+- [x] LLM 기반 `highlightMessage`, `summaryMessage` 생성 테스트 작성.
+- [x] 서버 계산 기반 `nativeScore`, `starRating` 테스트 작성.
+- [x] 성공 시 cache 삭제, 실패 시 cache 보존 테스트 작성.
+- [x] DTO, 서비스, 라우터 구현.
+- [x] conversation API 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `session-feedback` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.

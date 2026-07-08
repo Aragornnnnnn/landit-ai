@@ -116,3 +116,13 @@
 - README가 프로젝트 소개, 개발 명령, 아키텍처 방향, API 책임, 운영 원칙을 모두 담으면서 커지고 있어 진입점 문서로 축소한다.
 - 아키텍처와 운영 원칙은 `docs/architecture.md`, conversation API 정책은 `docs/api/conversation.md`, 로컬 개발과 검증 명령은 `docs/development.md`에 둔다.
 - README에는 현재 public API 목록과 세부 문서 링크만 남겨 이후 API가 늘어나도 README가 비대해지지 않게 한다.
+
+## 2026-07-08 LAN-98 세션 최종 피드백 생성 API
+
+- 작업 브랜치는 `feat/LAN-97` 현재 HEAD에서 `feat/LAN-98`로 분기했다.
+- SayNow 참고 기준은 `/Users/sangmin8817/Soma/saynow-ai`의 `develop...origin/develop` 커밋 `6cf01f3`이다.
+- SayNow는 session-feedback에서 LLM이 주로 `highlightMessage`만 만들고, `nativeScore`는 캐시된 턴 피드백 기반 서버 계산으로 붙인다.
+- Landit은 `summaryMessage`와 `starRating`이 추가된 계약이므로, LLM은 `highlightMessage`, `summaryMessage`만 생성하고 `nativeScore`, `starRating`은 AI 서버가 deterministic하게 계산한다.
+- `starRating`은 JSON number로 내려주고 BE는 BigDecimal로 받는다. 허용 값은 `1.0`, `1.5`, `2.0`, `2.5`, `3.0`이다.
+- `MESSAGE_FEEDBACK_NOT_READY` 409는 공통 에러 래퍼로 반환하되 외부 응답에는 누락 메시지 ID를 포함하지 않는다.
+- 세션 최종 피드백 생성 성공 시 해당 세션 캐시는 삭제하고, 피드백 미준비나 LLM 오류 시 재시도를 위해 캐시를 보존한다.
