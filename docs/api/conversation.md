@@ -9,6 +9,7 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 - 생성 API 실패 응답은 `{"success": false, "data": null, "error": {"code": "...", "message": "..."}}` 형태로 반환합니다.
 - AI 응답 필드가 누락되거나 형식이 맞지 않으면 `AI_RESPONSE_INVALID` 502를 반환합니다.
 - AI 호출 자체가 실패하면 `AI_GENERATION_FAILED` 503을 반환합니다.
+- 캐시된 메시지별 피드백이 아직 준비되지 않았으면 `MESSAGE_FEEDBACK_NOT_READY` 409를 반환합니다.
 - AI 서버는 세션 상태, 턴 저장, 완료 여부, 사용자별 장기 상태를 직접 저장하지 않습니다.
 - 저장과 상태 전환은 Landit backend 책임으로 둡니다.
 
@@ -57,3 +58,39 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 - 이 API에서는 속마음을 반환하지 않습니다.
 
 메시지별 피드백 cache는 추후 최종 피드백 생성을 위한 단기 in-memory cache이며, 장기 저장소가 아닙니다. 여러 서버 인스턴스가 같은 cache 결과를 공유해야 하거나 SQS 기반 비동기 처리가 들어오면 외부 저장소로 옮깁니다.
+
+## `POST /api/v1/conversation/session-feedback`
+
+AI 서버 캐시에 저장된 메시지별 피드백을 `expectedMessageIds` 기준으로 조회하고, 세션 최종 피드백을 반환합니다.
+
+응답에는 다음 필드를 포함합니다.
+
+- `sessionId`
+- `nativeScore`
+- `starRating`
+- `highlightMessage`
+- `summaryMessage`
+- `messageFeedbacks`
+
+`highlightMessage`와 `summaryMessage`는 LLM이 생성합니다. `nativeScore`와 `starRating`은 LLM이 생성하지 않고 AI 서버가 deterministic하게 계산합니다.
+
+메시지별 피드백 준비 여부와 캐시 정책은 다음과 같습니다.
+
+- `expectedMessageIds`는 빈 목록, 0 이하 값, 중복 값을 허용하지 않습니다.
+- `messageFeedbacks`는 `expectedMessageIds` 순서대로 반환합니다.
+- `expectedMessageIds` 중 캐시에 없는 메시지가 하나라도 있으면 409를 반환합니다.
+- 409 응답에는 누락된 메시지 ID를 외부 필드로 포함하지 않습니다.
+- 세션 최종 피드백 생성 성공 시 해당 세션의 메시지별 피드백 캐시를 삭제합니다.
+- 피드백 미준비, LLM 응답 오류, LLM 호출 실패 시 재시도를 위해 캐시를 보존합니다.
+
+`nativeScore`는 0에서 100 사이 정수입니다. 메시지별 피드백의 GOOD 개수로 기본 점수 밴드를 잡고, 사용자 발화 길이, 표현 시도, NEEDS_IMPROVEMENT 비율 등을 밴드 안에서 보정합니다.
+
+`starRating`은 JSON number로 반환하며 다음 매핑을 사용합니다.
+
+| nativeScore | starRating |
+| --- | --- |
+| 0~54 | 1.0 |
+| 55~64 | 1.5 |
+| 65~74 | 2.0 |
+| 75~89 | 2.5 |
+| 90~100 | 3.0 |

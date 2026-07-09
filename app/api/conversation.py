@@ -10,13 +10,17 @@ from app.models.conversation import (
     MessageFeedbackResponse,
     NextMessageRequest,
     NextMessageResponse,
+    SessionFeedbackRequest,
+    SessionFeedbackResponse,
 )
 from app.conversation.application.next_message_service import (
     AiGenerationFailedError,
     AiResponseInvalidError,
+    MessageFeedbackNotReadyError,
     generate_closing_message,
     generate_message_feedback,
     generate_next_message,
+    generate_session_feedback,
 )
 
 router = APIRouter(prefix="/api/v1/conversation", tags=["conversation"])
@@ -91,6 +95,36 @@ def create_message_feedback(
         raise ApiException(
             status_code=503,
             error_code=ErrorCode.AI_GENERATION_FAILED,
+        ) from exc
+
+    return success_response(response)
+
+
+@router.post(
+    "/session-feedback",
+    response_model=ApiResponse[SessionFeedbackResponse],
+)
+def create_session_feedback(
+    payload: SessionFeedbackRequest,
+    request: Request,
+) -> ApiResponse[SessionFeedbackResponse]:
+    try:
+        response = generate_session_feedback(payload, request.app.state.settings)
+    except MessageFeedbackNotReadyError as exc:
+        raise ApiException(
+            status_code=409,
+            error_code=ErrorCode.MESSAGE_FEEDBACK_NOT_READY,
+        ) from exc
+    except AiResponseInvalidError as exc:
+        raise ApiException(
+            status_code=502,
+            error_code=ErrorCode.AI_RESPONSE_INVALID,
+        ) from exc
+    except AiGenerationFailedError as exc:
+        raise ApiException(
+            status_code=503,
+            error_code=ErrorCode.AI_GENERATION_FAILED,
+            message="세션 최종 피드백 생성에 실패했습니다.",
         ) from exc
 
     return success_response(response)

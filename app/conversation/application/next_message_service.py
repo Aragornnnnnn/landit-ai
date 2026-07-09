@@ -1,5 +1,6 @@
 # 대화 생성 API의 LLM 호출과 응답 검증을 담당하는 모듈
 import json
+import re
 import time
 from dataclasses import dataclass
 from json import JSONDecodeError
@@ -15,11 +16,15 @@ from app.models.conversation import (
     ClosingMessageResponse,
     ConversationHistoryMessage,
     FeedbackStatus,
+    FeedbackType,
     MessageFeedbackData,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     NextMessageRequest,
     NextMessageResponse,
+    SessionFeedbackRequest,
+    SessionFeedbackResponse,
+    SessionFeedbackSummary,
 )
 
 
@@ -121,6 +126,42 @@ def generate_message_feedback(
     )
 
 
+def generate_session_feedback(
+    request: SessionFeedbackRequest,
+    settings: Settings | None = None,
+) -> SessionFeedbackResponse:
+    feedback_entries = _get_expected_message_feedback_entries(
+        request.sessionId,
+        request.expectedMessageIds,
+    )
+    message_feedbacks = [entry.feedback for entry in feedback_entries]
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_session_feedback_system_prompt(),
+        user_prompt=_session_feedback_user_prompt(request, feedback_entries),
+        max_tokens=512,
+    )
+    try:
+        summary = SessionFeedbackSummary.model_validate(data)
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+
+    if summary.sessionId != request.sessionId:
+        raise AiResponseInvalidError
+
+    native_score = _native_score_from_message_feedback_entries(feedback_entries)
+    response = SessionFeedbackResponse(
+        sessionId=request.sessionId,
+        nativeScore=native_score,
+        starRating=_star_rating_from_native_score(native_score),
+        highlightMessage=summary.highlightMessage,
+        summaryMessage=summary.summaryMessage,
+        messageFeedbacks=message_feedbacks,
+    )
+    _delete_message_feedback_cache(request.sessionId)
+    return response
+
+
 def clear_message_feedback_cache() -> None:
     with _message_feedback_cache_lock:
         _message_feedback_cache.clear()
@@ -145,6 +186,22 @@ def get_expected_message_feedbacks(
     *,
     now: float | None = None,
 ) -> list[MessageFeedbackData]:
+    return [
+        entry.feedback
+        for entry in _get_expected_message_feedback_entries(
+            session_id,
+            expected_message_ids,
+            now=now,
+        )
+    ]
+
+
+def _get_expected_message_feedback_entries(
+    session_id: int,
+    expected_message_ids: list[int],
+    *,
+    now: float | None = None,
+) -> list[_MessageFeedbackCacheEntry]:
     current_time = _cache_now() if now is None else now
     with _message_feedback_cache_lock:
         _purge_expired_message_feedbacks_locked(current_time)
@@ -157,7 +214,7 @@ def get_expected_message_feedbacks(
         if missing_message_ids:
             raise MessageFeedbackNotReadyError(missing_message_ids)
         return [
-            session_feedbacks[message_id].feedback
+            session_feedbacks[message_id]
             for message_id in expected_message_ids
         ]
 
@@ -262,6 +319,11 @@ def _store_message_feedback(
         )
 
 
+def _delete_message_feedback_cache(session_id: int) -> None:
+    with _message_feedback_cache_lock:
+        _message_feedback_cache.pop(session_id, None)
+
+
 def _purge_expired_message_feedbacks_locked(current_time: float) -> None:
     expired_sessions: list[int] = []
     for session_id, feedbacks in _message_feedback_cache.items():
@@ -280,6 +342,119 @@ def _purge_expired_message_feedbacks_locked(current_time: float) -> None:
 
 def _cache_now() -> float:
     return time.monotonic()
+
+
+def _native_score_from_message_feedback_entries(
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> int:
+    if not feedback_entries:
+        return 0
+
+    # ponytail: cache-only heuristic이다. 더 정교한 점수 근거가 필요해지면 피드백 캐시에 evidence를 추가한다.
+    good_count = sum(
+        1
+        for entry in feedback_entries
+        if entry.feedback.feedbackType == FeedbackType.GOOD
+    )
+    if good_count == 0:
+        return 50
+
+    attempted_word_score = round(
+        sum(_attempted_word_score(entry.user_message) for entry in feedback_entries)
+        / len(feedback_entries),
+    )
+    sentence_complexity_score = round(
+        sum(_sentence_complexity_score(entry.user_message) for entry in feedback_entries)
+        / len(feedback_entries),
+    )
+    comprehensibility_score = round(
+        sum(_comprehensibility_score(entry.feedback) for entry in feedback_entries)
+        / len(feedback_entries),
+    )
+    raw_score = round(
+        attempted_word_score * 0.2
+        + sentence_complexity_score * 0.3
+        + comprehensibility_score * 0.5,
+    )
+    band_min, band_max = _native_score_band_for_good_count(good_count)
+    return _clamp_score(raw_score, band_min, band_max)
+
+
+def _attempted_word_score(user_message: str) -> int:
+    return _clamp_score(len(_english_words(user_message)) * 8, 0, 100)
+
+
+def _sentence_complexity_score(user_message: str) -> int:
+    words = _english_words(user_message)
+    normalized = f" {_normalize_visible_text(user_message)} "
+    score = 35
+    if len(words) >= 6:
+        score += 10
+    if len(words) >= 10:
+        score += 10
+    if any(marker in normalized for marker in [" because ", " since ", " and ", " but ", " so "]):
+        score += 15
+    if any(marker in normalized for marker in [" would ", " could ", " should ", " have ", " has "]):
+        score += 10
+    if _contains_indirect_question_pattern(normalized):
+        score += 20
+    return _clamp_score(score, 0, 100)
+
+
+def _comprehensibility_score(feedback: MessageFeedbackData) -> int:
+    if feedback.feedbackType == FeedbackType.GOOD:
+        return 90
+    return 65
+
+
+def _native_score_band_for_good_count(good_count: int) -> tuple[int, int]:
+    if good_count == 1:
+        return (55, 64)
+    if good_count == 2:
+        return (65, 74)
+    if good_count == 3:
+        return (75, 89)
+    return (90, 100)
+
+
+def _star_rating_from_native_score(native_score: int) -> float:
+    if native_score <= 54:
+        return 1.0
+    if native_score <= 64:
+        return 1.5
+    if native_score <= 74:
+        return 2.0
+    if native_score <= 89:
+        return 2.5
+    return 3.0
+
+
+def _english_words(user_message: str) -> list[str]:
+    return re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", user_message)
+
+
+def _normalize_visible_text(value: str) -> str:
+    return " ".join(value.lower().split())
+
+
+def _contains_indirect_question_pattern(normalized_message: str) -> bool:
+    return any(
+        marker in normalized_message
+        for marker in [
+            " know what ",
+            " know where ",
+            " know why ",
+            " know how ",
+            " wonder what ",
+            " wonder where ",
+            " wonder why ",
+            " wonder how ",
+        ]
+    )
+
+
+def _clamp_score(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
 
 
 def _next_message_system_prompt() -> str:
@@ -516,6 +691,125 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
         f"Last user message: {_conversation_history_line(last_user_message)}\n\n"
         f"Closing reason: {request.closingReason}\n"
         f"Goal completion status: {request.goalCompletionStatus}"
+    )
+
+
+def _session_feedback_system_prompt() -> str:
+    return "\n\n".join([
+        (
+            "Role:\n"
+            "You generate the final session-level highlight badge and summary for a Korean learner's English role-play session."
+        ),
+        (
+            "Priority:\n"
+            "Quality is more important than speed or token savings. "
+            "The final feedback must be grounded in the cached message-level feedback, not generic encouragement."
+        ),
+        _shared_safety_policy(),
+        (
+            "Highlight Policy:\n"
+            "highlightMessage must be written in Korean. "
+            "It is a title-like badge phrase that hooks the user into reading message-level feedback. "
+            "Prefer a concise badge phrase such as 한국인의 23%가 놓치는 복수+s를 챙긴 사람. "
+            "Only cached GOOD benchmarkMessage may provide a quantitative highlight candidate. "
+            "Do not invent a new percentage hook that is not present in cached benchmarkMessage. "
+            "If Allowed quantitative highlight candidates JSON is empty, highlightMessage must not contain %, 퍼센트, or count-based claims. "
+            "When allowed candidates exist, copy one candidate exactly. "
+            "When no quantitative candidate exists, use repeated concrete themes from the cached feedback without adding numbers."
+        ),
+        (
+            "Summary Policy:\n"
+            "summaryMessage must be written in Korean. "
+            "It must summarize the session as a whole in one or two natural sentences. "
+            "Mention what the learner did well and, if needed, one broad improvement direction based only on cached feedback. "
+            "Do not introduce corrections or examples that are not present in cached message feedback."
+        ),
+        (
+            "Self-check before final JSON:\n"
+            "1. highlightMessage is Korean and badge-like. "
+            "2. summaryMessage is Korean and sounds natural to a learner. "
+            "3. Both fields are grounded in cached message feedback. "
+            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+        ),
+        (
+            "Output Schema:\n"
+            "Return ONLY valid JSON matching this schema exactly: "
+            '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"..."}. '
+            "Return one JSON object, not an array."
+        ),
+    ])
+
+
+def _session_feedback_user_prompt(
+    request: SessionFeedbackRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> str:
+    message_feedbacks = [entry.feedback for entry in feedback_entries]
+    good_count = sum(
+        1
+        for feedback in message_feedbacks
+        if feedback.feedbackType == FeedbackType.GOOD
+    )
+    needs_count = sum(
+        1
+        for feedback in message_feedbacks
+        if feedback.feedbackType == FeedbackType.NEEDS_IMPROVEMENT
+    )
+    feedback_json = json.dumps(
+        [feedback.model_dump(mode="json") for feedback in message_feedbacks],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    user_message_json = json.dumps(
+        [
+            {
+                "messageId": entry.feedback.messageId,
+                "userMessage": entry.user_message,
+            }
+            for entry in feedback_entries
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    quantitative_candidate_json = json.dumps(
+        _quantitative_highlight_candidates(message_feedbacks),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        f"Session ID: {request.sessionId}\n"
+        f"Scenario ID: {request.scenario.scenarioId}\n"
+        f"Scenario title: {request.scenario.title}\n"
+        f"Scenario briefing: {request.scenario.briefing}\n"
+        f"Scenario conversation goal: {request.scenario.conversationGoal}\n"
+        f"Counterpart role: {request.scenario.counterpartRole}\n"
+        f"Service audience: {request.scenario.serviceAudience}\n"
+        f"Expected message IDs: {request.expectedMessageIds}\n\n"
+        f"Cached message feedback counts: GOOD={good_count}, NEEDS_IMPROVEMENT={needs_count}\n\n"
+        f"Cached message feedback JSON:\n{feedback_json}\n\n"
+        f"Cached user message JSON:\n{user_message_json}\n\n"
+        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}"
+    )
+
+
+def _quantitative_highlight_candidates(message_feedbacks: list[MessageFeedbackData]) -> list[str]:
+    candidates: list[str] = []
+    seen_candidates: set[str] = set()
+    for feedback in message_feedbacks:
+        if (
+            feedback.feedbackType == FeedbackType.GOOD
+            and feedback.benchmarkMessage
+            and _contains_quantitative_hook(feedback.benchmarkMessage)
+            and feedback.benchmarkMessage not in seen_candidates
+        ):
+            seen_candidates.add(feedback.benchmarkMessage)
+            candidates.append(feedback.benchmarkMessage)
+    return candidates
+
+
+def _contains_quantitative_hook(value: str) -> bool:
+    return bool(re.search(r"\d+(?:\.\d+)?%", value)) or bool(
+        re.search(r"\d+\s*번\s*중\s*\d+", value),
     )
 
 

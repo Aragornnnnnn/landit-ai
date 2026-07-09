@@ -4,6 +4,7 @@ from enum import Enum
 
 class ErrorCode(str, Enum):
     INVALID_REQUEST = "INVALID_REQUEST"
+    MESSAGE_FEEDBACK_NOT_READY = "MESSAGE_FEEDBACK_NOT_READY"
     AI_RESPONSE_INVALID = "AI_RESPONSE_INVALID"
     AI_GENERATION_FAILED = "AI_GENERATION_FAILED"
     INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
@@ -12,6 +13,7 @@ class ErrorCode(str, Enum):
     def default_message(self) -> str:
         messages = {
             ErrorCode.INVALID_REQUEST: "잘못된 요청입니다.",
+            ErrorCode.MESSAGE_FEEDBACK_NOT_READY: "메시지별 피드백이 아직 준비되지 않았습니다.",
             ErrorCode.AI_RESPONSE_INVALID: "AI 응답 형식이 올바르지 않습니다.",
             ErrorCode.AI_GENERATION_FAILED: "AI 응답 생성에 실패했습니다.",
             ErrorCode.INTERNAL_SERVER_ERROR: "서버 내부 오류가 발생했습니다.",
