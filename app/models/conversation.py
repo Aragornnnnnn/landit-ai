@@ -99,6 +99,13 @@ class GoalCompletionStatus(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class ClosingReason(StrEnum):
+    GOAL_COMPLETED = "GOAL_COMPLETED"
+    MAX_TURNS_REACHED = "MAX_TURNS_REACHED"
+    USER_ENDED = "USER_ENDED"
+    TIME_LIMIT_REACHED = "TIME_LIMIT_REACHED"
+
+
 class NextMessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -107,6 +114,43 @@ class NextMessageResponse(BaseModel):
     innerThought: str
     innerThoughtType: InnerThoughtType
     goalCompletionStatus: GoalCompletionStatus
+
+    @field_validator("aiMessage", "translatedMessage", "innerThought")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ClosingMessageRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    submittedMessageId: int = Field(gt=0)
+    submittedTurnNumber: int = Field(gt=0)
+    scenario: ScenarioContext
+    conversationHistory: list[ConversationHistoryMessage] = Field(min_length=2)
+    closingReason: ClosingReason
+    goalCompletionStatus: GoalCompletionStatus
+
+    @model_validator(mode="after")
+    def submitted_message_must_match_latest_turn(self) -> Self:
+        latest_message = self.conversationHistory[-1]
+        previous_message = self.conversationHistory[-2]
+        if (
+            latest_message.role != "USER"
+            or latest_message.messageId != self.submittedMessageId
+            or latest_message.turnNumber != self.submittedTurnNumber
+            or previous_message.role != "AI"
+        ):
+            raise ValueError("closing turn must end with submitted user message after AI message")
+        return self
+
+
+class ClosingMessageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aiMessage: str
+    translatedMessage: str
+    innerThought: str
+    innerThoughtType: InnerThoughtType
 
     @field_validator("aiMessage", "translatedMessage", "innerThought")
     @classmethod

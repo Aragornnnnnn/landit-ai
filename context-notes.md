@@ -72,3 +72,21 @@
 - 고정 질문 체계 반영 후 `.venv/bin/python -m unittest discover -s tests` 기준 19개 테스트가 통과했다.
 - 리뷰에서 `submittedMessageId`, `submittedTurnNumber`가 `conversationHistory`의 방금 제출된 사용자 메시지와 일치하는지 검증하지 않는 문제가 확인되었다.
 - `next-message`는 사용자가 방금 제출한 메시지를 기준으로 다음 고정 질문 응답을 만드는 API이므로, 히스토리 마지막 메시지가 해당 `USER` 메시지와 일치하지 않으면 요청 검증 오류로 처리한다.
+
+## 2026-07-08 LAN-96 대화 종료 메시지 생성 API
+
+- 작업 브랜치는 `feat/LAN-95` 현재 HEAD에서 `feat/LAN-96`으로 분기했다.
+- SayNow 참고 기준은 `/Users/sangmin8817/Soma/saynow-ai`의 `origin/develop` 커밋 `6cf01f3`이다.
+- 기능상 같은 closing prompt 문구는 SayNow 문구를 최대한 그대로 가져오되, Landit 명세의 `conversationHistory` 기반 요청에 맞춘다.
+- 요청은 전체 `conversationHistory`를 받는다. 서비스는 마지막 `USER` 메시지와 직전 `AI` 메시지를 SayNow의 `currentTurn`처럼 파생해 프롬프트에서 강조한다.
+- `submittedMessageId`, `submittedTurnNumber`는 마지막 `USER` 메시지와 일치해야 하며, 마지막 사용자 메시지 직전에는 `AI` 메시지가 있어야 한다.
+- SayNow는 invalid LLM 응답을 fallback/repair로 보정하지만, LAN-96은 명세대로 필드 누락 또는 꼬리 질문 정책 위반을 `AI_RESPONSE_INVALID` 502로 처리한다.
+- LLM 호출 실패와 설정 누락은 Landit 기존 `next-message`와 같이 `AI_GENERATION_FAILED` 503으로 처리한다.
+- 성공 응답은 bare object가 아니라 Landit 공통 응답 래퍼 `ApiResponse[ClosingMessageResponse]`에 담는다.
+- FastAPI OpenAPI 스키마에서 `/api/v1/conversation/closing-message` 경로가 노출되는 것을 확인했다.
+
+## 2026-07-08 LAN-96 리뷰 점검
+
+- `INVALID_REQUEST` 기본 메시지가 LAN-96 명세의 "잘못된 요청입니다."와 달라 공통 에러 기본 문구를 맞췄다.
+- `next-message`와 `closing-message`의 OpenAI 호출, 예외 변환, JSON 파싱 흐름이 중복되어 `_request_json_completion`으로 공통화했다.
+- closing prompt 본문은 SayNow `origin/develop`의 closing system prompt를 유지하고, Landit 요청 구조 차이 때문에 user prompt만 전체 `conversationHistory` 기반으로 구성한다.

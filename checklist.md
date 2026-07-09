@@ -87,3 +87,28 @@
 - [x] 제출 메시지와 히스토리 일치 검증 구현.
 - [x] LAN-95 전체 unittest, compileall, diff check 재실행.
 - [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-96 대화 종료 메시지 생성 API
+
+- [x] `feat/LAN-96` 브랜치 생성.
+- [x] SayNow `origin/develop`의 `closing-message` 모델, 라우터, 프롬프트, 테스트 확인.
+- [x] Landit 계약 차이 확인. 전체 `conversationHistory`, 공통 응답 래퍼, invalid 502, 생성 실패 503 기준.
+- [x] LAN-96 구현 계획 문서 작성.
+- [x] `closing-message` 요청/응답 DTO 실패 테스트 작성.
+- [x] 최소 DTO 구현.
+- [x] closing-message 성공/프롬프트 계약 실패 테스트 작성.
+- [x] closing-message LLM 서비스와 라우터 구현.
+- [x] 응답 필드 누락, 꼬리 질문 정책 위반 502 테스트 작성.
+- [x] LLM 생성 실패 503 테스트 작성.
+- [x] README 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `closing-message` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.
+
+## 2026-07-08 LAN-96 리뷰 점검
+
+- [x] `ponytail`과 `review` 기준으로 중복, 과구현, 오류 가능성 점검.
+- [x] `INVALID_REQUEST` 기본 메시지를 LAN-96 명세 문구와 일치하도록 수정.
+- [x] next-message와 closing-message의 LLM 호출 중복을 공통 helper로 축소.
+- [x] 수정 후 전체 unittest, compileall, diff check 실행.
+- [x] 리뷰 수정 커밋 생성.

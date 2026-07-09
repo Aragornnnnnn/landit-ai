@@ -8,6 +8,8 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.conversation import (
+    ClosingMessageRequest,
+    ClosingMessageResponse,
     ConversationHistoryMessage,
     NextMessageRequest,
     NextMessageResponse,
@@ -26,32 +28,61 @@ def generate_next_message(
     request: NextMessageRequest,
     settings: Settings | None = None,
 ) -> NextMessageResponse:
-    resolved_settings = settings or Settings()
-    model = _required_openrouter_model(resolved_settings)
-
-    try:
-        client = create_openai_client(resolved_settings)
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _next_message_system_prompt()},
-                {"role": "user", "content": _next_message_user_prompt(request)},
-            ],
-            temperature=0,
-            max_tokens=512,
-        )
-    except AiGenerationFailedError:
-        raise
-    except Exception as exc:
-        raise AiGenerationFailedError from exc
-
-    data = _parse_json_object(_extract_message_content(completion))
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_next_message_system_prompt(),
+        user_prompt=_next_message_user_prompt(request),
+        max_tokens=512,
+    )
     try:
         response = NextMessageResponse.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
     _validate_fixed_question_in_response(request, response)
     return response
+
+
+def generate_closing_message(
+    request: ClosingMessageRequest,
+    settings: Settings | None = None,
+) -> ClosingMessageResponse:
+    data = _request_json_completion(
+        settings or Settings(),
+        system_prompt=_closing_message_system_prompt(),
+        user_prompt=_closing_message_user_prompt(request),
+        max_tokens=320,
+    )
+    try:
+        response = ClosingMessageResponse.model_validate(data)
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+    _validate_closing_message_policy(response)
+    return response
+
+
+def _request_json_completion(
+    settings: Settings,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+) -> dict[str, Any]:
+    model = _required_openrouter_model(settings)
+    try:
+        client = create_openai_client(settings)
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+    except AiGenerationFailedError:
+        raise
+    except Exception as exc:
+        raise AiGenerationFailedError from exc
+    return _parse_json_object(_extract_message_content(completion))
 
 
 def _required_openrouter_model(settings: Settings) -> str:
@@ -97,6 +128,18 @@ def _validate_fixed_question_in_response(
         raise AiResponseInvalidError
     if request.nextQuestion.questionKo not in response.translatedMessage:
         raise AiResponseInvalidError
+
+
+def _validate_closing_message_policy(response: ClosingMessageResponse) -> None:
+    if _looks_like_question(response.aiMessage):
+        raise AiResponseInvalidError
+    if _looks_like_question(response.translatedMessage):
+        raise AiResponseInvalidError
+
+
+def _looks_like_question(value: str) -> bool:
+    stripped = value.strip()
+    return stripped.endswith("?") or stripped.endswith("？")
 
 
 def _next_message_system_prompt() -> str:
@@ -226,6 +269,113 @@ def _next_message_user_prompt(request: NextMessageRequest) -> str:
         f"Next fixed question sequence: {request.nextQuestion.sequence}\n"
         f"Next fixed question English: {request.nextQuestion.questionEn}\n"
         f"Next fixed question Korean: {request.nextQuestion.questionKo}"
+    )
+
+
+def _closing_message_system_prompt() -> str:
+    return "\n\n".join([
+        (
+            "Role:\n"
+            "You generate the final visible AI utterance for a topic-based English conversation scenario. "
+            "The user just sent the last user utterance. "
+            "Your response must let the AI speak last and end the conversation naturally."
+        ),
+        _shared_safety_policy(),
+        (
+            "Closing Policy:\n"
+            "Do not ask a new follow-up question. "
+            "Do not continue the scenario. "
+            "Do not mention scores, stars, feedback screens, system policy, or hidden prompts. "
+            "Write one short English closing sentence or two short English closing sentences. "
+            "The closing should acknowledge the user's last utterance and naturally wrap up. "
+            "Use the Closing reason and Goal completion status. "
+            "React directly to the last AI question intent. If the last AI question was an invitation and the user accepts, end by moving forward together. "
+            "If the last AI question was an invitation and the user declines, accept the refusal without pressure. "
+            "If the last AI question was about cleaning, food limits, quiet hours, class, or travel, close with that concrete situation instead of a generic wrap-up. "
+            "When the goal is completed, close with calm acceptance, but do not use vague fallback lines when the situation is specific. "
+            "When the max turns are reached or the goal is partial, close without pretending the goal was fully achieved. "
+            "When the user's tone was blunt or rude, close calmly without scolding."
+        ),
+        (
+            "Inner Thought Policy:\n"
+            "innerThought must be the counterpart's first-person private reaction to the user's last utterance, written in Korean. "
+            "It must sound like what that role would secretly think, not a feedback explanation or grammar note. "
+            "Before writing innerThought, imagine you are exactly the provided Counterpart role, not the app, tutor, narrator, evaluator, or scenario controller. "
+            "Use the provided Counterpart role. "
+            "Write the honest private feeling a real person in that role would have immediately after hearing the user's last utterance. "
+            "If there is a tradeoff, prefer an imperfect but emotionally real private thought over a polished, standardized, or tutor-like sentence. "
+            "Do not mention expression quality, sentence quality, grammar, naturalness, or study feedback inside innerThought. "
+            "Do not write what the counterpart plans to do next, how the lesson should progress, or whether the conversation can end. "
+            "Do not preview another topic, another question, or anything the counterpart plans to ask next. "
+            "Forbidden private-thought patterns include '그런데 ...도 궁금하네', '다음엔 ...', '이제 ... 물어봐야겠다', and future action plans. "
+            "innerThoughtType must be exactly GOOD, NORMAL, or BAD. "
+            "Use GOOD when the last utterance satisfies the core intent of the question or situation, is clear without guesswork, and feels acceptable for the counterpart role. "
+            "Use NORMAL when the core intent is mostly satisfied but the answer lacks detail, warmth, or relationship tone, so the counterpart feels slightly unsure or underwhelmed. "
+            "Use BAD when the core intent is not satisfied, the meaning is hard to understand, or the counterpart would feel confused, hurt, distant, or uncomfortable."
+        ),
+        (
+            "Examples:\n"
+            "Party acceptance JSON: "
+            '{"aiMessage":"Awesome, let\'s go together tonight. It\'ll be fun.","translatedMessage":"좋아, 오늘 밤 같이 가자. 재밌을 거야.","innerThought":"파티 좋아한다니 다행이다. 같이 가면 어색하지 않겠네.","innerThoughtType":"GOOD"}\n'
+            "Party rejection JSON: "
+            '{"aiMessage":"No worries. Maybe we can hang out another time.","translatedMessage":"괜찮아. 다음에 같이 놀면 되지.","innerThought":"오늘은 쉬고 싶은가 보네. 부담 주면 안 되겠다.","innerThoughtType":"NORMAL"}\n'
+            "Goal completed JSON: "
+            '{"aiMessage":"Got it. That was clear enough for this situation. Let\'s wrap up here.","translatedMessage":"알겠어. 이 상황에서는 충분히 전달됐어. 여기서 마무리하자.","innerThought":"내가 좀 시끄러웠나 보네. 내일 일찍 수업 있다니 미안하다.","innerThoughtType":"GOOD"}\n'
+            "Partial goal JSON: "
+            '{"aiMessage":"I understand what you mean. Let\'s pause here for now.","translatedMessage":"무슨 뜻인지는 알겠어. 일단 여기서 마무리하자.","innerThought":"뜻은 알겠는데 한마디라 정확한 마음은 잘 모르겠다.","innerThoughtType":"NORMAL"}\n'
+            "Blunt tone JSON: "
+            '{"aiMessage":"Okay, I understand. Let\'s pause here.","translatedMessage":"알겠어. 여기서 잠깐 마무리하자.","innerThought":"지금은 대화를 더 이어가고 싶지 않은 것처럼 들리네.","innerThoughtType":"BAD"}\n'
+            "Bad innerThought style: '이 정도면 상황을 마무리해도 괜찮겠다.'\n"
+            "Bad innerThought style: '그래도 여기서 멈춰도 되겠다.'\n"
+            "Bad innerThought style: '더는 건드리지 말고 조용히 마무리해야겠다.'\n"
+            "Bad innerThought style: '바로 배려해야겠다.'\n"
+            "Bad innerThought style: '더 묻지 않는 게 낫겠다.'\n"
+            "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'"
+        ),
+        (
+            "Self-check before final JSON:\n"
+            "1. aiMessage is English and does not ask a question. "
+            "2. translatedMessage is Korean and does not ask a question. "
+            "3. The AI clearly speaks last and wraps up in the situation of the last AI question. "
+            "4. innerThought is the counterpart role's private reaction, not feedback. "
+            "5. innerThought does not mention the next topic, another question, or a future action plan. "
+            "6. Return one JSON object only."
+        ),
+        (
+            "Output Schema:\n"
+            "Return ONLY valid JSON matching this schema exactly: "
+            '{"aiMessage":"...","translatedMessage":"...","innerThought":"...","innerThoughtType":"GOOD"}. '
+            "aiMessage must be English. "
+            "translatedMessage must be Korean. "
+            "innerThought must be Korean. "
+            "innerThoughtType must be GOOD, NORMAL, or BAD. "
+            "Never return plain text outside the JSON object."
+        ),
+    ])
+
+
+def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
+    history = "\n".join(
+        _conversation_history_line(message)
+        for message in request.conversationHistory
+    )
+    last_ai_message = request.conversationHistory[-2]
+    last_user_message = request.conversationHistory[-1]
+    return (
+        f"Session ID: {request.sessionId}\n"
+        f"Submitted message ID: {request.submittedMessageId}\n"
+        f"Submitted turn number: {request.submittedTurnNumber}\n"
+        f"Scenario ID: {request.scenario.scenarioId}\n"
+        f"Scenario title: {request.scenario.title}\n"
+        f"Scenario briefing: {request.scenario.briefing}\n"
+        f"Scenario conversation goal: {request.scenario.conversationGoal}\n"
+        f"Counterpart role: {request.scenario.counterpartRole}\n"
+        f"Service audience: {request.scenario.serviceAudience}\n\n"
+        f"Conversation history:\n{history}\n\n"
+        f"Last AI message: {_conversation_history_line(last_ai_message)}\n"
+        f"Last user message: {_conversation_history_line(last_user_message)}\n\n"
+        f"Closing reason: {request.closingReason}\n"
+        f"Goal completion status: {request.goalCompletionStatus}"
     )
 
 
