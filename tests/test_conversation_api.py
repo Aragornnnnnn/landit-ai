@@ -1,10 +1,16 @@
-# 다음 AI 메시지 생성 API의 HTTP 계약을 검증하는 unittest 모듈
+# 대화 생성 API의 HTTP 계약을 검증하는 unittest 모듈
 import json
 import unittest
 import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.conversation.application.next_message_service import (
+    MessageFeedbackNotReadyError,
+    clear_message_feedback_cache,
+    get_cached_message_feedback,
+    get_expected_message_feedbacks,
+)
 from app.core.config import Settings
 from app.main import create_app
 
@@ -93,6 +99,28 @@ def valid_closing_message_payload():
         ],
         "closingReason": "GOAL_COMPLETED",
         "goalCompletionStatus": "COMPLETED",
+    }
+
+
+def valid_message_feedback_payload():
+    return {
+        "sessionId": 100,
+        "messageId": 1001,
+        "turnNumber": 1,
+        "messageSequence": 2,
+        "scenario": {
+            "scenarioId": 10,
+            "title": "음식에 대한 대화하기",
+            "briefing": "좋아하는 음식과 최근에 먹은 음식에 대해 이야기합니다.",
+            "conversationGoal": "내 취향과 경험을 영어로 설명해봅니다.",
+            "counterpartRole": "friend",
+            "serviceAudience": "KOREAN_LEARNER",
+        },
+        "messageContext": {
+            "aiMessage": "What food do you like? Why do you like it?",
+            "aiMessageTranslation": "좋아하는 음식이 있어? 왜 좋아해?",
+            "userMessage": "why do you wanna know that?",
+        },
     }
 
 
@@ -287,6 +315,259 @@ class NextMessageApiTests(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
         openai_class.assert_not_called()
 
+
+class MessageFeedbackApiTests(unittest.TestCase):
+    def setUp(self):
+        clear_message_feedback_cache()
+
+    def test_message_feedback_generates_feedback_and_returns_preparing(self):
+        ai_response = {
+            "messageId": 1001,
+            "feedbackType": "NEEDS_IMPROVEMENT",
+            "baseLocaleAnalogy": '"그걸 왜 알고 싶은데?"라고 살짝 방어적으로 되묻는 것과 같아요.',
+            "positiveFeedback": "상대의 질문 의도를 확인하려고 한 시도는 좋아요.",
+            "feedbackDetail": None,
+            "correctionExpression": "I was just curious why you asked.",
+            "correctionReason": "why do you wanna know that?은 상황에 따라 따지는 느낌으로 들릴 수 있어요.",
+            "benchmarkMessage": None,
+            "detectedPatterns": [],
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            response.json(),
+            {
+                "success": True,
+                "data": {
+                    "sessionId": 100,
+                    "messageId": 1001,
+                    "feedbackStatus": "PREPARING",
+                },
+                "error": None,
+            },
+        )
+        messages = fake_openai.completions.kwargs["messages"]
+        self.assertIn("Counterpart role: friend", messages[1]["content"])
+        self.assertIn("Message ID: 1001", messages[1]["content"])
+        self.assertIn("Message sequence: 2", messages[1]["content"])
+        self.assertIn(
+            "User utterance: why do you wanna know that?",
+            messages[1]["content"],
+        )
+        self.assertIn("baseLocaleAnalogy", messages[0]["content"])
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(cached_feedback.feedbackType, "NEEDS_IMPROVEMENT")
+        self.assertEqual(
+            cached_feedback.correctionExpression,
+            "I was just curious why you asked.",
+        )
+
+    def test_message_feedback_generates_and_caches_good_feedback(self):
+        ai_response = {
+            "messageId": 1001,
+            "feedbackType": "GOOD",
+            "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
+            "positiveFeedback": None,
+            "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
+            "correctionExpression": None,
+            "correctionReason": None,
+            "benchmarkMessage": "이유를 자연스럽게 붙여 말했어요.",
+            "detectedPatterns": [
+                {
+                    "errorType": "because_clause",
+                    "status": "correct",
+                    "evidence": "because it is spicy",
+                },
+            ],
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(cached_feedback.feedbackType, "GOOD")
+        self.assertIsNone(cached_feedback.positiveFeedback)
+        self.assertIsNone(cached_feedback.correctionExpression)
+        self.assertEqual(
+            get_expected_message_feedbacks(100, [1001]),
+            [cached_feedback],
+        )
+
+    def test_message_feedback_invalid_ai_response_returns_502(self):
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "messageId": 1001,
+                    "feedbackType": "NEEDS_IMPROVEMENT",
+                    "baseLocaleAnalogy": '"그걸 왜 알고 싶은데?"라고 살짝 방어적으로 되묻는 것과 같아요.',
+                    "positiveFeedback": "상대의 질문 의도를 확인하려고 한 시도는 좋아요.",
+                    "feedbackDetail": None,
+                    "correctionExpression": None,
+                    "correctionReason": "상황에 따라 따지는 느낌으로 들릴 수 있어요.",
+                    "benchmarkMessage": None,
+                    "detectedPatterns": [],
+                },
+            ),
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertIsNone(get_cached_message_feedback(100, 1001))
+
+    def test_message_feedback_mismatched_message_id_returns_502(self):
+        ai_response = {
+            "messageId": 9999,
+            "feedbackType": "GOOD",
+            "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
+            "positiveFeedback": None,
+            "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
+            "correctionExpression": None,
+            "correctionReason": None,
+            "benchmarkMessage": None,
+            "detectedPatterns": [],
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_message_feedback_generation_failure_returns_503(self):
+        fake_openai = FakeOpenAI(error=RuntimeError("network failed"))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json(),
+            {
+                "success": False,
+                "data": None,
+                "error": {
+                    "code": "AI_GENERATION_FAILED",
+                    "message": "AI 응답 생성에 실패했습니다.",
+                },
+            },
+        )
+
+    def test_message_feedback_missing_model_returns_503(self):
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model=None,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI") as openai_class:
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+        openai_class.assert_not_called()
+
+    def test_message_feedback_cache_expires_and_reports_missing_entries(self):
+        ai_response = {
+            "messageId": 1001,
+            "feedbackType": "GOOD",
+            "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
+            "positiveFeedback": None,
+            "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
+            "correctionExpression": None,
+            "correctionReason": None,
+            "benchmarkMessage": None,
+            "detectedPatterns": [],
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with (
+            patch("app.core.openai_client.OpenAI", return_value=fake_openai),
+            patch(
+                "app.conversation.application.next_message_service._cache_now",
+                return_value=100.0,
+            ),
+        ):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertIsNotNone(get_cached_message_feedback(100, 1001, now=100.0))
+        self.assertIsNone(get_cached_message_feedback(100, 1001, now=10901.0))
+        with self.assertRaises(MessageFeedbackNotReadyError) as context:
+            get_expected_message_feedbacks(100, [1001], now=10901.0)
+        self.assertEqual(context.exception.missing_message_ids, [1001])
+
+
+class ClosingMessageApiTests(unittest.TestCase):
     def test_closing_message_returns_final_ai_message_and_prompt_context(self):
         ai_response = {
             "aiMessage": "Sure, I'll keep it down tonight. Good luck with your class tomorrow.",

@@ -112,3 +112,34 @@
 - [x] next-message와 closing-message의 LLM 호출 중복을 공통 helper로 축소.
 - [x] 수정 후 전체 unittest, compileall, diff check 실행.
 - [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-97 메시지별 피드백 생성 API
+
+- [x] `feat/LAN-97` 브랜치 생성.
+- [x] SayNow `origin/develop`의 turn-feedback 모델, 프롬프트, cache 구조 확인.
+- [x] LAN-97 구현 계획 문서 작성.
+- [x] message-feedback 요청/응답 DTO 실패 테스트 작성.
+- [x] GOOD, NEEDS_IMPROVEMENT 필드 정책 실패 테스트 작성.
+- [x] 메시지 피드백 TTL cache 테스트 작성.
+- [x] DTO, 서비스, cache helper, 라우터 구현.
+- [x] README 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `message-feedback` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.
+
+## 2026-07-08 LAN-97 리뷰 점검
+
+- [x] `ponytail` 기준으로 과구현, 사용처 없는 helper, 불필요한 프롬프트 출력 필드 확인.
+- [x] 사용처 없는 cache entry 조회 helper 제거.
+- [x] 서버가 저장하지 않는 `detectedPatterns`를 프롬프트 출력 스키마에서 제거.
+- [x] cache의 단일 프로세스 한계를 주석으로 명시.
+- [x] 전체 unittest, compileall, diff check 재실행.
+- [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-97 문서 구조 분리
+
+- [x] README에 섞인 개발, 아키텍처, API 세부 내용을 분리할 범위 확인.
+- [x] README를 프로젝트 진입점과 문서 링크 중심으로 축소.
+- [x] 아키텍처 세부 문서를 `docs/architecture.md`로 분리.
+- [x] conversation API 책임과 정책을 `docs/api/conversation.md`로 분리.
+- [x] 개발 환경과 검증 명령을 `docs/development.md`로 분리.

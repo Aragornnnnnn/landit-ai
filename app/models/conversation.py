@@ -106,6 +106,17 @@ class ClosingReason(StrEnum):
     TIME_LIMIT_REACHED = "TIME_LIMIT_REACHED"
 
 
+class FeedbackStatus(StrEnum):
+    PREPARING = "PREPARING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+
+class FeedbackType(StrEnum):
+    GOOD = "GOOD"
+    NEEDS_IMPROVEMENT = "NEEDS_IMPROVEMENT"
+
+
 class NextMessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -156,3 +167,101 @@ class ClosingMessageResponse(BaseModel):
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+def _strip_base_locale_analogy_framing(value: str) -> str:
+    stripped = value.strip()
+    framing_prefixes = (
+        "한국어로 비유하자면",
+        "한국어로 비유하면",
+        "한국어로 치면",
+    )
+    for prefix in framing_prefixes:
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].lstrip(" ,，:：")
+    return stripped
+
+
+class MessageContext(BaseModel):
+    aiMessage: str
+    aiMessageTranslation: str | None = None
+    userMessage: str
+
+    @field_validator("aiMessage", "userMessage")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("aiMessageTranslation")
+    @classmethod
+    def translated_message_must_not_be_blank(cls, value: str | None) -> str | None:
+        return _optional_not_blank(value)
+
+
+class MessageFeedbackRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    turnNumber: int = Field(gt=0)
+    messageSequence: int = Field(gt=0)
+    scenario: ScenarioContext
+    messageContext: MessageContext
+
+
+class MessageFeedbackResponse(BaseModel):
+    sessionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    feedbackStatus: FeedbackStatus
+
+
+class MessageFeedbackData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messageId: int = Field(gt=0)
+    feedbackType: FeedbackType
+    baseLocaleAnalogy: str
+    positiveFeedback: str | None = None
+    feedbackDetail: str | None = None
+    correctionExpression: str | None = None
+    correctionReason: str | None = None
+    benchmarkMessage: str | None = None
+
+    @field_validator("baseLocaleAnalogy")
+    @classmethod
+    def base_locale_analogy_must_not_be_blank_or_framed(cls, value: str) -> str:
+        return _validate_not_blank(_strip_base_locale_analogy_framing(value))
+
+    @field_validator(
+        "positiveFeedback",
+        "feedbackDetail",
+        "correctionExpression",
+        "correctionReason",
+        "benchmarkMessage",
+    )
+    @classmethod
+    def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
+        return _optional_not_blank(value)
+
+    @model_validator(mode="after")
+    def feedback_fields_must_match_type(self) -> Self:
+        if self.feedbackType == FeedbackType.NEEDS_IMPROVEMENT:
+            if self.positiveFeedback is None:
+                raise ValueError("positiveFeedback is required for NEEDS_IMPROVEMENT")
+            if self.feedbackDetail is not None:
+                raise ValueError("feedbackDetail must be null for NEEDS_IMPROVEMENT")
+            if self.correctionExpression is None:
+                raise ValueError("correctionExpression is required for NEEDS_IMPROVEMENT")
+            if self.correctionReason is None:
+                raise ValueError("correctionReason is required for NEEDS_IMPROVEMENT")
+            if self.benchmarkMessage is not None:
+                raise ValueError("benchmarkMessage must be null for NEEDS_IMPROVEMENT")
+            return self
+
+        if self.positiveFeedback is not None:
+            raise ValueError("positiveFeedback must be null for GOOD")
+        if self.feedbackDetail is None:
+            raise ValueError("feedbackDetail is required for GOOD")
+        if self.correctionExpression is not None:
+            raise ValueError("correctionExpression must be null for GOOD")
+        if self.correctionReason is not None:
+            raise ValueError("correctionReason must be null for GOOD")
+        return self
