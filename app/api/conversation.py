@@ -1,0 +1,37 @@
+# 대화 생성 API 라우터를 정의하는 모듈
+from fastapi import APIRouter, Request
+
+from app.common.errors import ApiException, ErrorCode
+from app.common.response import ApiResponse, success_response
+from app.models.conversation import NextMessageRequest, NextMessageResponse
+from app.conversation.application.next_message_service import (
+    AiGenerationFailedError,
+    AiResponseInvalidError,
+    generate_next_message,
+)
+
+router = APIRouter(prefix="/api/v1/conversation", tags=["conversation"])
+
+
+@router.post(
+    "/next-message",
+    response_model=ApiResponse[NextMessageResponse],
+)
+def create_next_message(
+    payload: NextMessageRequest,
+    request: Request,
+) -> ApiResponse[NextMessageResponse]:
+    try:
+        response = generate_next_message(payload, request.app.state.settings)
+    except AiResponseInvalidError as exc:
+        raise ApiException(
+            status_code=502,
+            error_code=ErrorCode.AI_RESPONSE_INVALID,
+        ) from exc
+    except AiGenerationFailedError as exc:
+        raise ApiException(
+            status_code=503,
+            error_code=ErrorCode.AI_GENERATION_FAILED,
+        ) from exc
+
+    return success_response(response)

@@ -64,3 +64,26 @@
 - [x] dev/prod Worker `Verify ECS service` 단계에 bounded wait와 ECS 이벤트 출력 추가.
 - [x] YAML 문법과 diff 검증.
 - [x] 논리 단위 커밋 생성.
+
+## 2026-07-08 LAN-95 다음 AI 메시지 생성 API
+
+- [x] `feat/LAN-95` 브랜치 생성.
+- [x] Landit 현재 API, 설정, 공통 에러 응답 구조 확인.
+- [x] SayNow `origin/develop`의 다음 질문/속마음 프롬프트 구조 확인.
+- [x] `next-message` 요청/응답 DTO 실패 테스트 작성.
+- [x] LLM 응답 형식 오류 502 테스트 작성.
+- [x] LLM 생성 실패 503 테스트 작성.
+- [x] 최소 구현으로 `POST /api/v1/conversation/next-message` 추가.
+- [x] README 또는 관련 문서에 API 반영.
+- [x] `.venv/bin/python -m unittest discover -s tests` 실행.
+- [x] 최종 diff와 git 상태 확인.
+- [x] 논리 단위 커밋 생성.
+- [x] `next-message`를 SayNow식 고정 질문 체계로 수정.
+- [x] `nextQuestion` 요청 DTO와 프롬프트 실패 테스트 작성.
+- [x] 응답이 고정 질문 영어/한국어를 포함하지 않으면 502 처리.
+- [x] `.venv/bin/python -m unittest discover -s tests` 재실행.
+- [x] 고정 질문 체계 수정 커밋 생성.
+- [x] LAN-95 리뷰에서 찾은 제출 메시지와 히스토리 불일치 검증 테스트 추가.
+- [x] 제출 메시지와 히스토리 일치 검증 구현.
+- [x] LAN-95 전체 unittest, compileall, diff check 재실행.
+- [x] 리뷰 수정 커밋 생성.
