@@ -438,6 +438,13 @@ class MessageFeedbackApiTests(unittest.TestCase):
             messages[0]["content"],
         )
         self.assertNotIn("SCENARIO_OPENING_INSTRUCTION Policy", messages[0]["content"])
+        self.assertIn("AI_MESSAGE Feedback Examples", messages[0]["content"])
+        self.assertIn("Why do you wanna know that?", messages[0]["content"])
+        self.assertNotIn(
+            "SCENARIO_OPENING_INSTRUCTION Feedback Examples",
+            messages[0]["content"],
+        )
+        self.assertNotIn("I like soccer.", messages[0]["content"])
         self.assertIn("Counterpart role: friend", messages[1]["content"])
         self.assertIn("Message ID: 1001", messages[1]["content"])
         self.assertIn("Message sequence: 2", messages[1]["content"])
@@ -491,6 +498,13 @@ class MessageFeedbackApiTests(unittest.TestCase):
             messages[0]["content"],
         )
         self.assertNotIn("AI_MESSAGE Policy", messages[0]["content"])
+        self.assertIn(
+            "SCENARIO_OPENING_INSTRUCTION Feedback Examples",
+            messages[0]["content"],
+        )
+        self.assertIn("I like soccer.", messages[0]["content"])
+        self.assertNotIn("AI_MESSAGE Feedback Examples", messages[0]["content"])
+        self.assertNotIn("Why do you wanna know that?", messages[0]["content"])
         self.assertIn(
             "Evaluation context type: SCENARIO_OPENING_INSTRUCTION",
             messages[1]["content"],
