@@ -158,3 +158,14 @@
 - [x] 전체 unittest, compileall, diff check 실행.
 - [x] OpenAPI 스키마에 `session-feedback` 경로 노출 확인.
 - [x] 의미 단위 커밋 생성.
+
+## 2026-07-11 LAN-93 USER First 메시지별 피드백
+
+- [x] `feat/LAN-93` 브랜치 생성 및 기준선 unittest 확인.
+- [x] AI_MESSAGE와 SCENARIO_OPENING_INSTRUCTION 요청 계약 확정.
+- [x] USER First 요청 DTO와 프롬프트 분기 실패 테스트 작성.
+- [x] 평가 컨텍스트 DTO와 조건부 검증 구현.
+- [x] USER First 평가 프롬프트와 기존 AI_MESSAGE 회귀 경로 구현.
+- [x] conversation API 문서와 OpenAPI 스키마 확인.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 의미 단위 커밋 생성.

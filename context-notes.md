@@ -126,3 +126,13 @@
 - `starRating`은 JSON number로 내려주고 BE는 BigDecimal로 받는다. 허용 값은 `1.0`, `1.5`, `2.0`, `2.5`, `3.0`이다.
 - `MESSAGE_FEEDBACK_NOT_READY` 409는 공통 에러 래퍼로 반환하되 외부 응답에는 누락 메시지 ID를 포함하지 않는다.
 - 세션 최종 피드백 생성 성공 시 해당 세션 캐시는 삭제하고, 피드백 미준비나 LLM 오류 시 재시도를 위해 캐시를 보존한다.
+
+## 2026-07-11 LAN-93 USER First 메시지별 피드백
+
+- 메시지별 피드백은 별도 API를 추가하지 않고 기존 `POST /api/v1/conversation/message-feedback`를 확장한다. 응답, cache key, 최종 세션 피드백 연결 기준은 그대로 `sessionId`, `messageId`를 사용한다.
+- 요청에서 기존 `messageContext`를 제거하고 최상위 `evaluationContext`, `userMessage`를 사용한다. `evaluationContext`는 LLM 내부 prompt와 혼동되지 않는 평가 기준 컨텍스트다.
+- 평가 컨텍스트 type은 `AI_MESSAGE`, `SCENARIO_OPENING_INSTRUCTION`만 지원한다. BE는 시나리오 `firstSpeaker`를 기준으로 type을 결정하고 AI 서버는 전달받은 type을 기준으로 평가 정책을 분기한다.
+- `messageSequence`는 턴 내부 순번이 아니라 세션 전체 메시지 순번이다. AI 서버는 양수만 검증하며 type별 고정 순번을 강제하지 않는다.
+- `SCENARIO_OPENING_INSTRUCTION`은 USER First 첫 발화이므로 `turnNumber == 1`을 검증하고 `translatedContent`는 기준 locale 안내문 정책에 따라 `null`을 요구한다.
+- USER First는 시작 안내 수행, 시작 표현의 자연스러움, 문법, 상황 적절성, 상대 역할에 맞는 공손함을 평가한다. AI_MESSAGE의 질문 이해와 답변 관련성은 USER First 평가에서 제외한다.
+- 캐시 구조, 재시도, `nativeScore` 가중치, 다중 인스턴스 공유는 LAN-93 범위에 포함하지 않는다. 최종 세션 피드백은 USER First 첫 메시지 ID를 `expectedMessageIds`에 포함하는 별도 후속 범위에서 연결한다.
