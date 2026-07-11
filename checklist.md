@@ -169,3 +169,10 @@
 - [x] conversation API 문서와 OpenAPI 스키마 확인.
 - [x] 전체 unittest, compileall, diff check 실행.
 - [x] 의미 단위 커밋 생성.
+
+## 2026-07-11 LAN-93 자체 리뷰 후속 수정
+
+- [x] AI_MESSAGE와 SCENARIO_OPENING_INSTRUCTION의 피드백 예시 분리 테스트 작성.
+- [x] 평가 컨텍스트 타입별 GOOD, NEEDS_IMPROVEMENT 예시 분리.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 문서 규칙에 따른 의미 단위 커밋 생성.

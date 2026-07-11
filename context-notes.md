@@ -136,3 +136,8 @@
 - `SCENARIO_OPENING_INSTRUCTION`은 USER First 첫 발화이므로 `turnNumber == 1`을 검증하고 `translatedContent`는 기준 locale 안내문 정책에 따라 `null`을 요구한다.
 - USER First는 시작 안내 수행, 시작 표현의 자연스러움, 문법, 상황 적절성, 상대 역할에 맞는 공손함을 평가한다. AI_MESSAGE의 질문 이해와 답변 관련성은 USER First 평가에서 제외한다.
 - 캐시 구조, 재시도, `nativeScore` 가중치, 다중 인스턴스 공유는 LAN-93 범위에 포함하지 않는다. 최종 세션 피드백은 USER First 첫 메시지 ID를 `expectedMessageIds`에 포함하는 별도 후속 범위에서 연결한다.
+
+## 2026-07-11 LAN-93 자체 리뷰 후속 수정
+
+- 타입별 판단 정책은 분리되었지만 공통 Feedback Examples가 AI 질문 응답 상황만 보여줘 opening 평가를 왜곡할 수 있다.
+- 출력 필드 정책과 JSON 스키마는 공통으로 유지하고, GOOD와 NEEDS_IMPROVEMENT 예시만 `evaluationContext.type`에 따라 분리한다.
