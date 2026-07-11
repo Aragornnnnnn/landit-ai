@@ -13,7 +13,7 @@ from app.conversation.application.next_message_service import (
 )
 from app.core.config import Settings
 from app.main import create_app
-from app.models.conversation import FeedbackStatus
+from app.models.conversation import FeedbackStatus, MessageFeedbackRequest
 
 
 def make_settings(**overrides):
@@ -117,11 +117,35 @@ def valid_message_feedback_payload():
             "counterpartRole": "friend",
             "serviceAudience": "KOREAN_LEARNER",
         },
-        "messageContext": {
-            "aiMessage": "What food do you like? Why do you like it?",
-            "aiMessageTranslation": "좋아하는 음식이 있어? 왜 좋아해?",
-            "userMessage": "why do you wanna know that?",
+        "evaluationContext": {
+            "type": "AI_MESSAGE",
+            "content": "What food do you like? Why do you like it?",
+            "translatedContent": "좋아하는 음식이 있어? 왜 좋아해?",
         },
+        "userMessage": "why do you wanna know that?",
+    }
+
+
+def valid_opening_message_feedback_payload():
+    return {
+        "sessionId": 100,
+        "messageId": 1001,
+        "turnNumber": 1,
+        "messageSequence": 1,
+        "scenario": {
+            "scenarioId": 10,
+            "title": "카페에서 음료 주문하기",
+            "briefing": "카페 점원에게 원하는 음료를 주문합니다.",
+            "conversationGoal": "원하는 음료를 자연스럽고 공손하게 주문합니다.",
+            "counterpartRole": "cafe staff",
+            "serviceAudience": "KOREAN_LEARNER",
+        },
+        "evaluationContext": {
+            "type": "SCENARIO_OPENING_INSTRUCTION",
+            "content": "점원에게 먼저 주문하고 싶은 음료를 말해보세요.",
+            "translatedContent": None,
+        },
+        "userMessage": "Can I get an iced americano?",
     }
 
 
@@ -408,6 +432,19 @@ class MessageFeedbackApiTests(unittest.TestCase):
             },
         )
         messages = fake_openai.completions.kwargs["messages"]
+        self.assertIn("AI_MESSAGE Policy", messages[0]["content"])
+        self.assertIn(
+            "Relevance to the AI message is an actionable issue",
+            messages[0]["content"],
+        )
+        self.assertNotIn("SCENARIO_OPENING_INSTRUCTION Policy", messages[0]["content"])
+        self.assertIn("AI_MESSAGE Feedback Examples", messages[0]["content"])
+        self.assertIn("Why do you wanna know that?", messages[0]["content"])
+        self.assertNotIn(
+            "SCENARIO_OPENING_INSTRUCTION Feedback Examples",
+            messages[0]["content"],
+        )
+        self.assertNotIn("I like soccer.", messages[0]["content"])
         self.assertIn("Counterpart role: friend", messages[1]["content"])
         self.assertIn("Message ID: 1001", messages[1]["content"])
         self.assertIn("Message sequence: 2", messages[1]["content"])
@@ -422,6 +459,111 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             cached_feedback.correctionExpression,
             "I was just curious why you asked.",
+        )
+
+    def test_message_feedback_accepts_user_opening_instruction(self):
+        ai_response = {
+            "messageId": 1001,
+            "feedbackType": "GOOD",
+            "baseLocaleAnalogy": '"아이스 아메리카노 한 잔 주세요"라고 자연스럽게 주문하는 것과 같아요.',
+            "positiveFeedback": None,
+            "feedbackDetail": "원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.",
+            "correctionExpression": None,
+            "correctionReason": None,
+            "benchmarkMessage": None,
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_opening_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "PREPARING")
+        messages = fake_openai.completions.kwargs["messages"]
+        self.assertIn(
+            "SCENARIO_OPENING_INSTRUCTION Policy",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Opening instruction fulfillment is an actionable issue",
+            messages[0]["content"],
+        )
+        self.assertNotIn("AI_MESSAGE Policy", messages[0]["content"])
+        self.assertIn(
+            "SCENARIO_OPENING_INSTRUCTION Feedback Examples",
+            messages[0]["content"],
+        )
+        self.assertIn("I like soccer.", messages[0]["content"])
+        self.assertNotIn("AI_MESSAGE Feedback Examples", messages[0]["content"])
+        self.assertNotIn("Why do you wanna know that?", messages[0]["content"])
+        self.assertIn(
+            "Evaluation context type: SCENARIO_OPENING_INSTRUCTION",
+            messages[1]["content"],
+        )
+        self.assertIn(
+            "점원에게 먼저 주문하고 싶은 음료를 말해보세요.",
+            messages[1]["content"],
+        )
+        self.assertIn("Counterpart role: cafe staff", messages[1]["content"])
+        self.assertIn("Can I get an iced americano?", messages[1]["content"])
+
+    def test_opening_instruction_rejects_turn_after_first_turn(self):
+        payload = valid_opening_message_feedback_payload()
+        payload["turnNumber"] = 2
+        app = create_app(make_settings())
+
+        with patch("app.core.openai_client.OpenAI") as openai_class:
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
+        openai_class.assert_not_called()
+
+    def test_opening_instruction_does_not_require_fixed_message_sequence(self):
+        payload = valid_opening_message_feedback_payload()
+        payload["messageSequence"] = 5
+
+        request = MessageFeedbackRequest.model_validate(payload)
+
+        self.assertEqual(request.messageSequence, 5)
+
+    def test_opening_instruction_rejects_translated_content(self):
+        payload = valid_opening_message_feedback_payload()
+        payload["evaluationContext"]["translatedContent"] = "Order a drink first."
+        app = create_app(make_settings())
+
+        with patch("app.core.openai_client.OpenAI") as openai_class:
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
+        openai_class.assert_not_called()
+
+    def test_message_feedback_openapi_uses_evaluation_context_contract(self):
+        schemas = create_app(make_settings()).openapi()["components"]["schemas"]
+        request_schema = schemas["MessageFeedbackRequest"]
+
+        self.assertIn("evaluationContext", request_schema["properties"])
+        self.assertIn("userMessage", request_schema["properties"])
+        self.assertNotIn("messageContext", request_schema["properties"])
+        self.assertEqual(
+            schemas["EvaluationContextType"]["enum"],
+            ["AI_MESSAGE", "SCENARIO_OPENING_INSTRUCTION"],
         )
 
     def test_message_feedback_generates_and_caches_good_feedback(self):
@@ -631,7 +773,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         payload = valid_message_feedback_payload()
         payload["messageId"] = feedback["messageId"]
         if user_message is not None:
-            payload["messageContext"]["userMessage"] = user_message
+            payload["userMessage"] = user_message
         fake_openai = FakeOpenAI(content=json.dumps(feedback))
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(

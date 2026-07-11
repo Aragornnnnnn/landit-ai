@@ -42,7 +42,24 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 
 ## `POST /api/v1/conversation/message-feedback`
 
-사용자 메시지 1개의 피드백을 생성하고 TTL 있는 in-memory cache에 저장한 뒤 202 `PREPARING`을 반환합니다.
+사용자 메시지 1개의 피드백을 생성하고 TTL 있는 in-memory cache에 저장한 뒤 202 `PREPARING`을 반환합니다. 직전 AI 메시지에 대한 답변과 USER First 시나리오의 첫 사용자 발화를 모두 처리합니다.
+
+요청은 평가 기준이 되는 `evaluationContext`와 평가 대상인 `userMessage`를 분리해 전달합니다. 기존 `messageContext`는 사용하지 않습니다.
+
+`evaluationContext.type`은 다음 값을 지원합니다.
+
+- `AI_MESSAGE`: 직전 AI 메시지에 대한 답변을 평가합니다.
+- `SCENARIO_OPENING_INSTRUCTION`: 시나리오 시작 안내에 따른 USER First 첫 발화를 평가합니다.
+
+`evaluationContext`에는 `content`와 선택 필드인 `translatedContent`를 포함합니다. `SCENARIO_OPENING_INSTRUCTION`은 `turnNumber`가 1이어야 하며, 안내 문구 자체가 기준 locale이므로 `translatedContent`는 `null`이어야 합니다.
+
+`messageSequence`는 세션 전체 메시지 순번입니다. AI 서버는 양수 여부만 검증하며, 평가 컨텍스트 type 판별이나 type별 고정 순번 검증에는 사용하지 않습니다.
+
+평가 기준은 type에 따라 다음과 같이 달라집니다.
+
+- `AI_MESSAGE`는 직전 AI 메시지의 이해와 답변 관련성을 평가합니다.
+- `SCENARIO_OPENING_INSTRUCTION`은 시작 안내 수행 여부, 시작 표현의 자연스러움, 상황 적절성, 상대 역할에 맞는 공손함을 평가합니다. AI 질문에 대한 답변 관련성은 평가하지 않습니다.
+- 두 type 모두 문법, 어휘, 자연스러움, 의미 전달력, 상대 역할에 맞는 뉘앙스를 평가합니다.
 
 응답에는 다음 필드를 포함합니다.
 

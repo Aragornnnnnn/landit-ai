@@ -15,6 +15,7 @@ from app.models.conversation import (
     ClosingMessageRequest,
     ClosingMessageResponse,
     ConversationHistoryMessage,
+    EvaluationContextType,
     FeedbackStatus,
     FeedbackType,
     MessageFeedbackData,
@@ -101,7 +102,9 @@ def generate_message_feedback(
 ) -> MessageFeedbackResponse:
     data = _request_json_completion(
         settings or Settings(),
-        system_prompt=_message_feedback_system_prompt(),
+        system_prompt=_message_feedback_system_prompt(
+            request.evaluationContext.type,
+        ),
         user_prompt=_message_feedback_user_prompt(request),
         max_tokens=768,
     )
@@ -117,7 +120,7 @@ def generate_message_feedback(
     _store_message_feedback(
         request.sessionId,
         feedback,
-        user_message=request.messageContext.userMessage,
+        user_message=request.userMessage,
     )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
@@ -813,11 +816,13 @@ def _contains_quantitative_hook(value: str) -> bool:
     )
 
 
-def _message_feedback_system_prompt() -> str:
+def _message_feedback_system_prompt(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
     return "\n\n".join([
         (
             "Role:\n"
-            "You generate one high-quality message-level feedback item for a Korean learner's English free talk answer."
+            "You generate one high-quality message-level feedback item for a Korean learner's English utterance."
         ),
         (
             "Priority:\n"
@@ -827,18 +832,7 @@ def _message_feedback_system_prompt() -> str:
         _shared_safety_policy(),
         (
             "Judgement Policy:\n"
-            "Classify the message as GOOD or NEEDS_IMPROVEMENT using these gates in order. "
-            "Actionable Issue Gate: first check whether grammar, word choice, word order, tense, preposition, nuance, politeness, or relevance creates a real correction point. "
-            "GOOD Gate: mark GOOD when the answer fits the AI message, the meaning is clear without guesswork, and there is no actionable correction point. "
-            "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression that preserves the user's intent. "
-            "More detail alone is not an actionable issue; a short direct answer can be GOOD. "
-            "Use the provided Counterpart role when judging nuance, politeness, and relevance. "
-            "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
-            "Boundary examples: 'I like pizza because it is spicy.' is GOOD; "
-            "'I like pizza because spicy.' is NEEDS_IMPROVEMENT because because needs a clause; "
-            "'Why do you wanna know that?' is NEEDS_IMPROVEMENT because it can sound defensive or blunt in casual practice. "
-            "When several issues exist, handle the most important one first. "
-            "Use cautious wording such as can sound when the nuance depends on context."
+            + _message_feedback_judgement_policy(evaluation_context_type)
         ),
         (
             "Field Policy:\n"
@@ -871,13 +865,7 @@ def _message_feedback_system_prompt() -> str:
             "6. NEEDS_IMPROVEMENT correctionReason explains the issue and correction direction without arrow notation or repeating correctionExpression. "
             "7. No legacy fields are present."
         ),
-        (
-            "Feedback Examples:\n"
-            "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
-            "NEEDS_IMPROVEMENT JSON example for a friend or casual partner: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null}'
-        ),
+        _message_feedback_examples(evaluation_context_type),
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
@@ -900,9 +888,66 @@ def _message_feedback_user_prompt(request: MessageFeedbackRequest) -> str:
         f"Scenario conversation goal: {request.scenario.conversationGoal}\n"
         f"Counterpart role: {request.scenario.counterpartRole}\n"
         f"Service audience: {request.scenario.serviceAudience}\n\n"
-        f"AI message: {request.messageContext.aiMessage}\n"
-        f"AI message Korean: {request.messageContext.aiMessageTranslation or '(none)'}\n"
-        f"User utterance: {request.messageContext.userMessage}"
+        f"Evaluation context type: {request.evaluationContext.type}\n"
+        f"Evaluation context content: {request.evaluationContext.content}\n"
+        f"Evaluation context translation: {request.evaluationContext.translatedContent or '(none)'}\n"
+        f"User utterance: {request.userMessage}"
+    )
+
+
+def _message_feedback_judgement_policy(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
+    common_policy = (
+        "Classify the message as GOOD or NEEDS_IMPROVEMENT using these gates in order. "
+        "Actionable Issue Gate: first check whether grammar, word choice, word order, tense, preposition, nuance, or politeness creates a real correction point. "
+        "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression aligned with the evaluation context. "
+        "Preserve the user's apparent intent when the intent fits the evaluation context. "
+        "More detail alone is not an actionable issue; a short direct utterance can be GOOD. "
+        "Use the provided Counterpart role when judging nuance, politeness, and situation fit. "
+        "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
+        "When several issues exist, handle the most important one first. "
+        "Use cautious wording such as can sound when the nuance depends on context. "
+    )
+    if evaluation_context_type == EvaluationContextType.AI_MESSAGE:
+        return (
+            common_policy
+            + "AI_MESSAGE Policy: evaluate whether the user utterance understands and appropriately responds to the AI message. "
+            "Relevance to the AI message is an actionable issue even when the utterance is grammatically correct. "
+            "When the utterance is irrelevant, correctionExpression must be one natural response to the AI message. "
+            "GOOD Gate: mark GOOD when the utterance fits the AI message, the meaning is clear without guesswork, and there is no actionable correction point. "
+            "Boundary examples: 'I like pizza because it is spicy.' is GOOD; "
+            "'I like pizza because spicy.' is NEEDS_IMPROVEMENT because because needs a clause; "
+            "'Why do you wanna know that?' is NEEDS_IMPROVEMENT because it can sound defensive or blunt in casual practice."
+        )
+    return (
+        common_policy
+        + "SCENARIO_OPENING_INSTRUCTION Policy: evaluate whether the user followed the opening instruction, started the conversation naturally, and spoke appropriately to the counterpart role. "
+        "Opening instruction fulfillment is an actionable issue even when the utterance is grammatically correct. "
+        "When the user did not follow the instruction, correctionExpression must be one natural opening utterance that fulfills it. "
+        "Do not judge relevance to an AI question or whether the user answered an AI question. "
+        "GOOD Gate: mark GOOD when the utterance fulfills the opening instruction, is clear without guesswork, and has no actionable correction point. "
+        "For a cafe staff counterpart, 'Can I get an iced americano?' can be GOOD when the opening instruction asks the user to order a drink."
+    )
+
+
+def _message_feedback_examples(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
+    if evaluation_context_type == EvaluationContextType.AI_MESSAGE:
+        return (
+            "AI_MESSAGE Feedback Examples:\n"
+            "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
+            "NEEDS_IMPROVEMENT JSON example for a friend or casual partner: "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null}'
+        )
+    return (
+        "SCENARIO_OPENING_INSTRUCTION Feedback Examples:\n"
+        "GOOD JSON example for user utterance 'Can I get an iced americano?': "
+        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"아이스 아메리카노 한 잔 주세요\\"라고 자연스럽게 주문하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"원하는 음료를 공손하게 주문했어요."}\n'
+        "NEEDS_IMPROVEMENT JSON example for user utterance 'I like soccer.': "
+        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"저는 축구를 좋아해요\\"라고 음료 주문 안내에 다른 이야기를 꺼내는 것과 같아요.","positiveFeedback":"먼저 영어로 말을 시작하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"Can I get an iced americano?","correctionReason":"I like soccer.는 문법적으로 맞지만 음료를 주문하라는 시작 안내를 수행하지 못해요. 원하는 음료를 바로 요청하는 표현으로 바꾸면 상황에 맞아요.","benchmarkMessage":null}'
     )
 
 
