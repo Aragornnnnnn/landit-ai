@@ -117,6 +117,11 @@ class FeedbackType(StrEnum):
     NEEDS_IMPROVEMENT = "NEEDS_IMPROVEMENT"
 
 
+class EvaluationContextType(StrEnum):
+    AI_MESSAGE = "AI_MESSAGE"
+    SCENARIO_OPENING_INSTRUCTION = "SCENARIO_OPENING_INSTRUCTION"
+
+
 class NextMessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -182,29 +187,52 @@ def _strip_base_locale_analogy_framing(value: str) -> str:
     return stripped
 
 
-class MessageContext(BaseModel):
-    aiMessage: str
-    aiMessageTranslation: str | None = None
-    userMessage: str
+class EvaluationContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    @field_validator("aiMessage", "userMessage")
+    type: EvaluationContextType
+    content: str
+    translatedContent: str | None = None
+
+    @field_validator("content")
     @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
+    def content_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
 
-    @field_validator("aiMessageTranslation")
+    @field_validator("translatedContent")
     @classmethod
-    def translated_message_must_not_be_blank(cls, value: str | None) -> str | None:
+    def translated_content_must_not_be_blank(cls, value: str | None) -> str | None:
         return _optional_not_blank(value)
 
 
 class MessageFeedbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     sessionId: int = Field(gt=0)
     messageId: int = Field(gt=0)
     turnNumber: int = Field(gt=0)
     messageSequence: int = Field(gt=0)
     scenario: ScenarioContext
-    messageContext: MessageContext
+    evaluationContext: EvaluationContext
+    userMessage: str
+
+    @field_validator("userMessage")
+    @classmethod
+    def user_message_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @model_validator(mode="after")
+    def opening_instruction_fields_must_be_valid(self) -> Self:
+        if (
+            self.evaluationContext.type
+            != EvaluationContextType.SCENARIO_OPENING_INSTRUCTION
+        ):
+            return self
+        if self.turnNumber != 1:
+            raise ValueError("opening instruction requires turnNumber 1")
+        if self.evaluationContext.translatedContent is not None:
+            raise ValueError("opening instruction translatedContent must be null")
+        return self
 
 
 class MessageFeedbackResponse(BaseModel):
