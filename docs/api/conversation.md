@@ -48,7 +48,7 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 
 - `sessionId`
 - `messageId`
-- `feedbackStatus`
+- `feedbackStatus`: `PREPARING`, `COMPLETED`, `FAILED`
 
 저장되는 피드백은 `GOOD`, `NEEDS_IMPROVEMENT` 조건부 필드 정책을 지켜야 합니다.
 

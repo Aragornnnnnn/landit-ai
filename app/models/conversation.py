@@ -108,7 +108,7 @@ class ClosingReason(StrEnum):
 
 class FeedbackStatus(StrEnum):
     PREPARING = "PREPARING"
-    READY = "READY"
+    COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
 

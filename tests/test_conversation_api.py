@@ -13,6 +13,7 @@ from app.conversation.application.next_message_service import (
 )
 from app.core.config import Settings
 from app.main import create_app
+from app.models.conversation import FeedbackStatus
 
 
 def make_settings(**overrides):
@@ -360,6 +361,12 @@ class NextMessageApiTests(unittest.TestCase):
 class MessageFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
+
+    def test_feedback_status_uses_frontend_contract_values(self):
+        self.assertEqual(
+            {status.value for status in FeedbackStatus},
+            {"PREPARING", "COMPLETED", "FAILED"},
+        )
 
     def test_message_feedback_generates_feedback_and_returns_preparing(self):
         ai_response = {
