@@ -207,3 +207,13 @@
 - [x] 4xx·validation 오류가 ERROR로 기록되지 않는지 검증.
 - [x] 전체 unittest, compileall, pip check, diff check 실행.
 - [x] 논리 단위 커밋 생성.
+
+## 2026-07-13 LAN-122 명시적 5xx 예외 로깅 리뷰 수정
+
+- [x] `ApiException`과 `HTTPException` handler의 5xx 로그 누락 원인 확인.
+- [x] 두 503 exception의 ERROR stack trace 실패 테스트 작성 및 RED 확인.
+- [x] 두 exception의 5xx만 Uvicorn error logger에 stack trace 기록.
+- [x] 두 exception의 4xx가 ERROR로 기록되지 않는지 검증.
+- [x] Sentry logging event 중복 방지 설정 유지 확인.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 기존 커밋과 분리한 `fix:` 커밋 생성.

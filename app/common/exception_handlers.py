@@ -37,6 +37,7 @@ async def api_exception_handler(
     request: Request,
     exc: ApiException,
 ) -> JSONResponse:
+    _log_server_exception(exc.status_code)
     return _error_json_response(
         status_code=exc.status_code,
         error_code=exc.error_code,
@@ -48,6 +49,7 @@ async def http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
+    _log_server_exception(exc.status_code)
     message = exc.detail if isinstance(exc.detail, str) else None
     return _error_json_response(
         status_code=exc.status_code,
@@ -65,6 +67,11 @@ async def unexpected_exception_handler(
         status_code=500,
         error_code=ErrorCode.INTERNAL_SERVER_ERROR,
     )
+
+
+def _log_server_exception(status_code: int) -> None:
+    if status_code >= 500:
+        logger.exception("Handled server error.")
 
 
 def _error_json_response(

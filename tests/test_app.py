@@ -155,11 +155,16 @@ class ExceptionHandlerTests(unittest.TestCase):
                 message="AI 생성에 실패했습니다.",
             )
 
-        response = make_client(app, raise_server_exceptions=False).get(
-            "/test/api-exception",
-        )
+        with self.assertLogs("uvicorn.error", level="ERROR") as captured_logs:
+            response = make_client(app, raise_server_exceptions=False).get(
+                "/test/api-exception",
+            )
 
+        output = "\n".join(captured_logs.output)
         self.assertEqual(response.status_code, 503)
+        self.assertIn("Handled server error.", output)
+        self.assertIn("Traceback", output)
+        self.assertIn("ApiException: AI 생성에 실패했습니다.", output)
         self.assertEqual(
             response.json(),
             {
@@ -195,6 +200,25 @@ class ExceptionHandlerTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_server_http_exception_logs_stack_trace(self):
+        app = create_app(make_settings())
+
+        @app.get("/test/http-server-error-log")
+        def raise_http_server_error():
+            raise HTTPException(status_code=503, detail="upstream unavailable")
+
+        with self.assertLogs("uvicorn.error", level="ERROR") as captured_logs:
+            response = make_client(app, raise_server_exceptions=False).get(
+                "/test/http-server-error-log",
+            )
+
+        output = "\n".join(captured_logs.output)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Handled server error.", output)
+        self.assertIn("Traceback", output)
+        self.assertIn("HTTPException", output)
+        self.assertIn("upstream unavailable", output)
 
     def test_unexpected_exception_returns_internal_server_error_response(self):
         app = create_app(make_settings())
@@ -258,15 +282,27 @@ class ExceptionHandlerTests(unittest.TestCase):
         def validate_payload(payload: TestPayload):
             return success_response({"count": payload.count})
 
+        @app.get("/test/api-client-error-log")
+        def raise_api_client_error():
+            raise ApiException(
+                status_code=409,
+                error_code=ErrorCode.MESSAGE_FEEDBACK_NOT_READY,
+            )
+
         with self.assertNoLogs("uvicorn.error", level="ERROR"):
             validation_response = make_client(app).post(
                 "/test/validation-log",
                 json={"count": "bad"},
             )
             not_found_response = make_client(app).get("/test/not-found")
+            api_error_response = make_client(
+                app,
+                raise_server_exceptions=False,
+            ).get("/test/api-client-error-log")
 
         self.assertEqual(validation_response.status_code, 400)
         self.assertEqual(not_found_response.status_code, 404)
+        self.assertEqual(api_error_response.status_code, 409)
 
 
 class SentryInitializationTests(unittest.TestCase):

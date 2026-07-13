@@ -176,3 +176,14 @@
 - 실패 테스트에서 500 처리 시 `uvicorn.error` ERROR 로그가 없고 `LoggingIntegration`이 구성되지 않은 상태를 각각 확인했다.
 - 수정 후 대상 7개 테스트에서 500 stack trace 기록, 요청 query·header·body 비노출, 4xx ERROR 로그 제외, Sentry 로그 event 비활성화가 통과했다.
 - 전체 48개 unittest, compileall, pip check, diff check가 통과했다.
+
+## 2026-07-13 LAN-122 명시적 5xx 예외 로깅 리뷰 수정
+
+- 코드 리뷰에서 custom `api_exception_handler`와 `http_exception_handler`가 503 같은 명시적 5xx를 응답으로 변환하면서 ERROR log와 traceback을 남기지 않는 경로가 확인되었다.
+- 원인은 `unexpected_exception_handler`에만 `logger.exception`이 있고 두 handler는 상태 코드와 관계없이 응답만 반환하는 것이다.
+- `ApiException`과 `HTTPException`의 status code가 500 이상일 때만 현재 exception traceback을 `uvicorn.error`에 기록한다. 4xx는 기존과 같이 ERROR 로그를 남기지 않는다.
+- request body, header, URL, query를 log argument로 전달하지 않고 `LoggingIntegration(event_level=None)` 정책을 유지한다.
+- 실패 테스트에서 두 503 exception 모두 응답은 반환하지만 `uvicorn.error` ERROR 로그가 한 건도 발생하지 않는 RED를 확인했다.
+- 두 handler가 공유하는 status code 조건부 helper를 추가한 뒤 대상 8개 테스트에서 5xx traceback, 4xx 무로그, Sentry 중복 방지 설정이 통과했다.
+- 기존 503 응답 계약 테스트에 `ApiException` traceback 검증을 합쳐 중복 경로를 제거했다.
+- 전체 49개 unittest, compileall, pip check, diff check가 통과했다.
