@@ -1,4 +1,6 @@
 # FastAPI 예외를 공통 API 응답으로 변환하는 핸들러 등록 모듈
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -6,6 +8,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.common.errors import ApiException, ErrorCode
 from app.common.response import error_response
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -55,6 +60,7 @@ async def unexpected_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
+    logger.exception("Unexpected server error.")
     return _error_json_response(
         status_code=500,
         error_code=ErrorCode.INTERNAL_SERVER_ERROR,

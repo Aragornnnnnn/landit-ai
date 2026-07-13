@@ -197,3 +197,13 @@
 - [x] unmatched 요청 설명을 실제 계측 동작에 맞게 수정.
 - [x] 전체 unittest, compileall, pip check, diff check 실행.
 - [x] 별도 `fix:` 커밋 생성.
+
+## 2026-07-13 LAN-122 예상하지 못한 500 오류 로깅
+
+- [x] custom exception handler와 Sentry logging event 경로 확인.
+- [x] 500 stack trace와 Sentry 중복 방지 실패 테스트 작성 및 RED 확인.
+- [x] 예상하지 못한 500 예외만 Uvicorn error logger에 stack trace 기록.
+- [x] Sentry LoggingIntegration의 ERROR event 생성 비활성화.
+- [x] 4xx·validation 오류가 ERROR로 기록되지 않는지 검증.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 논리 단위 커밋 생성.

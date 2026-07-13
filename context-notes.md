@@ -166,3 +166,13 @@
 - 환경 Resource key는 BE·IaC 공통 계약인 `deployment.environment.name`을 사용하고 값은 기존 `APP_ENV`에서 가져온다.
 - Resource 불일치 테스트는 수정 전 `otel_service_name` 속성 부재와 `service.name` 값 불일치로 RED를 확인했다.
 - 수정 후 전체 45개 unittest, compileall, pip check, diff check가 통과했다.
+
+## 2026-07-13 LAN-122 예상하지 못한 500 오류 로깅
+
+- custom `unexpected_exception_handler`가 예외를 공통 500 응답으로 처리하면 Uvicorn 기본 예외 경로까지 전파되지 않아 CloudWatch와 Loki에 stack trace가 남지 않는다.
+- handler에서 `logger.exception`을 호출해 현재 traceback을 Uvicorn error/stdout에 남기되 request body, header, URL, query, secret 같은 요청 값을 log argument로 전달하지 않는다.
+- Sentry FastAPI integration의 자동 500 수집을 단일 오류 event 경로로 유지한다. `logger.exception`이 Sentry event를 추가로 만들지 않도록 `LoggingIntegration(event_level=None)`을 명시한다.
+- validation, `HTTPException`, `ApiException` 같은 예상 가능한 4xx·도메인 오류는 새 ERROR 로그 대상에 포함하지 않는다.
+- 실패 테스트에서 500 처리 시 `uvicorn.error` ERROR 로그가 없고 `LoggingIntegration`이 구성되지 않은 상태를 각각 확인했다.
+- 수정 후 대상 7개 테스트에서 500 stack trace 기록, 요청 query·header·body 비노출, 4xx ERROR 로그 제외, Sentry 로그 event 비활성화가 통과했다.
+- 전체 48개 unittest, compileall, pip check, diff check가 통과했다.
