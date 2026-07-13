@@ -176,3 +176,24 @@
 - [x] 평가 컨텍스트 타입별 GOOD, NEEDS_IMPROVEMENT 예시 분리.
 - [x] 전체 unittest, compileall, diff check 실행.
 - [x] 문서 규칙에 따른 의미 단위 커밋 생성.
+## 2026-07-13 LAN-122 OpenTelemetry 애플리케이션 메트릭
+
+- [x] `feat/LAN-122` 브랜치 생성.
+- [x] 현재 FastAPI 앱 팩토리, 설정, 테스트, 실행 구조 확인.
+- [x] 기본 비활성화와 외부 전송 차단 실패 테스트 작성 및 RED 확인.
+- [x] FastAPI HTTP 요청 수·지연·상태 메트릭 최소 구현.
+- [x] process·CPython GC 메트릭 최소 구현.
+- [x] health, unmatched path, 민감·고카디널리티 속성 제외.
+- [x] `docs/development.md`에 환경변수와 로컬 동작 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 최종 diff와 git 상태 확인.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-13 LAN-122 OpenTelemetry 공통 Resource 속성 수정
+
+- [x] AI Resource 속성과 BE·IaC 공통 계약 차이 확인.
+- [x] `OTEL_SERVICE_NAME`과 `deployment.environment.name` 실패 테스트 작성 및 RED 확인.
+- [x] 공통 Resource 속성에 맞게 최소 수정.
+- [x] unmatched 요청 설명을 실제 계측 동작에 맞게 수정.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 별도 `fix:` 커밋 생성.

@@ -141,3 +141,28 @@
 
 - 타입별 판단 정책은 분리되었지만 공통 Feedback Examples가 AI 질문 응답 상황만 보여줘 opening 평가를 왜곡할 수 있다.
 - 출력 필드 정책과 JSON 스키마는 공통으로 유지하고, GOOD와 NEEDS_IMPROVEMENT 예시만 `evaluationContext.type`에 따라 분리한다.
+## 2026-07-13 LAN-122 OpenTelemetry 애플리케이션 메트릭
+
+- 작업 브랜치는 `develop`에서 `feat/LAN-122`로 분기했다.
+- 세 서비스의 공통 전송 경계를 맞추기 위해 AI 메트릭은 OpenTelemetry OTLP HTTP 직접 전송을 사용한다.
+- 로컬과 unittest에서는 기본적으로 계측과 exporter를 비활성화해 외부 네트워크 전송과 background export thread를 만들지 않는다.
+- HTTP 메트릭은 FastAPI route template, method, status만 사용하고 `/health`는 제외한다. route 미매칭 요청은 raw path를 route label로 남기지 않는다.
+- query string, request/response body, header, 사용자·세션·메시지 ID는 metric attribute로 수집하지 않는다.
+- runtime 메트릭은 ECS CloudWatch 지표와 역할이 겹치는 전체 system·disk·network 수집을 제외하고 process와 CPython GC 지표만 수집한다.
+- Grafana 인증 header는 코드나 문서에 값을 남기지 않고 ECS secret으로 주입되는 표준 `OTEL_EXPORTER_OTLP_HEADERS` 환경변수에서만 읽는다.
+- TDD RED는 OTel 의존성 추가 전 `opentelemetry` import 실패와 의존성 추가 후 `app.core.observability` import 실패로 확인했다.
+- 안정화된 HTTP semantic convention을 활성화해야 `http.server.request.duration`에 `http.route`가 포함된다. 계측 활성화 시 `OTEL_SEMCONV_STABILITY_OPT_IN=http`을 기본 적용한다.
+- 요청 수는 `http.server.request.duration` histogram의 count로 계산한다. View에는 route template, method, status, low-cardinality error type만 남긴다.
+- `InMemoryMetricReader` 기반 테스트로 성공·503 요청, health 제외, unmatched raw path·query·header·ID 미수집, process·CPython GC 지표를 검증했다.
+- `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests` 기준 45개 테스트가 통과했다.
+- `PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-122-pycache .venv/bin/python -m compileall -q app tests`와 `.venv/bin/python -m pip check`가 통과했다.
+
+## 2026-07-13 LAN-122 OpenTelemetry 공통 Resource 속성 수정
+
+- 통합 리뷰에서 AI가 `service.name`에 `APP_NAME`을 사용하고 환경 속성을 `deployment.environment`로 내보내 BE·IaC 공통 계약과 불일치하는 문제가 확인되었다.
+- 원인은 `Settings`가 표준 `OTEL_SERVICE_NAME`을 읽지 않고, `Resource.create`가 애플리케이션 이름과 구형 환경 key를 직접 사용한 것이다.
+- OTel FastAPI 계측은 route 미매칭 요청 자체를 버리지 않지만 raw path를 `http.route`로 사용하지 않는다. 기존 기록의 “route가 매칭되지 않은 요청은 제외한다”는 표현을 실제 동작에 맞게 수정해야 한다.
+- `Settings`는 `OTEL_SERVICE_NAME`을 읽고 기본값 `landit-ai`를 사용한다. Resource의 `service.name`은 이 설정을 사용한다.
+- 환경 Resource key는 BE·IaC 공통 계약인 `deployment.environment.name`을 사용하고 값은 기존 `APP_ENV`에서 가져온다.
+- Resource 불일치 테스트는 수정 전 `otel_service_name` 속성 부재와 `service.name` 값 불일치로 RED를 확인했다.
+- 수정 후 전체 45개 unittest, compileall, pip check, diff check가 통과했다.
