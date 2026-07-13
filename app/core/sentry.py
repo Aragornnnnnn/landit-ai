@@ -1,5 +1,6 @@
 # Sentry 에러 추적 초기화를 담당하는 모듈
 import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 from app.core.config import Settings
 
@@ -12,4 +13,5 @@ def init_sentry(settings: Settings) -> None:
         dsn=settings.sentry_dsn,
         environment=settings.app_env,
         traces_sample_rate=settings.sentry_traces_sample_rate,
+        integrations=[LoggingIntegration(event_level=None)],
     )

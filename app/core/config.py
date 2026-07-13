@@ -20,3 +20,7 @@ class Settings(BaseSettings):
     openrouter_model: str | None = None
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    otel_metrics_enabled: bool = False
+    otel_service_name: str = "landit-ai"
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_exporter_otlp_headers: SecretStr | None = None

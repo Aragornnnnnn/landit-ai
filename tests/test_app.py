@@ -12,6 +12,7 @@ from app.common.errors import ApiException, ErrorCode
 from app.common.response import error_response, success_response
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
+from app.core.sentry import init_sentry
 from app.main import create_app
 
 
@@ -154,11 +155,16 @@ class ExceptionHandlerTests(unittest.TestCase):
                 message="AI 생성에 실패했습니다.",
             )
 
-        response = make_client(app, raise_server_exceptions=False).get(
-            "/test/api-exception",
-        )
+        with self.assertLogs("uvicorn.error", level="ERROR") as captured_logs:
+            response = make_client(app, raise_server_exceptions=False).get(
+                "/test/api-exception",
+            )
 
+        output = "\n".join(captured_logs.output)
         self.assertEqual(response.status_code, 503)
+        self.assertIn("Handled server error.", output)
+        self.assertIn("Traceback", output)
+        self.assertIn("ApiException: AI 생성에 실패했습니다.", output)
         self.assertEqual(
             response.json(),
             {
@@ -195,16 +201,36 @@ class ExceptionHandlerTests(unittest.TestCase):
             },
         )
 
+    def test_server_http_exception_logs_stack_trace(self):
+        app = create_app(make_settings())
+
+        @app.get("/test/http-server-error-log")
+        def raise_http_server_error():
+            raise HTTPException(status_code=503, detail="upstream unavailable")
+
+        with self.assertLogs("uvicorn.error", level="ERROR") as captured_logs:
+            response = make_client(app, raise_server_exceptions=False).get(
+                "/test/http-server-error-log",
+            )
+
+        output = "\n".join(captured_logs.output)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Handled server error.", output)
+        self.assertIn("Traceback", output)
+        self.assertIn("HTTPException", output)
+        self.assertIn("upstream unavailable", output)
+
     def test_unexpected_exception_returns_internal_server_error_response(self):
         app = create_app(make_settings())
 
         @app.get("/test/unexpected")
         def raise_unexpected_exception():
-            raise RuntimeError("secret prompt should not be exposed")
+            raise RuntimeError("unexpected failure")
 
-        response = make_client(app, raise_server_exceptions=False).get(
-            "/test/unexpected",
-        )
+        with self.assertLogs("uvicorn.error", level="ERROR"):
+            response = make_client(app, raise_server_exceptions=False).get(
+                "/test/unexpected",
+            )
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(
@@ -217,6 +243,91 @@ class ExceptionHandlerTests(unittest.TestCase):
                     "message": ErrorCode.INTERNAL_SERVER_ERROR.default_message,
                 },
             },
+        )
+
+    def test_unexpected_exception_logs_stack_trace_without_request_values(self):
+        class TestPayload(BaseModel):
+            content: str
+
+        app = create_app(make_settings())
+
+        @app.post("/test/unexpected-log")
+        def raise_unexpected_exception(payload: TestPayload):
+            raise RuntimeError("unexpected failure")
+
+        with self.assertLogs("uvicorn.error", level="ERROR") as captured_logs:
+            response = make_client(app, raise_server_exceptions=False).post(
+                "/test/unexpected-log?token=secret-query",
+                headers={"Authorization": "secret-header"},
+                json={"content": "secret-body"},
+            )
+
+        output = "\n".join(captured_logs.output)
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("Unexpected server error.", output)
+        self.assertIn("Traceback", output)
+        self.assertIn("RuntimeError: unexpected failure", output)
+        self.assertNotIn("secret-query", output)
+        self.assertNotIn("secret-header", output)
+        self.assertNotIn("secret-body", output)
+        self.assertNotIn("Authorization", output)
+
+    def test_expected_client_errors_do_not_log_at_error_level(self):
+        class TestPayload(BaseModel):
+            count: int
+
+        app = create_app(make_settings())
+
+        @app.post("/test/validation-log")
+        def validate_payload(payload: TestPayload):
+            return success_response({"count": payload.count})
+
+        @app.get("/test/api-client-error-log")
+        def raise_api_client_error():
+            raise ApiException(
+                status_code=409,
+                error_code=ErrorCode.MESSAGE_FEEDBACK_NOT_READY,
+            )
+
+        with self.assertNoLogs("uvicorn.error", level="ERROR"):
+            validation_response = make_client(app).post(
+                "/test/validation-log",
+                json={"count": "bad"},
+            )
+            not_found_response = make_client(app).get("/test/not-found")
+            api_error_response = make_client(
+                app,
+                raise_server_exceptions=False,
+            ).get("/test/api-client-error-log")
+
+        self.assertEqual(validation_response.status_code, 400)
+        self.assertEqual(not_found_response.status_code, 404)
+        self.assertEqual(api_error_response.status_code, 409)
+
+
+class SentryInitializationTests(unittest.TestCase):
+    def test_sentry_logging_integration_does_not_create_error_events(self):
+        logging_integration = object()
+
+        with (
+            patch(
+                "app.core.sentry.LoggingIntegration",
+                return_value=logging_integration,
+            ) as integration_factory,
+            patch("app.core.sentry.sentry_sdk.init") as sentry_init,
+        ):
+            init_sentry(
+                make_settings(
+                    sentry_dsn="https://public@example.invalid/1",
+                ),
+            )
+
+        integration_factory.assert_called_once_with(event_level=None)
+        sentry_init.assert_called_once_with(
+            dsn="https://public@example.invalid/1",
+            environment="local",
+            traces_sample_rate=0.0,
+            integrations=[logging_integration],
         )
 
 
