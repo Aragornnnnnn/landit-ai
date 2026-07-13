@@ -19,6 +19,22 @@ python3.12 -m venv .venv
 
 로컬 실행은 `.env` 없이도 가능하지만, OpenRouter client 생성은 `OPENROUTER_API_KEY`가 있어야 합니다.
 
+## Metrics
+
+OpenTelemetry 메트릭은 기본적으로 비활성화되어 로컬 실행과 테스트에서 외부 전송을 만들지 않습니다. 배포 환경에서는 아래 값을 ECS 환경변수와 secret으로 주입합니다.
+
+```text
+OTEL_METRICS_ENABLED=true
+OTEL_SERVICE_NAME=landit-ai
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=<Grafana Cloud OTLP base URL>
+OTEL_EXPORTER_OTLP_HEADERS=<Grafana Cloud authorization header>
+```
+
+`OTEL_EXPORTER_OTLP_HEADERS`는 secret으로 관리하고 `.env`, 문서, 로그, Git에 값을 남기지 않습니다. 서비스 이름은 `OTEL_SERVICE_NAME`, namespace는 `landit`, 환경은 `APP_ENV` 값을 사용합니다.
+
+HTTP 메트릭은 `/health`를 제외한 FastAPI route template, method, status만 수집합니다. route 미매칭 요청은 `http.route` label을 남기지 않습니다. query string, request/response body, header, 사용자·세션·메시지 ID는 수집하지 않습니다. Python runtime 메트릭은 process CPU·메모리·thread와 CPython GC 통계만 수집합니다.
+
 ## Test
 
 ```bash
