@@ -235,3 +235,10 @@
 - `inner-thought`는 전체 히스토리를 맥락으로 참고하되 마지막 사용자 발화만 평가하고, 응답 식별자는 요청값에서 복사한다.
 - 상태 전환, polling, 중복 호출 방지, 최초 성공 결과 확정, timeout과 재시도 정책은 BE 책임이다.
 - 종료 턴은 기존 `closing-message`를 유지하며 별도 `inner-thought`를 호출하지 않는다.
+
+## 2026-07-14 LAN-144 다음 메시지·속마음 생성 분리 구현
+
+- `next-message`는 `aiMessage`, `translatedMessage`, `goalCompletionStatus`만 OpenRouter에서 생성하고 기존 고정 질문 검증을 유지한다.
+- `inner-thought`는 같은 대화 컨텍스트에서 독립적으로 호출하며 마지막 USER 메시지만 평가 대상으로 삼는다.
+- LLM 출력은 `innerThought`, `innerThoughtType`으로 제한하고, API 응답의 `sessionId`, `messageId`는 요청 식별자에서 조립한다.
+- AI 서버는 상태를 저장하지 않는다. BE가 병렬 호출, `PREPARING` 이후 상태 전환, 중복 호출 방지, 최초 성공 결과 저장을 담당한다.
