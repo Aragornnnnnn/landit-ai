@@ -237,3 +237,11 @@
 - [x] 최종 평가 결과와 남은 위험 기록.
 - [x] GOOD 과보정 진단 사례를 GOOD 4개, NEEDS_IMPROVEMENT 4개로 균형화.
 - [x] `openai/gpt-5.4-mini`로 메시지 피드백 8개 사례를 각 5회 재평가.
+
+## 2026-07-14 CI 자동 검사 워크플로우
+
+- [x] Landit BE CI의 PR 이벤트와 검사 범위 확인.
+- [x] `develop`, `main` 대상 PR과 push에서 실행되는 CI workflow 추가.
+- [x] Python 3.12 의존성 설치, unittest, compileall, pip check, Docker build 단계 추가.
+- [x] YAML 문법과 로컬 Python 검사 검증.
+- [x] 개발 문서에 CI 트리거와 검사 범위 기록.

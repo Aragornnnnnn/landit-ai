@@ -220,3 +220,10 @@
 - 문법은 맞지만 AI 질문과 무관한 답변, 교수에게 무례한 거절을 NEEDS_IMPROVEMENT 사례로 추가해 4대4로 맞췄다.
 - 평가 결과에는 expectedFeedbackType을 함께 기록한다. 사례별 실제 레이블뿐 아니라 false GOOD과 false NEEDS를 직접 집계하기 위함이다.
 - `openai/gpt-5.4-mini`로 8개 사례를 각 5회 실행한 40회에서 기대 GOOD 20회와 기대 NEEDS_IMPROVEMENT 20회가 모두 일치했다. 고정 사례 평가이므로 실사용 분포 보장은 아니며, 실제 제보 문장을 비식별화해 계속 추가한다.
+
+## 2026-07-14 CI 자동 검사 워크플로우
+
+- Landit BE의 CI는 `develop` 대상 PR에서 `opened`, `synchronize`, `reopened`, `edited` 이벤트를 받고 애플리케이션과 배포 스크립트를 검사한다.
+- Landit AI는 배포 스크립트가 없으므로 Python 3.12 환경에서 의존성 설치, unittest, compileall, pip check, Docker image build만 수행하는 `Verify application` workflow를 추가한다.
+- CI는 `develop`, `main` 대상 PR과 두 브랜치 push에서 실행한다. `edited`는 PR base 변경에도 검사를 다시 시작하기 위해 포함한다.
+- 로컬에는 Docker CLI가 없어 Docker build는 실행하지 못했다. YAML 문법과 Python 검사 명령은 로컬에서 통과했고 Docker build는 GitHub-hosted runner에서 확인한다.
