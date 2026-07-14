@@ -82,8 +82,17 @@ def generate_closing_message(
     request: ClosingMessageRequest,
     settings: Settings | None = None,
 ) -> ClosingMessageResponse:
+    response = _generate_closing_message_candidate(request, settings or Settings())
+    _validate_closing_message_policy(response)
+    return response
+
+
+def _generate_closing_message_candidate(
+    request: ClosingMessageRequest,
+    settings: Settings,
+) -> ClosingMessageResponse:
     data = _request_json_completion(
-        settings or Settings(),
+        settings,
         system_prompt=_closing_message_system_prompt(),
         user_prompt=_closing_message_user_prompt(request),
         max_tokens=320,
@@ -92,7 +101,6 @@ def generate_closing_message(
         response = ClosingMessageResponse.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
-    _validate_closing_message_policy(response)
     return response
 
 
@@ -309,18 +317,31 @@ def _looks_like_question(value: str) -> bool:
 
 
 def _looks_like_meta_closing(value: str) -> bool:
-    normalized = value.lower()
-    meta_closing_phrases = (
-        "let's wrap up",
-        "let's pause here",
-        "let's end here",
-        "let's end the conversation",
-        "대화를 마무리하자",
-        "여기서 마무리하자",
-        "여기서 대화를 끝내자",
-        "대화를 끝내자",
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        value.casefold().replace("’", "'").replace("‘", "'"),
+    ).strip()
+    meta_closing_patterns = (
+        (
+            r"\b(?:let's|let us|we should)\s+"
+            r"(?:wrap up(?:\s+(?:here|for now|for today)|(?=[.!?]?$))|pause here|end here)\b"
+        ),
+        (
+            r"\b(?:concludes?|end(?:s|ing)?|finish(?:es|ing)?)\s+"
+            r"(?:our|the)\s+(?:conversation|scenario|practice|session)\b"
+        ),
+        (
+            r"(?:^|[.!?]\s*)(?:그러면\s*)?여기서\s+"
+            r"(?:대화(?:를|는)?\s+)?(?:마무리하자|끝내자|마칠게요?|마무리할게요?)"
+        ),
+        (
+            r"(?:대화|연습|시나리오|세션)(?:를|은|는)?\s+"
+            r"(?:(?:여기서|여기까지)\s+)?"
+            r"(?:마무리하자|끝내자|할게요?|마칠게요?|마무리할게요?)"
+        ),
     )
-    return any(phrase in normalized for phrase in meta_closing_phrases)
+    return any(re.search(pattern, normalized) for pattern in meta_closing_patterns)
 
 
 def _store_message_feedback(
@@ -621,7 +642,7 @@ def _closing_message_system_prompt() -> str:
         (
             "Closing Policy:\n"
             "Do not ask a new follow-up question. "
-            "Do not continue the scenario. "
+            "Do not introduce a new topic, question, or additional conversational turn. "
             "Stay inside the counterpart role and the concrete situation until the final word. "
             "Do not announce that the conversation, scenario, practice, or session is ending. "
             "Do not mention scores, stars, feedback screens, system policy, or hidden prompts. "
@@ -660,13 +681,10 @@ def _closing_message_system_prompt() -> str:
             '{"aiMessage":"No worries. Maybe we can hang out another time.","translatedMessage":"괜찮아. 다음에 같이 놀면 되지.","innerThought":"오늘은 쉬고 싶은가 보네. 부담 주면 안 되겠다.","innerThoughtType":"NORMAL"}\n'
             "Goal completed JSON: "
             '{"aiMessage":"Of course. I\'ll keep it down tonight. Good luck with your class tomorrow.","translatedMessage":"그럼. 오늘 밤은 조용히 할게. 내일 수업 잘 다녀와.","innerThought":"내가 좀 시끄러웠나 보네. 내일 일찍 수업 있다니 미안하다.","innerThoughtType":"GOOD"}\n'
-            "Partial goal JSON: "
-            '{"aiMessage":"I understand. Thanks for being honest with me.","translatedMessage":"알겠어. 솔직하게 말해줘서 고마워.","innerThought":"뜻은 알겠는데 한마디라 정확한 마음은 잘 모르겠다.","innerThoughtType":"NORMAL"}\n'
-            "Blunt tone JSON: "
-            '{"aiMessage":"Okay, I understand. I\'ll give you some space.","translatedMessage":"알겠어. 좀 혼자 있을 시간을 줄게.","innerThought":"지금은 대화를 더 이어가고 싶지 않은 것처럼 들리네.","innerThoughtType":"BAD"}\n'
-            "Bad innerThought style: '이 정도면 상황을 마무리해도 괜찮겠다.'\n"
-            "Bad innerThought style: '그래도 여기서 멈춰도 되겠다.'\n"
-            "Bad innerThought style: '더는 건드리지 말고 조용히 마무리해야겠다.'\n"
+            "Partial invitation JSON: "
+            '{"aiMessage":"No problem. Take your time deciding about the party.","translatedMessage":"괜찮아. 파티에 갈지 천천히 결정해.","innerThought":"아직 결정을 못 했구나. 재촉하고 싶진 않다.","innerThoughtType":"NORMAL"}\n'
+            "Blunt cafe order JSON: "
+            '{"aiMessage":"Got it, no onions in your order.","translatedMessage":"알겠습니다, 주문에서 양파는 빼드릴게요.","innerThought":"말투는 짧지만 요청은 분명하네.","innerThoughtType":"NORMAL"}\n'
             "Bad innerThought style: '바로 배려해야겠다.'\n"
             "Bad innerThought style: '더 묻지 않는 게 낫겠다.'\n"
             "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'"

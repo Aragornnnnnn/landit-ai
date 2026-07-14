@@ -1,21 +1,29 @@
 # LAN-138 실제 모델 평가 도구의 결과 요약을 검증하는 unittest 모듈
+import hashlib
+import json
+import sys
+import tempfile
 import unittest
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import Settings
+from app.conversation.application.next_message_service import AiResponseInvalidError
 from app.models.conversation import (
-    ClosingMessageResponse,
     FeedbackStatus,
     MessageFeedbackData,
     MessageFeedbackResponse,
 )
-from scripts.evaluate_conversation_quality import evaluate_cases
+from scripts.evaluate_conversation_quality import evaluate_cases, main
 
 
 def closing_case():
     return {
         "caseId": "closing-meta-wrap-up",
         "kind": "closing",
+        "expectedContextTerms": ["quiet", "조용"],
         "payload": {
             "sessionId": 100,
             "submittedMessageId": 1007,
@@ -74,17 +82,83 @@ def feedback_case():
 
 
 class QualityEvaluationTests(unittest.TestCase):
-    def test_closing_result_detects_meta_wrap_up(self):
-        response = ClosingMessageResponse(
-            aiMessage="I understand. Let's wrap up here.",
-            translatedMessage="알겠어. 여기서 마무리하자.",
-            innerThought="부탁한 내용은 이해했다.",
-            innerThoughtType="NORMAL",
-        )
+    def test_main_records_reproducible_execution_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cases_path = Path(directory) / "cases.json"
+            output_path = Path(directory) / "results.json"
+            cases_path.write_text("[]", encoding="utf-8")
 
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "evaluate_conversation_quality.py",
+                        "--cases",
+                        str(cases_path),
+                        "--runs",
+                        "2",
+                        "--kind",
+                        "closing",
+                        "--output",
+                        str(output_path),
+                    ],
+                ),
+                patch(
+                    "scripts.evaluate_conversation_quality.Settings",
+                    return_value=SimpleNamespace(openrouter_model="openai/test-model"),
+                ),
+                patch(
+                    "scripts.evaluate_conversation_quality.evaluate_cases",
+                    return_value=[],
+                ),
+            ):
+                main()
+
+            report = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(report["model"], "openai/test-model")
+        self.assertEqual(report["casesFile"], str(cases_path))
+        self.assertEqual(report["casesSha256"], hashlib.sha256(b"[]").hexdigest())
+        self.assertEqual(report["runs"], 2)
+        self.assertEqual(report["kind"], "closing")
+        self.assertEqual(report["results"], [])
+        datetime.fromisoformat(report["evaluatedAt"])
+
+    def test_closing_result_detects_meta_wrap_up_through_real_generation_path(self):
         with patch(
-            "scripts.evaluate_conversation_quality.generate_closing_message",
-            return_value=response,
+            "app.conversation.application.next_message_service._request_json_completion",
+            return_value={
+                "aiMessage": "I understand. Let’s wrap up here.",
+                "translatedMessage": "알겠어. 여기서 마무리하자.",
+                "innerThought": "부탁한 내용은 이해했다.",
+                "innerThoughtType": "NORMAL",
+            },
+        ):
+            try:
+                results = evaluate_cases(
+                    [closing_case()],
+                    runs=1,
+                    kind="closing",
+                    settings=Settings(_env_file=None),
+                )
+            except AiResponseInvalidError:
+                self.fail("quality evaluation must inspect candidates before policy rejection")
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["caseId"], "closing-meta-wrap-up")
+        self.assertTrue(results[0]["hasMetaClosing"])
+        self.assertFalse(results[0]["hasQuestion"])
+
+    def test_closing_result_compares_expected_context_terms(self):
+        with patch(
+            "app.conversation.application.next_message_service._request_json_completion",
+            return_value={
+                "aiMessage": "Thanks for being honest with me.",
+                "translatedMessage": "솔직하게 말해줘서 고마워.",
+                "innerThought": "무슨 뜻인지는 알겠다.",
+                "innerThoughtType": "NORMAL",
+            },
         ):
             results = evaluate_cases(
                 [closing_case()],
@@ -93,10 +167,7 @@ class QualityEvaluationTests(unittest.TestCase):
                 settings=Settings(_env_file=None),
             )
 
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["caseId"], "closing-meta-wrap-up")
-        self.assertTrue(results[0]["hasMetaClosing"])
-        self.assertFalse(results[0]["hasQuestion"])
+        self.assertFalse(results[0].get("matchesExpectedContext", True))
 
     def test_feedback_result_compares_expected_type(self):
         feedback = MessageFeedbackData(

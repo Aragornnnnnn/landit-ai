@@ -1,25 +1,21 @@
 # LAN-138 대화 품질 사례를 실제 모델로 반복 평가하는 스크립트
 import argparse
+import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.conversation.application.next_message_service import (
+    _generate_closing_message_candidate,
+    _looks_like_meta_closing,
+    _looks_like_question,
     clear_message_feedback_cache,
-    generate_closing_message,
     generate_message_feedback,
     get_cached_message_feedback,
 )
 from app.core.config import Settings
 from app.models.conversation import ClosingMessageRequest, MessageFeedbackRequest
-
-
-_META_CLOSING_PHRASES = (
-    "let's wrap up",
-    "let's pause here",
-    "대화를 마무리하자",
-    "여기서 마무리하자",
-)
 
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
@@ -70,11 +66,12 @@ def _evaluate_closing_case(
     run: int,
     settings: Settings,
 ) -> dict[str, Any]:
-    response = generate_closing_message(
+    response = _generate_closing_message_candidate(
         ClosingMessageRequest.model_validate(case["payload"]),
         settings,
     )
-    text = f"{response.aiMessage}\n{response.translatedMessage}".lower()
+    text = f"{response.aiMessage}\n{response.translatedMessage}"
+    expected_context_terms = case["expectedContextTerms"]
     return {
         "caseId": case["caseId"],
         "kind": "closing",
@@ -82,8 +79,15 @@ def _evaluate_closing_case(
         "aiMessage": response.aiMessage,
         "translatedMessage": response.translatedMessage,
         "innerThoughtType": response.innerThoughtType,
-        "hasQuestion": "?" in text or "？" in text,
-        "hasMetaClosing": any(phrase in text for phrase in _META_CLOSING_PHRASES),
+        "hasQuestion": any(
+            _looks_like_question(value)
+            for value in (response.aiMessage, response.translatedMessage)
+        ),
+        "hasMetaClosing": _looks_like_meta_closing(text),
+        "matchesExpectedContext": any(
+            term.casefold() in text.casefold()
+            for term in expected_context_terms
+        ),
     }
 
 
@@ -131,14 +135,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    settings = Settings()
     results = evaluate_cases(
         load_cases(args.cases),
         runs=args.runs,
         kind=args.kind,
-        settings=Settings(),
+        settings=settings,
     )
+    report = {
+        "evaluatedAt": datetime.now(timezone.utc).isoformat(),
+        "model": settings.openrouter_model,
+        "casesFile": str(args.cases),
+        "casesSha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
+        "runs": args.runs,
+        "kind": args.kind,
+        "results": results,
+    }
     args.output.write_text(
-        json.dumps(results, ensure_ascii=False, indent=2),
+        json.dumps(report, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     print(f"wrote {len(results)} evaluation results to {args.output}")

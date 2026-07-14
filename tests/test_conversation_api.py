@@ -1000,9 +1000,41 @@ class ClosingMessageApiTests(unittest.TestCase):
             "Stay inside the counterpart role and the concrete situation until the final word.",
             prompt,
         )
+        self.assertIn(
+            "Do not introduce a new topic, question, or additional conversational turn.",
+            prompt,
+        )
+        self.assertNotIn("Do not continue the scenario.", prompt)
         self.assertNotIn("Let's wrap up here.", prompt)
         self.assertNotIn("Let's pause here.", prompt)
         self.assertNotIn("여기서 마무리하자.", prompt)
+        self.assertIn("Take your time deciding about the party.", prompt)
+        self.assertIn("no onions in your order", prompt)
+        self.assertNotIn("Thanks for being honest with me.", prompt)
+        self.assertNotIn("I'll give you some space.", prompt)
+        self.assertNotIn("상황을 마무리해도", prompt)
+
+    def test_meta_closing_classifier_rejects_only_conversation_endings(self):
+        rejected_values = (
+            "Let’s wrap up here.",
+            "We should wrap up here.",
+            "This concludes our conversation.",
+            "오늘 대화는 여기까지 할게.",
+            "그러면 여기서 대화를 마칠게요.",
+            "그러면 여기서 대화를 끝내자.",
+        )
+        allowed_values = (
+            "Let's wrap up the gifts before the party.",
+            "오늘 선물 포장은 여기서 마무리하자.",
+            "Let's end the trip with dinner by the sea.",
+        )
+
+        for value in rejected_values:
+            with self.subTest(value=value):
+                self.assertTrue(next_message_service._looks_like_meta_closing(value))
+        for value in allowed_values:
+            with self.subTest(value=value):
+                self.assertFalse(next_message_service._looks_like_meta_closing(value))
 
     def test_closing_message_meta_wrap_up_returns_502(self):
         fake_openai = FakeOpenAI(
