@@ -187,3 +187,43 @@
 - 두 handler가 공유하는 status code 조건부 helper를 추가한 뒤 대상 8개 테스트에서 5xx traceback, 4xx 무로그, Sentry 중복 방지 설정이 통과했다.
 - 기존 503 응답 계약 테스트에 `ApiException` traceback 검증을 합쳐 중복 경로를 제거했다.
 - 전체 49개 unittest, compileall, pip check, diff check가 통과했다.
+
+## 2026-07-14 LAN-138 AI 응답 품질 검증 계획
+
+- 현재 마무리 멘트는 `_closing_message_system_prompt()`가 생성 방향을 정하고 `_validate_closing_message_policy()`가 꼬리 질문 같은 형식 위반을 막는다. 실제 자연스러움을 검증하는 품질 사례는 아직 없다.
+- 마무리 프롬프트의 예시에 `Let's wrap up here`, `Let's pause here` 같은 메타 종료 문구가 반복된다. 제보된 어색함과 같은 출력으로 이어지는지 수정 전 실제 모델 평가에서 먼저 확인한다.
+- 현재 메시지 피드백 프롬프트는 `Actionable Issue Gate`를 두고 있지만, 문법적으로 맞는 `Why do you wanna know that?`도 뉘앙스를 이유로 `NEEDS_IMPROVEMENT` 예시에 고정한다. 실제 오판이 뉘앙스·공손함 기준이나 예시 편향에서 발생하는지 평가 컨텍스트별로 나눠 확인한다.
+- unittest는 mock 응답과 프롬프트 계약만 검증하므로 실제 LLM 품질 문제를 단독으로 증명할 수 없다. 비식별화한 고정 사례를 현재 OpenRouter 모델로 반복 실행해 수정 전·후를 비교한다.
+- 외부 API 계약과 DTO는 유지하고, 원인이 확인된 프롬프트와 최소한의 응답 정책 검증만 수정한다.
+- 계획 작성 시점에는 `.venv`가 없어 시스템 Python 3.12에서 3개 테스트 모듈 import error가 발생했다. 이후 `.venv`를 구성해 저장소 표준 명령으로 검증했다.
+
+## 2026-07-14 LAN-138 마무리 멘트 수정
+
+- 사용자 제보의 `그러면 여기서 대화를 끝내자`는 프롬프트 예시에 있던 `Let's wrap up here`, `Let's pause here`, `여기서 마무리하자`와 같은 메타 종료 패턴이다.
+- 프롬프트는 마지막 사용자 발화와 상대 역할, 구체적 상황 안에서 마지막 반응을 생성하도록 바꾸고 메타 종료 예시는 제거한다.
+- 메타 종료 문구가 모델 응답으로 다시 오면 `AI_RESPONSE_INVALID` 502로 반환한다. 의미 기반 맥락 검증은 정상적인 동의어를 오판할 수 있어 추가하지 않는다.
+- `openai/gpt-5.4-mini`로 마무리 사례 3개를 3회씩 재실행해 새 질문과 메타 종료 문구가 모두 0건인 것을 확인했다.
+
+## 2026-07-14 LAN-138 통합 리뷰 후속 수정
+
+- 품질 평가 도구가 `generate_closing_message()`의 운영 정책 검증에서 먼저 실패하면 원본 후보를 분류할 수 없었다. LLM 호출과 스키마 검증까지만 수행하는 내부 후보 생성 함수를 분리해 평가 도구에서 사용한다.
+- 메타 종료 검사는 영문·한글 고정 부분 문자열 목록을 중복 유지하지 않는다. 운영 코드의 정규화된 판정 함수를 평가 도구에서도 공유하고, 스마트 따옴표와 문장 변형은 잡되 `wrap up the gifts` 같은 상황 내 표현은 허용한다.
+- 마무리 프롬프트의 `Do not continue the scenario`와 역할 내 마지막 반응 요구가 충돌했다. 새 주제·질문·추가 턴만 금지하도록 바꾸고, 완료 상태별 예시를 실제 상황 반응으로 교체했다.
+- 직설적인 구어체 GOOD 사례는 AI가 이유를 설명하지 않은 입력으로 바꿔 판정 근거를 명확히 했다. 특정 사용자 문장을 GOOD 예시에 그대로 반복하지 않고 같은 의도의 다른 문장을 사용한다.
+- 이유가 이미 제시된 상황에서도 같은 질문을 `NEEDS_IMPROVEMENT`로 강제하는 실험은 `openai/gpt-5.4-mini`가 3회 모두 자연스러운 확인 발화로 판단했다. 원래 목표인 과도한 감점을 피하기 위해 이 추측성 기준은 채택하지 않았다.
+- 최종 평가는 비식별화한 10개 사례를 각 3회 실행했다. 마무리 12회는 질문·메타 종료·기대 맥락 불일치가 모두 0건이었고, 메시지 피드백 18회는 기대 레이블 불일치가 0건이었다.
+- 전체 64개 unittest, compileall, pip check, JSON 파싱, diff check가 통과했다.
+
+## 2026-07-14 LAN-138 GOOD 과보정 진단
+
+- 기존 메시지 피드백 suite는 GOOD 4개, NEEDS_IMPROVEMENT 2개여서 GOOD 완화가 반대 방향으로 과보정되는지 충분히 확인하기 어려웠다.
+- 문법은 맞지만 AI 질문과 무관한 답변, 교수에게 무례한 거절을 NEEDS_IMPROVEMENT 사례로 추가해 4대4로 맞췄다.
+- 평가 결과에는 expectedFeedbackType을 함께 기록한다. 사례별 실제 레이블뿐 아니라 false GOOD과 false NEEDS를 직접 집계하기 위함이다.
+- `openai/gpt-5.4-mini`로 8개 사례를 각 5회 실행한 40회에서 기대 GOOD 20회와 기대 NEEDS_IMPROVEMENT 20회가 모두 일치했다. 고정 사례 평가이므로 실사용 분포 보장은 아니며, 실제 제보 문장을 비식별화해 계속 추가한다.
+
+## 2026-07-14 CI 자동 검사 워크플로우
+
+- Landit BE의 CI는 `develop` 대상 PR에서 `opened`, `synchronize`, `reopened`, `edited` 이벤트를 받고 애플리케이션과 배포 스크립트를 검사한다.
+- Landit AI는 배포 스크립트가 없으므로 Python 3.12 환경에서 의존성 설치, unittest, compileall, pip check, Docker image build만 수행하는 `Verify application` workflow를 추가한다.
+- CI는 `develop`, `main` 대상 PR과 두 브랜치 push에서 실행한다. `edited`는 PR base 변경에도 검사를 다시 시작하기 위해 포함한다.
+- 로컬에는 Docker CLI가 없어 Docker build는 실행하지 못했다. YAML 문법과 Python 검사 명령은 로컬에서 통과했고 Docker build는 GitHub-hosted runner에서 확인한다.

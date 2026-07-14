@@ -217,3 +217,31 @@
 - [x] Sentry logging event 중복 방지 설정 유지 확인.
 - [x] 전체 unittest, compileall, pip check, diff check 실행.
 - [x] 기존 커밋과 분리한 `fix:` 커밋 생성.
+
+## 2026-07-14 LAN-138 AI 응답 품질 검증 및 개선
+
+- [x] 현재 `closing-message`, `message-feedback` 구현과 테스트 경로 확인.
+- [x] 마무리 멘트와 피드백 판정의 우선 확인 대상 정리.
+- [x] 수정 전 재현과 수정 후 비교를 포함한 구현 계획 작성.
+- [x] 비식별화한 품질 평가 사례와 판정 기준 확정.
+- [x] 현재 OpenRouter 모델로 수정 전 기준선 수집.
+- [x] 마무리 멘트 원인 확인, 실패 테스트 작성, 최소 수정.
+- [x] `GOOD`, `NEEDS_IMPROVEMENT` 판정 원인 확인, 실패 테스트 작성, 최소 수정.
+- [x] 같은 사례와 모델로 수정 후 품질 재평가.
+- [x] 품질 평가 도구가 운영 검증 전 LLM 후보를 검사하도록 수정.
+- [x] 메타 종료 변형과 정상적인 `wrap up` 표현의 오탐·미탐 테스트 추가.
+- [x] `MAX_TURNS_REACHED`와 기대 맥락 검증 사례 추가.
+- [x] 평가 결과에 모델, 실행 시각, 사례 파일 해시 기록.
+- [x] `openai/gpt-5.4-mini`로 10개 사례를 각 3회 최종 재평가.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 최종 평가 결과와 남은 위험 기록.
+- [x] GOOD 과보정 진단 사례를 GOOD 4개, NEEDS_IMPROVEMENT 4개로 균형화.
+- [x] `openai/gpt-5.4-mini`로 메시지 피드백 8개 사례를 각 5회 재평가.
+
+## 2026-07-14 CI 자동 검사 워크플로우
+
+- [x] Landit BE CI의 PR 이벤트와 검사 범위 확인.
+- [x] `develop`, `main` 대상 PR과 push에서 실행되는 CI workflow 추가.
+- [x] Python 3.12 의존성 설치, unittest, compileall, pip check, Docker build 단계 추가.
+- [x] YAML 문법과 로컬 Python 검사 검증.
+- [x] 개발 문서에 CI 트리거와 검사 범위 기록.
