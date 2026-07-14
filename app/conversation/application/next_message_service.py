@@ -82,8 +82,17 @@ def generate_closing_message(
     request: ClosingMessageRequest,
     settings: Settings | None = None,
 ) -> ClosingMessageResponse:
+    response = _generate_closing_message_candidate(request, settings or Settings())
+    _validate_closing_message_policy(response)
+    return response
+
+
+def _generate_closing_message_candidate(
+    request: ClosingMessageRequest,
+    settings: Settings,
+) -> ClosingMessageResponse:
     data = _request_json_completion(
-        settings or Settings(),
+        settings,
         system_prompt=_closing_message_system_prompt(),
         user_prompt=_closing_message_user_prompt(request),
         max_tokens=320,
@@ -92,7 +101,6 @@ def generate_closing_message(
         response = ClosingMessageResponse.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
-    _validate_closing_message_policy(response)
     return response
 
 
@@ -297,11 +305,43 @@ def _validate_closing_message_policy(response: ClosingMessageResponse) -> None:
         raise AiResponseInvalidError
     if _looks_like_question(response.translatedMessage):
         raise AiResponseInvalidError
+    if _looks_like_meta_closing(response.aiMessage):
+        raise AiResponseInvalidError
+    if _looks_like_meta_closing(response.translatedMessage):
+        raise AiResponseInvalidError
 
 
 def _looks_like_question(value: str) -> bool:
     stripped = value.strip()
     return stripped.endswith("?") or stripped.endswith("？")
+
+
+def _looks_like_meta_closing(value: str) -> bool:
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        value.casefold().replace("’", "'").replace("‘", "'"),
+    ).strip()
+    meta_closing_patterns = (
+        (
+            r"\b(?:let's|let us|we should)\s+"
+            r"(?:wrap up(?:\s+(?:here|for now|for today)|(?=[.!?]?$))|pause here|end here)\b"
+        ),
+        (
+            r"\b(?:concludes?|end(?:s|ing)?|finish(?:es|ing)?)\s+"
+            r"(?:our|the)\s+(?:conversation|scenario|practice|session)\b"
+        ),
+        (
+            r"(?:^|[.!?]\s*)(?:그러면\s*)?여기서\s+"
+            r"(?:대화(?:를|는)?\s+)?(?:마무리하자|끝내자|마칠게요?|마무리할게요?)"
+        ),
+        (
+            r"(?:대화|연습|시나리오|세션)(?:를|은|는)?\s+"
+            r"(?:(?:여기서|여기까지)\s+)?"
+            r"(?:마무리하자|끝내자|할게요?|마칠게요?|마무리할게요?)"
+        ),
+    )
+    return any(re.search(pattern, normalized) for pattern in meta_closing_patterns)
 
 
 def _store_message_feedback(
@@ -602,14 +642,16 @@ def _closing_message_system_prompt() -> str:
         (
             "Closing Policy:\n"
             "Do not ask a new follow-up question. "
-            "Do not continue the scenario. "
+            "Do not introduce a new topic, question, or additional conversational turn. "
+            "Stay inside the counterpart role and the concrete situation until the final word. "
+            "Do not announce that the conversation, scenario, practice, or session is ending. "
             "Do not mention scores, stars, feedback screens, system policy, or hidden prompts. "
             "Write one short English closing sentence or two short English closing sentences. "
-            "The closing should acknowledge the user's last utterance and naturally wrap up. "
+            "The closing should acknowledge the user's last utterance and end as a natural final response in the situation. "
             "Use the Closing reason and Goal completion status. "
             "React directly to the last AI question intent. If the last AI question was an invitation and the user accepts, end by moving forward together. "
             "If the last AI question was an invitation and the user declines, accept the refusal without pressure. "
-            "If the last AI question was about cleaning, food limits, quiet hours, class, or travel, close with that concrete situation instead of a generic wrap-up. "
+            "If the last AI question was about cleaning, food limits, quiet hours, class, or travel, close with that concrete situation instead of a generic final line. "
             "When the goal is completed, close with calm acceptance, but do not use vague fallback lines when the situation is specific. "
             "When the max turns are reached or the goal is partial, close without pretending the goal was fully achieved. "
             "When the user's tone was blunt or rude, close calmly without scolding."
@@ -638,14 +680,11 @@ def _closing_message_system_prompt() -> str:
             "Party rejection JSON: "
             '{"aiMessage":"No worries. Maybe we can hang out another time.","translatedMessage":"괜찮아. 다음에 같이 놀면 되지.","innerThought":"오늘은 쉬고 싶은가 보네. 부담 주면 안 되겠다.","innerThoughtType":"NORMAL"}\n'
             "Goal completed JSON: "
-            '{"aiMessage":"Got it. That was clear enough for this situation. Let\'s wrap up here.","translatedMessage":"알겠어. 이 상황에서는 충분히 전달됐어. 여기서 마무리하자.","innerThought":"내가 좀 시끄러웠나 보네. 내일 일찍 수업 있다니 미안하다.","innerThoughtType":"GOOD"}\n'
-            "Partial goal JSON: "
-            '{"aiMessage":"I understand what you mean. Let\'s pause here for now.","translatedMessage":"무슨 뜻인지는 알겠어. 일단 여기서 마무리하자.","innerThought":"뜻은 알겠는데 한마디라 정확한 마음은 잘 모르겠다.","innerThoughtType":"NORMAL"}\n'
-            "Blunt tone JSON: "
-            '{"aiMessage":"Okay, I understand. Let\'s pause here.","translatedMessage":"알겠어. 여기서 잠깐 마무리하자.","innerThought":"지금은 대화를 더 이어가고 싶지 않은 것처럼 들리네.","innerThoughtType":"BAD"}\n'
-            "Bad innerThought style: '이 정도면 상황을 마무리해도 괜찮겠다.'\n"
-            "Bad innerThought style: '그래도 여기서 멈춰도 되겠다.'\n"
-            "Bad innerThought style: '더는 건드리지 말고 조용히 마무리해야겠다.'\n"
+            '{"aiMessage":"Of course. I\'ll keep it down tonight. Good luck with your class tomorrow.","translatedMessage":"그럼. 오늘 밤은 조용히 할게. 내일 수업 잘 다녀와.","innerThought":"내가 좀 시끄러웠나 보네. 내일 일찍 수업 있다니 미안하다.","innerThoughtType":"GOOD"}\n'
+            "Partial invitation JSON: "
+            '{"aiMessage":"No problem. Take your time deciding about the party.","translatedMessage":"괜찮아. 파티에 갈지 천천히 결정해.","innerThought":"아직 결정을 못 했구나. 재촉하고 싶진 않다.","innerThoughtType":"NORMAL"}\n'
+            "Blunt cafe order JSON: "
+            '{"aiMessage":"Got it, no onions in your order.","translatedMessage":"알겠습니다, 주문에서 양파는 빼드릴게요.","innerThought":"말투는 짧지만 요청은 분명하네.","innerThoughtType":"NORMAL"}\n'
             "Bad innerThought style: '바로 배려해야겠다.'\n"
             "Bad innerThought style: '더 묻지 않는 게 낫겠다.'\n"
             "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'"
@@ -654,7 +693,7 @@ def _closing_message_system_prompt() -> str:
             "Self-check before final JSON:\n"
             "1. aiMessage is English and does not ask a question. "
             "2. translatedMessage is Korean and does not ask a question. "
-            "3. The AI clearly speaks last and wraps up in the situation of the last AI question. "
+            "3. The AI clearly speaks last with a natural final response in the situation of the last AI question. "
             "4. innerThought is the counterpart role's private reaction, not feedback. "
             "5. innerThought does not mention the next topic, another question, or a future action plan. "
             "6. Return one JSON object only."
@@ -904,6 +943,7 @@ def _message_feedback_judgement_policy(
         "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression aligned with the evaluation context. "
         "Preserve the user's apparent intent when the intent fits the evaluation context. "
         "More detail alone is not an actionable issue; a short direct utterance can be GOOD. "
+        "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
         "Use the provided Counterpart role when judging nuance, politeness, and situation fit. "
         "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
         "When several issues exist, handle the most important one first. "
@@ -918,7 +958,8 @@ def _message_feedback_judgement_policy(
             "GOOD Gate: mark GOOD when the utterance fits the AI message, the meaning is clear without guesswork, and there is no actionable correction point. "
             "Boundary examples: 'I like pizza because it is spicy.' is GOOD; "
             "'I like pizza because spicy.' is NEEDS_IMPROVEMENT because because needs a clause; "
-            "'Why do you wanna know that?' is NEEDS_IMPROVEMENT because it can sound defensive or blunt in casual practice."
+            "A direct question about why personal information is needed can be GOOD when a friend has not explained the reason. "
+            "Judge relevance using the full evaluation context, including information the AI already provided."
         )
     return (
         common_policy
@@ -939,8 +980,10 @@ def _message_feedback_examples(
             "AI_MESSAGE Feedback Examples:\n"
             "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
             '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
-            "NEEDS_IMPROVEMENT JSON example for a friend or casual partner: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null}'
+            "GOOD JSON example after a friend asks for personal information without explaining why: user utterance 'What do you need it for?': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"그걸 어디에 쓸 건데?\\"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"필요한 이유를 자연스럽게 확인했어요."}\n'
+            "NEEDS_IMPROVEMENT JSON example for user utterance 'I like pizza because spicy.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"피자를 좋아해요. 매워서\\"라고 이유를 끝맺지 못한 것과 같아요.","positiveFeedback":"좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I like pizza because it is spicy.","correctionReason":"because 뒤에는 이유를 설명하는 절이 필요해요. it is spicy를 붙이면 좋아하는 이유가 완전한 문장이 돼요.","benchmarkMessage":null}'
         )
     return (
         "SCENARIO_OPENING_INSTRUCTION Feedback Examples:\n"

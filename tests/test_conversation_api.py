@@ -5,6 +5,7 @@ import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.conversation.application import next_message_service
 from app.conversation.application.next_message_service import (
     MessageFeedbackNotReadyError,
     clear_message_feedback_cache,
@@ -13,7 +14,11 @@ from app.conversation.application.next_message_service import (
 )
 from app.core.config import Settings
 from app.main import create_app
-from app.models.conversation import FeedbackStatus, MessageFeedbackRequest
+from app.models.conversation import (
+    EvaluationContextType,
+    FeedbackStatus,
+    MessageFeedbackRequest,
+)
 
 
 def make_settings(**overrides):
@@ -111,16 +116,16 @@ def valid_message_feedback_payload():
         "messageSequence": 2,
         "scenario": {
             "scenarioId": 10,
-            "title": "음식에 대한 대화하기",
-            "briefing": "좋아하는 음식과 최근에 먹은 음식에 대해 이야기합니다.",
-            "conversationGoal": "내 취향과 경험을 영어로 설명해봅니다.",
+            "title": "친구에게 이유 묻기",
+            "briefing": "친구가 개인 정보를 물어보는 상황입니다.",
+            "conversationGoal": "개인 정보가 필요한 이유를 자연스럽게 확인합니다.",
             "counterpartRole": "friend",
             "serviceAudience": "KOREAN_LEARNER",
         },
         "evaluationContext": {
             "type": "AI_MESSAGE",
-            "content": "What food do you like? Why do you like it?",
-            "translatedContent": "좋아하는 음식이 있어? 왜 좋아해?",
+            "content": "Can I have your phone number?",
+            "translatedContent": "전화번호 좀 알려줄래?",
         },
         "userMessage": "why do you wanna know that?",
     }
@@ -181,11 +186,11 @@ def needs_improvement_message_feedback(message_id=1003):
     return {
         "messageId": message_id,
         "feedbackType": "NEEDS_IMPROVEMENT",
-        "baseLocaleAnalogy": '"그걸 왜 알고 싶은데?"라고 살짝 방어적으로 되묻는 것과 같아요.',
-        "positiveFeedback": "상대의 질문 의도를 확인하려고 한 시도는 좋아요.",
+        "baseLocaleAnalogy": '"피자를 좋아해요. 매워서"라고 이유를 끝맺지 못한 것과 같아요.',
+        "positiveFeedback": "좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.",
         "feedbackDetail": None,
-        "correctionExpression": "I was just curious why you asked.",
-        "correctionReason": "why do you wanna know that?은 상황에 따라 따지는 느낌으로 들릴 수 있어요.",
+        "correctionExpression": "I like pizza because it is spicy.",
+        "correctionReason": "because 뒤에 주어와 동사가 있는 절을 붙이면 이유가 완전하게 전달돼요.",
         "benchmarkMessage": None,
     }
 
@@ -392,16 +397,52 @@ class MessageFeedbackApiTests(unittest.TestCase):
             {"PREPARING", "COMPLETED", "FAILED"},
         )
 
+    def test_feedback_prompt_keeps_direct_casual_utterance_good(self):
+        prompt = next_message_service._message_feedback_judgement_policy(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "Do not mark a clear and context-appropriate casual utterance as "
+            "NEEDS_IMPROVEMENT solely because it sounds direct.",
+            prompt,
+        )
+        self.assertIn(
+            "A direct question about why personal information is needed can be "
+            "GOOD when a friend has not explained the reason.",
+            prompt,
+        )
+        self.assertNotIn("Why do you wanna know that?", prompt)
+        self.assertIn(
+            "Judge relevance using the full evaluation context, including "
+            "information the AI already provided.",
+            prompt,
+        )
+
+    def test_feedback_examples_show_direct_casual_utterance_as_good(self):
+        examples = next_message_service._message_feedback_examples(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "GOOD JSON example after a friend asks for personal information "
+            "without explaining why: ",
+            examples,
+        )
+        self.assertIn("What do you need it for?", examples)
+        self.assertNotIn("Why do you wanna know that?", examples)
+        self.assertIn('"feedbackType":"GOOD"', examples)
+
     def test_message_feedback_generates_feedback_and_returns_preparing(self):
         ai_response = {
             "messageId": 1001,
-            "feedbackType": "NEEDS_IMPROVEMENT",
-            "baseLocaleAnalogy": '"그걸 왜 알고 싶은데?"라고 살짝 방어적으로 되묻는 것과 같아요.',
-            "positiveFeedback": "상대의 질문 의도를 확인하려고 한 시도는 좋아요.",
-            "feedbackDetail": None,
-            "correctionExpression": "I was just curious why you asked.",
-            "correctionReason": "why do you wanna know that?은 상황에 따라 따지는 느낌으로 들릴 수 있어요.",
-            "benchmarkMessage": None,
+            "feedbackType": "GOOD",
+            "baseLocaleAnalogy": '"왜 그게 필요한데?"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.',
+            "positiveFeedback": None,
+            "feedbackDetail": "친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.",
+            "correctionExpression": None,
+            "correctionReason": None,
+            "benchmarkMessage": "필요한 이유를 자연스럽게 확인했어요.",
             "detectedPatterns": [],
         }
         fake_openai = FakeOpenAI(content=json.dumps(ai_response))
@@ -439,7 +480,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertNotIn("SCENARIO_OPENING_INSTRUCTION Policy", messages[0]["content"])
         self.assertIn("AI_MESSAGE Feedback Examples", messages[0]["content"])
-        self.assertIn("Why do you wanna know that?", messages[0]["content"])
+        self.assertNotIn("Why do you wanna know that?", messages[0]["content"])
         self.assertNotIn(
             "SCENARIO_OPENING_INSTRUCTION Feedback Examples",
             messages[0]["content"],
@@ -455,11 +496,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("baseLocaleAnalogy", messages[0]["content"])
         cached_feedback = get_cached_message_feedback(100, 1001)
         self.assertIsNotNone(cached_feedback)
-        self.assertEqual(cached_feedback.feedbackType, "NEEDS_IMPROVEMENT")
-        self.assertEqual(
-            cached_feedback.correctionExpression,
-            "I was just curious why you asked.",
-        )
+        self.assertEqual(cached_feedback.feedbackType, "GOOD")
+        self.assertIsNone(cached_feedback.correctionExpression)
 
     def test_message_feedback_accepts_user_opening_instruction(self):
         ai_response = {
@@ -792,7 +830,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self._cache_feedback(
             app,
             needs_improvement_message_feedback(1003),
-            user_message="why do you wanna know that?",
+            user_message="I like pizza because spicy.",
         )
         ai_response = {
             "sessionId": 100,
@@ -835,7 +873,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertEqual(
             body["data"]["messageFeedbacks"][1]["correctionExpression"],
-            "I was just curious why you asked.",
+            "I like pizza because it is spicy.",
         )
         self.assertIsNone(get_cached_message_feedback(100, 1001))
         self.assertIsNone(get_cached_message_feedback(100, 1003))
@@ -957,6 +995,80 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
 
 class ClosingMessageApiTests(unittest.TestCase):
+    def test_closing_prompt_forbids_meta_closing_and_uses_scenario_context(self):
+        prompt = next_message_service._closing_message_system_prompt()
+
+        self.assertIn(
+            "Do not announce that the conversation, scenario, practice, or session is ending.",
+            prompt,
+        )
+        self.assertIn(
+            "Stay inside the counterpart role and the concrete situation until the final word.",
+            prompt,
+        )
+        self.assertIn(
+            "Do not introduce a new topic, question, or additional conversational turn.",
+            prompt,
+        )
+        self.assertNotIn("Do not continue the scenario.", prompt)
+        self.assertNotIn("Let's wrap up here.", prompt)
+        self.assertNotIn("Let's pause here.", prompt)
+        self.assertNotIn("여기서 마무리하자.", prompt)
+        self.assertIn("Take your time deciding about the party.", prompt)
+        self.assertIn("no onions in your order", prompt)
+        self.assertNotIn("Thanks for being honest with me.", prompt)
+        self.assertNotIn("I'll give you some space.", prompt)
+        self.assertNotIn("상황을 마무리해도", prompt)
+
+    def test_meta_closing_classifier_rejects_only_conversation_endings(self):
+        rejected_values = (
+            "Let’s wrap up here.",
+            "We should wrap up here.",
+            "This concludes our conversation.",
+            "오늘 대화는 여기까지 할게.",
+            "그러면 여기서 대화를 마칠게요.",
+            "그러면 여기서 대화를 끝내자.",
+        )
+        allowed_values = (
+            "Let's wrap up the gifts before the party.",
+            "오늘 선물 포장은 여기서 마무리하자.",
+            "Let's end the trip with dinner by the sea.",
+        )
+
+        for value in rejected_values:
+            with self.subTest(value=value):
+                self.assertTrue(next_message_service._looks_like_meta_closing(value))
+        for value in allowed_values:
+            with self.subTest(value=value):
+                self.assertFalse(next_message_service._looks_like_meta_closing(value))
+
+    def test_closing_message_meta_wrap_up_returns_502(self):
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "aiMessage": "Got it. Let's wrap up here.",
+                    "translatedMessage": "알겠어. 여기서 대화를 마무리하자.",
+                    "innerThought": "정중하게 부탁했네.",
+                    "innerThoughtType": "GOOD",
+                },
+            ),
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
+                json=valid_closing_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
     def test_closing_message_returns_final_ai_message_and_prompt_context(self):
         ai_response = {
             "aiMessage": "Sure, I'll keep it down tonight. Good luck with your class tomorrow.",
