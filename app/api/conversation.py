@@ -6,6 +6,8 @@ from app.common.response import ApiResponse, success_response
 from app.models.conversation import (
     ClosingMessageRequest,
     ClosingMessageResponse,
+    InnerThoughtRequest,
+    InnerThoughtResponse,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     NextMessageRequest,
@@ -18,6 +20,7 @@ from app.conversation.application.next_message_service import (
     AiResponseInvalidError,
     MessageFeedbackNotReadyError,
     generate_closing_message,
+    generate_inner_thought,
     generate_message_feedback,
     generate_next_message,
     generate_session_feedback,
@@ -36,6 +39,30 @@ def create_next_message(
 ) -> ApiResponse[NextMessageResponse]:
     try:
         response = generate_next_message(payload, request.app.state.settings)
+    except AiResponseInvalidError as exc:
+        raise ApiException(
+            status_code=502,
+            error_code=ErrorCode.AI_RESPONSE_INVALID,
+        ) from exc
+    except AiGenerationFailedError as exc:
+        raise ApiException(
+            status_code=503,
+            error_code=ErrorCode.AI_GENERATION_FAILED,
+        ) from exc
+
+    return success_response(response)
+
+
+@router.post(
+    "/inner-thought",
+    response_model=ApiResponse[InnerThoughtResponse],
+)
+def create_inner_thought(
+    payload: InnerThoughtRequest,
+    request: Request,
+) -> ApiResponse[InnerThoughtResponse]:
+    try:
+        response = generate_inner_thought(payload, request.app.state.settings)
     except AiResponseInvalidError as exc:
         raise ApiException(
             status_code=502,

@@ -127,13 +127,56 @@ class NextMessageResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    innerThought: str
-    innerThoughtType: InnerThoughtType
     goalCompletionStatus: GoalCompletionStatus
 
-    @field_validator("aiMessage", "translatedMessage", "innerThought")
+    @field_validator("aiMessage", "translatedMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class InnerThoughtRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    submittedMessageId: int = Field(gt=0)
+    submittedTurnNumber: int = Field(gt=0)
+    scenario: ScenarioContext
+    conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def submitted_message_must_match_latest_history(self) -> Self:
+        latest_message = self.conversationHistory[-1]
+        if (
+            latest_message.role != "USER"
+            or latest_message.messageId != self.submittedMessageId
+            or latest_message.turnNumber != self.submittedTurnNumber
+        ):
+            raise ValueError("submitted message must match latest user history")
+        return self
+
+
+class InnerThoughtData(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    innerThought: str
+    innerThoughtType: InnerThoughtType
+
+    @field_validator("innerThought")
+    @classmethod
+    def inner_thought_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class InnerThoughtResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    innerThought: str
+    innerThoughtType: InnerThoughtType
+
+    @field_validator("innerThought")
+    @classmethod
+    def inner_thought_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
 
 

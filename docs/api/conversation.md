@@ -21,11 +21,24 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 
 - `aiMessage`
 - `translatedMessage`
-- `innerThought`
-- `innerThoughtType`
 - `goalCompletionStatus`
 
 다음 메시지는 backend가 지정한 고정 질문을 포함해야 합니다. 모델은 이전 사용자 발화에 대한 짧은 맞장구를 붙일 수 있지만, 고정 질문의 영어와 한국어 번역이 응답에서 누락되면 응답 형식 오류로 처리합니다.
+
+## `POST /api/v1/conversation/inner-thought`
+
+시나리오와 전체 대화 히스토리를 맥락으로 참고하되, 마지막 사용자 발화에 대한 상대 역할의 사적인 반응만 생성합니다. `nextQuestion`은 받지 않습니다.
+
+요청에는 `sessionId`, `submittedMessageId`, `submittedTurnNumber`, `scenario`, `conversationHistory`를 포함합니다.
+
+- `conversationHistory`는 최소 1개이며 마지막 메시지는 요청 식별자와 일치하는 `USER` 메시지여야 합니다.
+- OpenRouter는 `innerThought`, `innerThoughtType`만 생성합니다.
+- 응답의 `sessionId`는 요청의 `sessionId`, `messageId`는 요청의 `submittedMessageId`입니다.
+- 속마음은 한국어로 생성하며 `innerThoughtType`은 `GOOD`, `NORMAL`, `BAD` 중 하나입니다.
+- 문법 평가, 학습 피드백, 다음 질문, 이후 행동 계획을 속마음에 포함하지 않습니다.
+- 같은 요청을 부수 효과 없이 재호출할 수 있지만 동일한 문구를 보장하지 않습니다.
+- 상태 저장, 중복 호출 방지, 최초 성공 결과 확정, polling은 Landit backend 책임입니다.
+- 종료 턴은 기존 `closing-message`를 사용하며 이 API를 별도로 호출하지 않습니다.
 
 ## `POST /api/v1/conversation/closing-message`
 
