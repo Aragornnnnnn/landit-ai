@@ -904,6 +904,7 @@ def _message_feedback_judgement_policy(
         "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression aligned with the evaluation context. "
         "Preserve the user's apparent intent when the intent fits the evaluation context. "
         "More detail alone is not an actionable issue; a short direct utterance can be GOOD. "
+        "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
         "Use the provided Counterpart role when judging nuance, politeness, and situation fit. "
         "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
         "When several issues exist, handle the most important one first. "
@@ -918,7 +919,7 @@ def _message_feedback_judgement_policy(
             "GOOD Gate: mark GOOD when the utterance fits the AI message, the meaning is clear without guesswork, and there is no actionable correction point. "
             "Boundary examples: 'I like pizza because it is spicy.' is GOOD; "
             "'I like pizza because spicy.' is NEEDS_IMPROVEMENT because because needs a clause; "
-            "'Why do you wanna know that?' is NEEDS_IMPROVEMENT because it can sound defensive or blunt in casual practice."
+            "'Why do you wanna know that?' can be GOOD in casual practice."
         )
     return (
         common_policy
@@ -939,8 +940,10 @@ def _message_feedback_examples(
             "AI_MESSAGE Feedback Examples:\n"
             "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
             '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
-            "NEEDS_IMPROVEMENT JSON example for a friend or casual partner: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"그걸 왜 알고 싶은데?\\"라고 살짝 방어적으로 되묻는 것과 같아요.","positiveFeedback":"상대의 질문 의도를 확인하려고 한 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I was just curious why you asked.","correctionReason":"Why do you wanna know that?은 친구 사이에서도 따지는 느낌으로 들릴 수 있어요. 궁금해서 묻는다는 의도를 먼저 밝히면 더 부드럽게 전달돼요.","benchmarkMessage":null}'
+            "GOOD JSON example for a friend or casual partner: user utterance 'Why do you wanna know that?': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"왜 그게 필요한데?\\"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"필요한 이유를 자연스럽게 확인했어요."}\n'
+            "NEEDS_IMPROVEMENT JSON example for user utterance 'I like pizza because spicy.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"피자를 좋아해요. 매워서\\"라고 이유를 끝맺지 못한 것과 같아요.","positiveFeedback":"좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I like pizza because it is spicy.","correctionReason":"because 뒤에는 이유를 설명하는 절이 필요해요. it is spicy를 붙이면 좋아하는 이유가 완전한 문장이 돼요.","benchmarkMessage":null}'
         )
     return (
         "SCENARIO_OPENING_INSTRUCTION Feedback Examples:\n"

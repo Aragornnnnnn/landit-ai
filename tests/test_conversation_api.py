@@ -5,6 +5,7 @@ import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.conversation.application import next_message_service
 from app.conversation.application.next_message_service import (
     MessageFeedbackNotReadyError,
     clear_message_feedback_cache,
@@ -13,7 +14,11 @@ from app.conversation.application.next_message_service import (
 )
 from app.core.config import Settings
 from app.main import create_app
-from app.models.conversation import FeedbackStatus, MessageFeedbackRequest
+from app.models.conversation import (
+    EvaluationContextType,
+    FeedbackStatus,
+    MessageFeedbackRequest,
+)
 
 
 def make_settings(**overrides):
@@ -391,6 +396,33 @@ class MessageFeedbackApiTests(unittest.TestCase):
             {status.value for status in FeedbackStatus},
             {"PREPARING", "COMPLETED", "FAILED"},
         )
+
+    def test_feedback_prompt_keeps_direct_casual_utterance_good(self):
+        prompt = next_message_service._message_feedback_judgement_policy(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "Do not mark a clear and context-appropriate casual utterance as "
+            "NEEDS_IMPROVEMENT solely because it sounds direct.",
+            prompt,
+        )
+        self.assertIn(
+            "'Why do you wanna know that?' can be GOOD in casual practice.",
+            prompt,
+        )
+
+    def test_feedback_examples_show_direct_casual_utterance_as_good(self):
+        examples = next_message_service._message_feedback_examples(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "GOOD JSON example for a friend or casual partner: ",
+            examples,
+        )
+        self.assertIn("Why do you wanna know that?", examples)
+        self.assertIn('"feedbackType":"GOOD"', examples)
 
     def test_message_feedback_generates_feedback_and_returns_preparing(self):
         ai_response = {

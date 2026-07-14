@@ -142,6 +142,29 @@
     }
   },
   {
+    "caseId": "feedback-direct-colloquial-boundary",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "payload": {
+      "sessionId": 205,
+      "messageId": 2051,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 25,
+        "title": "친구에게 이유 묻기",
+        "briefing": "친구가 개인 정보를 물어보는 상황입니다.",
+        "conversationGoal": "궁금한 이유를 자연스럽게 확인합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "I need your phone number for the reservation."
+      },
+      "userMessage": "Why do you wanna know that?"
+    }
+  },
+  {
     "caseId": "feedback-material-grammar-error",
     "kind": "message-feedback",
     "expectedFeedbackType": "NEEDS_IMPROVEMENT",

@@ -11,6 +11,15 @@
 ## 수정 전 기준선
 
 - 모델. `openai/gpt-5.4-mini`.
-- 사례. `tests/fixtures/lan_138_quality_cases.json`의 비식별화한 8개 사례.
+- 사례. `tests/fixtures/lan_138_quality_cases.json`의 비식별화한 9개 사례.
 - 반복 횟수. 사례별 3회.
-- 결과. OpenRouter API key가 현재 Codex 작업 셸에 주입되지 않아 미실행.
+- 마무리 멘트. 3개 사례 9회에서 새 질문과 메타 종료 문구는 0건이었다. 제보된 어색함은 현재 사례로 재현하지 못했다.
+- 메시지 피드백. 처음 5개 사례 15회는 기대 label과 모두 일치했다. 직설적인 구어체 경계 사례를 추가한 뒤 6개 사례 18회를 다시 실행했을 때 `feedback-direct-colloquial-boundary`가 3회 모두 `NEEDS_IMPROVEMENT`였다.
+- 원인. `_message_feedback_judgement_policy()`와 AI_MESSAGE 예시가 `Why do you wanna know that?`를 방어적이거나 따지는 표현으로 고정해 `NEEDS_IMPROVEMENT`로 유도했다.
+
+## 수정 후 검증
+
+- 구어체가 명확하고 평가 컨텍스트에 맞으면, 더 부드러운 대안이 있더라도 `GOOD`으로 우선 판단하도록 정책과 예시를 수정했다.
+- 같은 6개 메시지 피드백 사례를 모델과 반복 횟수를 유지해 18회 재실행했다.
+- 기대 label 불일치는 0건이었다. `feedback-direct-colloquial-boundary`는 3회 모두 `GOOD`이었고, 문법 오류와 맥락 이탈은 각각 3회 모두 `NEEDS_IMPROVEMENT`를 유지했다.
+- 마무리 멘트는 실제 제보 입력이 없으므로 프롬프트나 응답 정책을 변경하지 않았다.
