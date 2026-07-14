@@ -225,8 +225,6 @@ class NextMessageApiTests(unittest.TestCase):
         ai_response = {
             "aiMessage": "Sounds tasty. Do you cook often?",
             "translatedMessage": "맛있겠다. 요리는 자주 해?",
-            "innerThought": "매운 피자를 좋아한다고 이유까지 말해주네. 대화하기 편하다.",
-            "innerThoughtType": "GOOD",
             "goalCompletionStatus": "PARTIAL",
         }
         fake_openai = FakeOpenAI(content=json.dumps(ai_response))
@@ -281,6 +279,35 @@ class NextMessageApiTests(unittest.TestCase):
             "Use the provided next fixed question as the question part of aiMessage.",
             messages[0]["content"],
         )
+        self.assertNotIn("innerThought", messages[0]["content"])
+
+    def test_next_message_rejects_inner_thought_fields(self):
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "aiMessage": "Sounds tasty. Do you cook often?",
+                    "translatedMessage": "맛있겠다. 요리는 자주 해?",
+                    "innerThought": "매운 피자를 좋아한다고 이유까지 말해주네.",
+                    "innerThoughtType": "GOOD",
+                    "goalCompletionStatus": "PARTIAL",
+                },
+            ),
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/next-message",
+                json=valid_next_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
     def test_next_message_invalid_ai_response_returns_502(self):
         fake_openai = FakeOpenAI(content='{"aiMessage":"Only one field"}')

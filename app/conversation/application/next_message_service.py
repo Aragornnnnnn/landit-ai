@@ -549,39 +549,13 @@ def _next_message_system_prompt() -> str:
             "Do not turn every short answer into praise, but do not scold it either."
         ),
         (
-            "Inner Thought Policy:\n"
-            "innerThought must be the counterpart's first-person private reaction to the user's utterance, written in Korean. "
-            "It must sound like what that role would secretly think, not a feedback explanation or grammar note. "
-            "Before writing innerThought, imagine you are exactly the provided Counterpart role, not the app, tutor, narrator, evaluator, or scenario controller. "
-            "Use the provided Counterpart role. A professor, friend, roommate, cafe staff, or stranger may feel differently about the same sentence. "
-            "Write the honest private feeling a real person in that role would have immediately after hearing the user's current utterance. "
-            "It may be relieved, grateful, awkward, hurt, annoyed, uncomfortable, or unsure. "
-            "If there is a tradeoff, prefer an imperfect but emotionally real private thought over a polished, standardized, or tutor-like sentence. "
-            "innerThoughtType must be exactly GOOD, NORMAL, or BAD. "
-            "Use GOOD when the utterance satisfies the core intent of the question or situation, is clear without guesswork, and feels acceptable for the counterpart role. "
-            "Use NORMAL when the core intent is mostly satisfied but the answer lacks detail, warmth, or relationship tone, so the counterpart feels slightly unsure or underwhelmed. "
-            "Use BAD when the core intent is not satisfied, the meaning is hard to understand, or the counterpart would feel confused, hurt, distant, or uncomfortable. "
-            "Do not write tutor/meta planning thoughts such as '대화 이어가기 좋다', '다음 질문으로 넘어가자', '조금 더 자연스럽게 말하면 좋겠다', or grammar feedback. "
-            "Do not mention expression quality, sentence quality, grammar, naturalness, or study feedback inside innerThought. "
-            "Do not leave a clear, friendly roommate answer as a generic 'I understand, but it could be more natural' thought. React to the actual content. "
-            "Do not use innerThought to preview the next topic, next fixed question, or a future scenario beat. "
-            "Do not write what the counterpart plans to do next. "
-            "If the user says their parents decided something for them, the private reaction should reflect that family-decision context instead of only saying the user has a weak opinion. "
-            "'I don't care' often feels cold or dismissive; for a friend or roommate, the private reaction should feel hurt or surprised. "
-            "Direct roommate commands such as 'Buy me X' can feel like being ordered around. "
-            "Private relationship questions such as 'Why are you single?' should feel invasive or uncomfortable, not merely cold. "
-            "Direct commands such as 'Send me the file now' can feel rude to a professor or staff member."
-        ),
-        (
             "Conversation Style Examples:\n"
             "Good JSON for user 'I like pizza because it is spicy.': "
-            '{"aiMessage":"Sounds tasty. Do you cook often?","translatedMessage":"맛있겠다. 요리는 자주 해?","innerThought":"매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.","innerThoughtType":"GOOD","goalCompletionStatus":"PARTIAL"}\n'
+            '{"aiMessage":"Sounds tasty. Do you cook often?","translatedMessage":"맛있겠다. 요리는 자주 해?","goalCompletionStatus":"PARTIAL"}\n'
             "Good JSON for blunt user 'Anywhere is fine. I don't care.': "
-            '{"aiMessage":"Okay, anywhere works. What would make tonight feel comfortable for you?","translatedMessage":"그래, 어디든 괜찮구나. 오늘 밤이 편하려면 뭐가 좋을까?","innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아.","innerThoughtType":"BAD","goalCompletionStatus":"PARTIAL"}\n'
+            '{"aiMessage":"Okay, anywhere works. What would make tonight feel comfortable for you?","translatedMessage":"그래, 어디든 괜찮구나. 오늘 밤이 편하려면 뭐가 좋을까?","goalCompletionStatus":"PARTIAL"}\n'
             "Bad aiMessage style: 'I see.'\n"
             "Bad aiMessage style: 'You said you like spicy pizza because it is spicy. What else do you like?'\n"
-            "Bad innerThought style: '취미 얘기도 자연스럽게 이어가면 더 친해질 수 있겠다.'\n"
-            "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'\n"
             "Bad output format: Sounds tasty. Do you cook often?"
         ),
         (
@@ -589,18 +563,14 @@ def _next_message_system_prompt() -> str:
             "1. aiMessage contains the exact next fixed question English unchanged. "
             "2. translatedMessage contains the exact next fixed question Korean unchanged. "
             "3. goalCompletionStatus is judged from Scenario conversation goal and Conversation history. "
-            "4. innerThought sounds like the counterpart role's private reaction, not feedback. "
-            "5. innerThought does not mention the next topic, next question, or a future action plan. "
-            "6. Return one JSON object only."
+            "4. Return one JSON object only."
         ),
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"aiMessage":"...","translatedMessage":"...","innerThought":"...","innerThoughtType":"GOOD","goalCompletionStatus":"PARTIAL"}. '
+            '{"aiMessage":"...","translatedMessage":"...","goalCompletionStatus":"PARTIAL"}. '
             "aiMessage must be English. "
             "translatedMessage must be a natural Korean translation of aiMessage. "
-            "innerThought must be Korean. "
-            "innerThoughtType must be GOOD, NORMAL, or BAD. "
             "goalCompletionStatus must be NOT_STARTED, PARTIAL, or COMPLETED. "
             "Never return plain text outside the JSON object."
         ),

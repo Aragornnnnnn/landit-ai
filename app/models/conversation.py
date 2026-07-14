@@ -127,11 +127,9 @@ class NextMessageResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    innerThought: str
-    innerThoughtType: InnerThoughtType
     goalCompletionStatus: GoalCompletionStatus
 
-    @field_validator("aiMessage", "translatedMessage", "innerThought")
+    @field_validator("aiMessage", "translatedMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
