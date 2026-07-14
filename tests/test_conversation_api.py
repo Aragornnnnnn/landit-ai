@@ -74,6 +74,12 @@ def valid_next_message_payload():
     }
 
 
+def valid_inner_thought_payload():
+    payload = valid_next_message_payload()
+    payload.pop("nextQuestion")
+    return payload
+
+
 def valid_closing_message_payload():
     return {
         "sessionId": 100,
@@ -406,6 +412,140 @@ class NextMessageApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI") as openai_class:
             response = make_client(app).post(
                 "/api/v1/conversation/next-message",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
+        openai_class.assert_not_called()
+
+
+class InnerThoughtApiTests(unittest.TestCase):
+    def test_inner_thought_returns_request_identifiers_and_private_reaction(self):
+        ai_response = {
+            "innerThought": "매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.",
+            "innerThoughtType": "GOOD",
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
+                json=valid_inner_thought_payload(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "success": True,
+                "data": {
+                    "sessionId": 100,
+                    "messageId": 1001,
+                    **ai_response,
+                },
+                "error": None,
+            },
+        )
+        messages = fake_openai.completions.kwargs["messages"]
+        self.assertIn("Counterpart role: friend", messages[1]["content"])
+        self.assertIn(
+            "Last user message: USER turn 1 message 1001: I like pizza because it is spicy.",
+            messages[1]["content"],
+        )
+        self.assertNotIn("Next fixed question", messages[1]["content"])
+        self.assertIn(
+            "Do not mention expression quality, sentence quality, grammar, naturalness, or study feedback inside innerThought.",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Do not use innerThought to preview the next topic, next fixed question, or a future scenario beat.",
+            messages[0]["content"],
+        )
+
+    def test_inner_thought_invalid_ai_response_returns_502(self):
+        invalid_responses = [
+            {"innerThought": "매운 피자를 좋아하는구나."},
+            {
+                "innerThought": "매운 피자를 좋아하는구나.",
+                "innerThoughtType": "UNKNOWN",
+            },
+            {
+                "sessionId": 999,
+                "messageId": 999,
+                "innerThought": "매운 피자를 좋아하는구나.",
+                "innerThoughtType": "GOOD",
+            },
+        ]
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        for ai_response in invalid_responses:
+            with self.subTest(ai_response=ai_response):
+                fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+                with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                    response = make_client(app).post(
+                        "/api/v1/conversation/inner-thought",
+                        json=valid_inner_thought_payload(),
+                    )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(
+                    response.json()["error"]["code"],
+                    "AI_RESPONSE_INVALID",
+                )
+
+    def test_inner_thought_generation_failure_returns_503(self):
+        fake_openai = FakeOpenAI(error=RuntimeError("network failed"))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
+                json=valid_inner_thought_payload(),
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+
+    def test_inner_thought_rejects_empty_history(self):
+        payload = valid_inner_thought_payload()
+        payload["conversationHistory"] = []
+        app = create_app(make_settings())
+
+        with patch("app.core.openai_client.OpenAI") as openai_class:
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
+        openai_class.assert_not_called()
+
+    def test_inner_thought_rejects_mismatched_submitted_history(self):
+        payload = valid_inner_thought_payload()
+        payload["submittedMessageId"] = 9999
+        app = create_app(make_settings())
+
+        with patch("app.core.openai_client.OpenAI") as openai_class:
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
                 json=payload,
             )
 
