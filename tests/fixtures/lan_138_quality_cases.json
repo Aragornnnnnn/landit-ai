@@ -292,5 +292,51 @@
       },
       "userMessage": "An iced americano, please."
     }
+  },
+  {
+    "caseId": "feedback-ai-message-off-topic",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "payload": {
+      "sessionId": 206,
+      "messageId": 2061,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 26,
+        "title": "친구의 주말 계획 묻기",
+        "briefing": "친구에게 지난 주말에 무엇을 했는지 묻습니다.",
+        "conversationGoal": "질문에 맞는 경험을 자연스럽게 답합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What did you do last weekend?"
+      },
+      "userMessage": "I like spicy food."
+    }
+  },
+  {
+    "caseId": "feedback-professor-dismissive-refusal",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "payload": {
+      "sessionId": 207,
+      "messageId": 2071,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 27,
+        "title": "교수님께 결석 사유 설명하기",
+        "briefing": "교수님이 어제 수업에 결석한 이유를 묻습니다.",
+        "conversationGoal": "결석 사유를 공손하게 설명합니다.",
+        "counterpartRole": "professor"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Could you explain why you missed class yesterday?"
+      },
+      "userMessage": "That is none of your business."
+    }
   }
 ]

@@ -200,4 +200,5 @@ class QualityEvaluationTests(unittest.TestCase):
             )
 
         self.assertEqual(results[0]["feedbackType"], "GOOD")
+        self.assertEqual(results[0]["expectedFeedbackType"], "GOOD")
         self.assertTrue(results[0]["feedbackTypeMatchesExpectation"])

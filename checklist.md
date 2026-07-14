@@ -235,3 +235,5 @@
 - [x] `openai/gpt-5.4-mini`로 10개 사례를 각 3회 최종 재평가.
 - [x] 전체 unittest, compileall, diff check 실행.
 - [x] 최종 평가 결과와 남은 위험 기록.
+- [x] GOOD 과보정 진단 사례를 GOOD 4개, NEEDS_IMPROVEMENT 4개로 균형화.
+- [x] `openai/gpt-5.4-mini`로 메시지 피드백 8개 사례를 각 5회 재평가.

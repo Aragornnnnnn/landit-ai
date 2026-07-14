@@ -213,3 +213,10 @@
 - 이유가 이미 제시된 상황에서도 같은 질문을 `NEEDS_IMPROVEMENT`로 강제하는 실험은 `openai/gpt-5.4-mini`가 3회 모두 자연스러운 확인 발화로 판단했다. 원래 목표인 과도한 감점을 피하기 위해 이 추측성 기준은 채택하지 않았다.
 - 최종 평가는 비식별화한 10개 사례를 각 3회 실행했다. 마무리 12회는 질문·메타 종료·기대 맥락 불일치가 모두 0건이었고, 메시지 피드백 18회는 기대 레이블 불일치가 0건이었다.
 - 전체 64개 unittest, compileall, pip check, JSON 파싱, diff check가 통과했다.
+
+## 2026-07-14 LAN-138 GOOD 과보정 진단
+
+- 기존 메시지 피드백 suite는 GOOD 4개, NEEDS_IMPROVEMENT 2개여서 GOOD 완화가 반대 방향으로 과보정되는지 충분히 확인하기 어려웠다.
+- 문법은 맞지만 AI 질문과 무관한 답변, 교수에게 무례한 거절을 NEEDS_IMPROVEMENT 사례로 추가해 4대4로 맞췄다.
+- 평가 결과에는 expectedFeedbackType을 함께 기록한다. 사례별 실제 레이블뿐 아니라 false GOOD과 false NEEDS를 직접 집계하기 위함이다.
+- `openai/gpt-5.4-mini`로 8개 사례를 각 5회 실행한 40회에서 기대 GOOD 20회와 기대 NEEDS_IMPROVEMENT 20회가 모두 일치했다. 고정 사례 평가이므로 실사용 분포 보장은 아니며, 실제 제보 문장을 비식별화해 계속 추가한다.

@@ -114,6 +114,7 @@ def _evaluate_feedback_case(
         "caseId": case["caseId"],
         "kind": "message-feedback",
         "run": run,
+        "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
         "feedbackTypeMatchesExpectation": feedback_type == expected_feedback_type,
     }
