@@ -219,7 +219,7 @@
       },
       "evaluationContext": {
         "type": "AI_MESSAGE",
-        "content": "I need your phone number for the reservation."
+        "content": "Can I have your phone number?"
       },
       "userMessage": "Why do you wanna know that?"
     }

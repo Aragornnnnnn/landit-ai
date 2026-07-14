@@ -55,7 +55,7 @@
   # LAN-138 대화 품질 사례를 실제 모델로 반복 평가하는 스크립트
   ```
 
-  표준 라이브러리와 현재 앱 코드만 사용한다. fixture를 읽어 두 서비스 함수 중 하나를 호출하고 기본 결과를 `/tmp/landit-ai-lan-138-results.json`에 저장한다. `--kind`는 `all`, `closing`, `message-feedback`을 허용하고 기본값은 `all`로 둔다. 출력에는 `caseId`, 반복 번호, 응답 필드, 예상 label 일치 여부, 질문 부호 및 메타 마무리 표현 포함 여부만 기록한다. API key는 출력하지 않는다.
+  표준 라이브러리와 현재 앱 코드만 사용한다. fixture를 읽어 두 서비스 함수 중 하나를 호출하고 기본 결과를 `/tmp/landit-ai-lan-138-results.json`에 저장한다. `--kind`는 `all`, `closing`, `message-feedback`을 허용하고 기본값은 `all`로 둔다. 출력에는 실행 시각, 모델명, 사례 파일 식별 정보, `caseId`, 반복 번호, 응답 필드, 예상 레이블 일치 여부, 질문 부호 및 메타 마무리 표현 포함 여부를 기록한다. API key는 출력하지 않는다.
 
   ```bash
   .venv/bin/python scripts/evaluate_conversation_quality.py \
@@ -270,7 +270,7 @@
     --output /tmp/landit-ai-lan-138-feedback-after.json
   ```
 
-  합의한 GOOD 경계 사례는 다수 실행에서 기대 label과 일치해야 한다. 명백한 오류나 맥락 이탈이 `GOOD`으로 완화되면 해당 정책을 다시 조정한다.
+  합의한 GOOD 경계 사례는 다수 실행에서 기대 레이블과 일치해야 한다. 명백한 오류나 맥락 이탈이 `GOOD`으로 완화되면 해당 정책을 다시 조정한다.
 
 - [ ] **Step 5: 피드백 판단 기준 수정만 커밋한다**
 
