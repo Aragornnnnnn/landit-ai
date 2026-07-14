@@ -217,3 +217,16 @@
 - [x] Sentry logging event 중복 방지 설정 유지 확인.
 - [x] 전체 unittest, compileall, pip check, diff check 실행.
 - [x] 기존 커밋과 분리한 `fix:` 커밋 생성.
+
+## 2026-07-14 LAN-138 AI 응답 품질 검증 및 개선
+
+- [x] 현재 `closing-message`, `message-feedback` 구현과 테스트 경로 확인.
+- [x] 마무리 멘트와 피드백 판정의 우선 확인 대상 정리.
+- [x] 수정 전 재현과 수정 후 비교를 포함한 구현 계획 작성.
+- [ ] 비식별화한 품질 평가 사례와 판정 기준 확정.
+- [ ] 현재 OpenRouter 모델로 수정 전 기준선 수집.
+- [ ] 마무리 멘트 원인 확인, 실패 테스트 작성, 최소 수정.
+- [ ] `GOOD`, `NEEDS_IMPROVEMENT` 판정 원인 확인, 실패 테스트 작성, 최소 수정.
+- [ ] 같은 사례와 모델로 수정 후 품질 재평가.
+- [ ] 전체 unittest, compileall, diff check 실행.
+- [ ] 최종 평가 결과와 남은 위험 기록.

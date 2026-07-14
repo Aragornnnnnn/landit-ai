@@ -187,3 +187,12 @@
 - 두 handler가 공유하는 status code 조건부 helper를 추가한 뒤 대상 8개 테스트에서 5xx traceback, 4xx 무로그, Sentry 중복 방지 설정이 통과했다.
 - 기존 503 응답 계약 테스트에 `ApiException` traceback 검증을 합쳐 중복 경로를 제거했다.
 - 전체 49개 unittest, compileall, pip check, diff check가 통과했다.
+
+## 2026-07-14 LAN-138 AI 응답 품질 검증 계획
+
+- 현재 마무리 멘트는 `_closing_message_system_prompt()`가 생성 방향을 정하고 `_validate_closing_message_policy()`가 꼬리 질문 같은 형식 위반을 막는다. 실제 자연스러움을 검증하는 품질 사례는 아직 없다.
+- 마무리 프롬프트의 예시에 `Let's wrap up here`, `Let's pause here` 같은 메타 종료 문구가 반복된다. 제보된 어색함과 같은 출력으로 이어지는지 수정 전 실제 모델 평가에서 먼저 확인한다.
+- 현재 메시지 피드백 프롬프트는 `Actionable Issue Gate`를 두고 있지만, 문법적으로 맞는 `Why do you wanna know that?`도 뉘앙스를 이유로 `NEEDS_IMPROVEMENT` 예시에 고정한다. 실제 오판이 뉘앙스·공손함 기준이나 예시 편향에서 발생하는지 평가 컨텍스트별로 나눠 확인한다.
+- unittest는 mock 응답과 프롬프트 계약만 검증하므로 실제 LLM 품질 문제를 단독으로 증명할 수 없다. 비식별화한 고정 사례를 현재 OpenRouter 모델로 반복 실행해 수정 전·후를 비교한다.
+- 외부 API 계약과 DTO는 유지하고, 원인이 확인된 프롬프트와 최소한의 응답 정책 검증만 수정한다.
+- 현재 worktree에는 `.venv`가 없다. `.venv/bin/python -m unittest discover -s tests`는 실행하지 못했고, 시스템 Python 3.12 실행은 FastAPI와 Pydantic 미설치로 3개 테스트 모듈 import error가 발생했다.
