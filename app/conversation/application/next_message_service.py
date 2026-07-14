@@ -297,11 +297,30 @@ def _validate_closing_message_policy(response: ClosingMessageResponse) -> None:
         raise AiResponseInvalidError
     if _looks_like_question(response.translatedMessage):
         raise AiResponseInvalidError
+    if _looks_like_meta_closing(response.aiMessage):
+        raise AiResponseInvalidError
+    if _looks_like_meta_closing(response.translatedMessage):
+        raise AiResponseInvalidError
 
 
 def _looks_like_question(value: str) -> bool:
     stripped = value.strip()
     return stripped.endswith("?") or stripped.endswith("？")
+
+
+def _looks_like_meta_closing(value: str) -> bool:
+    normalized = value.lower()
+    meta_closing_phrases = (
+        "let's wrap up",
+        "let's pause here",
+        "let's end here",
+        "let's end the conversation",
+        "대화를 마무리하자",
+        "여기서 마무리하자",
+        "여기서 대화를 끝내자",
+        "대화를 끝내자",
+    )
+    return any(phrase in normalized for phrase in meta_closing_phrases)
 
 
 def _store_message_feedback(
@@ -603,13 +622,15 @@ def _closing_message_system_prompt() -> str:
             "Closing Policy:\n"
             "Do not ask a new follow-up question. "
             "Do not continue the scenario. "
+            "Stay inside the counterpart role and the concrete situation until the final word. "
+            "Do not announce that the conversation, scenario, practice, or session is ending. "
             "Do not mention scores, stars, feedback screens, system policy, or hidden prompts. "
             "Write one short English closing sentence or two short English closing sentences. "
-            "The closing should acknowledge the user's last utterance and naturally wrap up. "
+            "The closing should acknowledge the user's last utterance and end as a natural final response in the situation. "
             "Use the Closing reason and Goal completion status. "
             "React directly to the last AI question intent. If the last AI question was an invitation and the user accepts, end by moving forward together. "
             "If the last AI question was an invitation and the user declines, accept the refusal without pressure. "
-            "If the last AI question was about cleaning, food limits, quiet hours, class, or travel, close with that concrete situation instead of a generic wrap-up. "
+            "If the last AI question was about cleaning, food limits, quiet hours, class, or travel, close with that concrete situation instead of a generic final line. "
             "When the goal is completed, close with calm acceptance, but do not use vague fallback lines when the situation is specific. "
             "When the max turns are reached or the goal is partial, close without pretending the goal was fully achieved. "
             "When the user's tone was blunt or rude, close calmly without scolding."
@@ -638,11 +659,11 @@ def _closing_message_system_prompt() -> str:
             "Party rejection JSON: "
             '{"aiMessage":"No worries. Maybe we can hang out another time.","translatedMessage":"괜찮아. 다음에 같이 놀면 되지.","innerThought":"오늘은 쉬고 싶은가 보네. 부담 주면 안 되겠다.","innerThoughtType":"NORMAL"}\n'
             "Goal completed JSON: "
-            '{"aiMessage":"Got it. That was clear enough for this situation. Let\'s wrap up here.","translatedMessage":"알겠어. 이 상황에서는 충분히 전달됐어. 여기서 마무리하자.","innerThought":"내가 좀 시끄러웠나 보네. 내일 일찍 수업 있다니 미안하다.","innerThoughtType":"GOOD"}\n'
+            '{"aiMessage":"Of course. I\'ll keep it down tonight. Good luck with your class tomorrow.","translatedMessage":"그럼. 오늘 밤은 조용히 할게. 내일 수업 잘 다녀와.","innerThought":"내가 좀 시끄러웠나 보네. 내일 일찍 수업 있다니 미안하다.","innerThoughtType":"GOOD"}\n'
             "Partial goal JSON: "
-            '{"aiMessage":"I understand what you mean. Let\'s pause here for now.","translatedMessage":"무슨 뜻인지는 알겠어. 일단 여기서 마무리하자.","innerThought":"뜻은 알겠는데 한마디라 정확한 마음은 잘 모르겠다.","innerThoughtType":"NORMAL"}\n'
+            '{"aiMessage":"I understand. Thanks for being honest with me.","translatedMessage":"알겠어. 솔직하게 말해줘서 고마워.","innerThought":"뜻은 알겠는데 한마디라 정확한 마음은 잘 모르겠다.","innerThoughtType":"NORMAL"}\n'
             "Blunt tone JSON: "
-            '{"aiMessage":"Okay, I understand. Let\'s pause here.","translatedMessage":"알겠어. 여기서 잠깐 마무리하자.","innerThought":"지금은 대화를 더 이어가고 싶지 않은 것처럼 들리네.","innerThoughtType":"BAD"}\n'
+            '{"aiMessage":"Okay, I understand. I\'ll give you some space.","translatedMessage":"알겠어. 좀 혼자 있을 시간을 줄게.","innerThought":"지금은 대화를 더 이어가고 싶지 않은 것처럼 들리네.","innerThoughtType":"BAD"}\n'
             "Bad innerThought style: '이 정도면 상황을 마무리해도 괜찮겠다.'\n"
             "Bad innerThought style: '그래도 여기서 멈춰도 되겠다.'\n"
             "Bad innerThought style: '더는 건드리지 말고 조용히 마무리해야겠다.'\n"
@@ -654,7 +675,7 @@ def _closing_message_system_prompt() -> str:
             "Self-check before final JSON:\n"
             "1. aiMessage is English and does not ask a question. "
             "2. translatedMessage is Korean and does not ask a question. "
-            "3. The AI clearly speaks last and wraps up in the situation of the last AI question. "
+            "3. The AI clearly speaks last with a natural final response in the situation of the last AI question. "
             "4. innerThought is the counterpart role's private reaction, not feedback. "
             "5. innerThought does not mention the next topic, another question, or a future action plan. "
             "6. Return one JSON object only."

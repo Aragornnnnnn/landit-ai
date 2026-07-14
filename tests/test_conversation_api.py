@@ -989,6 +989,48 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
 
 class ClosingMessageApiTests(unittest.TestCase):
+    def test_closing_prompt_forbids_meta_closing_and_uses_scenario_context(self):
+        prompt = next_message_service._closing_message_system_prompt()
+
+        self.assertIn(
+            "Do not announce that the conversation, scenario, practice, or session is ending.",
+            prompt,
+        )
+        self.assertIn(
+            "Stay inside the counterpart role and the concrete situation until the final word.",
+            prompt,
+        )
+        self.assertNotIn("Let's wrap up here.", prompt)
+        self.assertNotIn("Let's pause here.", prompt)
+        self.assertNotIn("여기서 마무리하자.", prompt)
+
+    def test_closing_message_meta_wrap_up_returns_502(self):
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "aiMessage": "Got it. Let's wrap up here.",
+                    "translatedMessage": "알겠어. 여기서 대화를 마무리하자.",
+                    "innerThought": "정중하게 부탁했네.",
+                    "innerThoughtType": "GOOD",
+                },
+            ),
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/closing-message",
+                json=valid_closing_message_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
     def test_closing_message_returns_final_ai_message_and_prompt_context(self):
         ai_response = {
             "aiMessage": "Sure, I'll keep it down tonight. Good luck with your class tomorrow.",
