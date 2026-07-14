@@ -245,3 +245,10 @@
 - [x] Python 3.12 의존성 설치, unittest, compileall, pip check, Docker build 단계 추가.
 - [x] YAML 문법과 로컬 Python 검사 검증.
 - [x] 개발 문서에 CI 트리거와 검사 범위 기록.
+
+## 2026-07-14 LAN-144 다음 메시지·속마음 생성 분리 계획
+
+- [x] 확정된 BE·AI 책임과 API 계약을 현재 구현에 대조.
+- [x] 최소 변경 파일과 TDD 구현 순서 정리.
+- [x] 구현 범위에서 BE 상태 관리와 `closing-message` 변경 제외.
+- [x] 구현 계획 자체 검토와 diff 확인.

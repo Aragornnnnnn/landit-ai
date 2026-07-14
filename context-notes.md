@@ -227,3 +227,11 @@
 - Landit AI는 배포 스크립트가 없으므로 Python 3.12 환경에서 의존성 설치, unittest, compileall, pip check, Docker image build만 수행하는 `Verify application` workflow를 추가한다.
 - CI는 `develop`, `main` 대상 PR과 두 브랜치 push에서 실행한다. `edited`는 PR base 변경에도 검사를 다시 시작하기 위해 포함한다.
 - 로컬에는 Docker CLI가 없어 Docker build는 실행하지 못했다. YAML 문법과 Python 검사 명령은 로컬에서 통과했고 Docker build는 GitHub-hosted runner에서 확인한다.
+
+## 2026-07-14 LAN-144 다음 메시지·속마음 생성 분리 계획
+
+- 일반 턴은 `landit-be`가 `next-message`와 `inner-thought`를 병렬 호출하고, `landit-ai`는 두 stateless 동기 생성 API만 제공한다.
+- `next-message`는 고정 질문 검증과 `goalCompletionStatus` 생성을 유지하며 속마음 필드는 반환하지 않는다.
+- `inner-thought`는 전체 히스토리를 맥락으로 참고하되 마지막 사용자 발화만 평가하고, 응답 식별자는 요청값에서 복사한다.
+- 상태 전환, polling, 중복 호출 방지, 최초 성공 결과 확정, timeout과 재시도 정책은 BE 책임이다.
+- 종료 턴은 기존 `closing-message`를 유지하며 별도 `inner-thought`를 호출하지 않는다.
