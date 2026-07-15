@@ -57,3 +57,206 @@
 - [x] `git diff --check` 실행.
 - [x] 최종 diff와 git 상태 확인.
 - [x] 변경 커밋 생성.
+
+## 2026-07-07 ECS 배포 검증 fail-fast 개선
+
+- [x] `origin/develop` 기준 워크플로우 확인.
+- [x] dev/prod Worker `Verify ECS service` 단계에 bounded wait와 ECS 이벤트 출력 추가.
+- [x] YAML 문법과 diff 검증.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-08 LAN-95 다음 AI 메시지 생성 API
+
+- [x] `feat/LAN-95` 브랜치 생성.
+- [x] Landit 현재 API, 설정, 공통 에러 응답 구조 확인.
+- [x] SayNow `origin/develop`의 다음 질문/속마음 프롬프트 구조 확인.
+- [x] `next-message` 요청/응답 DTO 실패 테스트 작성.
+- [x] LLM 응답 형식 오류 502 테스트 작성.
+- [x] LLM 생성 실패 503 테스트 작성.
+- [x] 최소 구현으로 `POST /api/v1/conversation/next-message` 추가.
+- [x] README 또는 관련 문서에 API 반영.
+- [x] `.venv/bin/python -m unittest discover -s tests` 실행.
+- [x] 최종 diff와 git 상태 확인.
+- [x] 논리 단위 커밋 생성.
+- [x] `next-message`를 SayNow식 고정 질문 체계로 수정.
+- [x] `nextQuestion` 요청 DTO와 프롬프트 실패 테스트 작성.
+- [x] 응답이 고정 질문 영어/한국어를 포함하지 않으면 502 처리.
+- [x] `.venv/bin/python -m unittest discover -s tests` 재실행.
+- [x] 고정 질문 체계 수정 커밋 생성.
+- [x] LAN-95 리뷰에서 찾은 제출 메시지와 히스토리 불일치 검증 테스트 추가.
+- [x] 제출 메시지와 히스토리 일치 검증 구현.
+- [x] LAN-95 전체 unittest, compileall, diff check 재실행.
+- [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-96 대화 종료 메시지 생성 API
+
+- [x] `feat/LAN-96` 브랜치 생성.
+- [x] SayNow `origin/develop`의 `closing-message` 모델, 라우터, 프롬프트, 테스트 확인.
+- [x] Landit 계약 차이 확인. 전체 `conversationHistory`, 공통 응답 래퍼, invalid 502, 생성 실패 503 기준.
+- [x] LAN-96 구현 계획 문서 작성.
+- [x] `closing-message` 요청/응답 DTO 실패 테스트 작성.
+- [x] 최소 DTO 구현.
+- [x] closing-message 성공/프롬프트 계약 실패 테스트 작성.
+- [x] closing-message LLM 서비스와 라우터 구현.
+- [x] 응답 필드 누락, 꼬리 질문 정책 위반 502 테스트 작성.
+- [x] LLM 생성 실패 503 테스트 작성.
+- [x] README 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `closing-message` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.
+
+## 2026-07-08 LAN-96 리뷰 점검
+
+- [x] `ponytail`과 `review` 기준으로 중복, 과구현, 오류 가능성 점검.
+- [x] `INVALID_REQUEST` 기본 메시지를 LAN-96 명세 문구와 일치하도록 수정.
+- [x] next-message와 closing-message의 LLM 호출 중복을 공통 helper로 축소.
+- [x] 수정 후 전체 unittest, compileall, diff check 실행.
+- [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-97 메시지별 피드백 생성 API
+
+- [x] `feat/LAN-97` 브랜치 생성.
+- [x] SayNow `origin/develop`의 turn-feedback 모델, 프롬프트, cache 구조 확인.
+- [x] LAN-97 구현 계획 문서 작성.
+- [x] message-feedback 요청/응답 DTO 실패 테스트 작성.
+- [x] GOOD, NEEDS_IMPROVEMENT 필드 정책 실패 테스트 작성.
+- [x] 메시지 피드백 TTL cache 테스트 작성.
+- [x] DTO, 서비스, cache helper, 라우터 구현.
+- [x] README 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `message-feedback` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.
+
+## 2026-07-08 LAN-97 리뷰 점검
+
+- [x] `ponytail` 기준으로 과구현, 사용처 없는 helper, 불필요한 프롬프트 출력 필드 확인.
+- [x] 사용처 없는 cache entry 조회 helper 제거.
+- [x] 서버가 저장하지 않는 `detectedPatterns`를 프롬프트 출력 스키마에서 제거.
+- [x] cache의 단일 프로세스 한계를 주석으로 명시.
+- [x] 전체 unittest, compileall, diff check 재실행.
+- [x] 리뷰 수정 커밋 생성.
+
+## 2026-07-08 LAN-97 문서 구조 분리
+
+- [x] README에 섞인 개발, 아키텍처, API 세부 내용을 분리할 범위 확인.
+- [x] README를 프로젝트 진입점과 문서 링크 중심으로 축소.
+- [x] 아키텍처 세부 문서를 `docs/architecture.md`로 분리.
+- [x] conversation API 책임과 정책을 `docs/api/conversation.md`로 분리.
+- [x] 개발 환경과 검증 명령을 `docs/development.md`로 분리.
+
+## 2026-07-08 LAN-98 세션 최종 피드백 생성 API
+
+- [x] SayNow `origin/develop`의 session-feedback DTO, 라우터, 프롬프트, 캐시 정책 확인.
+- [x] LAN-98 구현 계획 문서 작성.
+- [x] session-feedback 요청/응답 DTO 실패 테스트 작성.
+- [x] `expectedMessageIds` 검증과 409 에러 계약 실패 테스트 작성.
+- [x] LLM 기반 `highlightMessage`, `summaryMessage` 생성 테스트 작성.
+- [x] 서버 계산 기반 `nativeScore`, `starRating` 테스트 작성.
+- [x] 성공 시 cache 삭제, 실패 시 cache 보존 테스트 작성.
+- [x] DTO, 서비스, 라우터 구현.
+- [x] conversation API 문서 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenAPI 스키마에 `session-feedback` 경로 노출 확인.
+- [x] 의미 단위 커밋 생성.
+
+## 2026-07-11 LAN-93 USER First 메시지별 피드백
+
+- [x] `feat/LAN-93` 브랜치 생성 및 기준선 unittest 확인.
+- [x] AI_MESSAGE와 SCENARIO_OPENING_INSTRUCTION 요청 계약 확정.
+- [x] USER First 요청 DTO와 프롬프트 분기 실패 테스트 작성.
+- [x] 평가 컨텍스트 DTO와 조건부 검증 구현.
+- [x] USER First 평가 프롬프트와 기존 AI_MESSAGE 회귀 경로 구현.
+- [x] conversation API 문서와 OpenAPI 스키마 확인.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 의미 단위 커밋 생성.
+
+## 2026-07-11 LAN-93 자체 리뷰 후속 수정
+
+- [x] AI_MESSAGE와 SCENARIO_OPENING_INSTRUCTION의 피드백 예시 분리 테스트 작성.
+- [x] 평가 컨텍스트 타입별 GOOD, NEEDS_IMPROVEMENT 예시 분리.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 문서 규칙에 따른 의미 단위 커밋 생성.
+## 2026-07-13 LAN-122 OpenTelemetry 애플리케이션 메트릭
+
+- [x] `feat/LAN-122` 브랜치 생성.
+- [x] 현재 FastAPI 앱 팩토리, 설정, 테스트, 실행 구조 확인.
+- [x] 기본 비활성화와 외부 전송 차단 실패 테스트 작성 및 RED 확인.
+- [x] FastAPI HTTP 요청 수·지연·상태 메트릭 최소 구현.
+- [x] process·CPython GC 메트릭 최소 구현.
+- [x] health, unmatched path, 민감·고카디널리티 속성 제외.
+- [x] `docs/development.md`에 환경변수와 로컬 동작 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 최종 diff와 git 상태 확인.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-13 LAN-122 OpenTelemetry 공통 Resource 속성 수정
+
+- [x] AI Resource 속성과 BE·IaC 공통 계약 차이 확인.
+- [x] `OTEL_SERVICE_NAME`과 `deployment.environment.name` 실패 테스트 작성 및 RED 확인.
+- [x] 공통 Resource 속성에 맞게 최소 수정.
+- [x] unmatched 요청 설명을 실제 계측 동작에 맞게 수정.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 별도 `fix:` 커밋 생성.
+
+## 2026-07-13 LAN-122 예상하지 못한 500 오류 로깅
+
+- [x] custom exception handler와 Sentry logging event 경로 확인.
+- [x] 500 stack trace와 Sentry 중복 방지 실패 테스트 작성 및 RED 확인.
+- [x] 예상하지 못한 500 예외만 Uvicorn error logger에 stack trace 기록.
+- [x] Sentry LoggingIntegration의 ERROR event 생성 비활성화.
+- [x] 4xx·validation 오류가 ERROR로 기록되지 않는지 검증.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-13 LAN-122 명시적 5xx 예외 로깅 리뷰 수정
+
+- [x] `ApiException`과 `HTTPException` handler의 5xx 로그 누락 원인 확인.
+- [x] 두 503 exception의 ERROR stack trace 실패 테스트 작성 및 RED 확인.
+- [x] 두 exception의 5xx만 Uvicorn error logger에 stack trace 기록.
+- [x] 두 exception의 4xx가 ERROR로 기록되지 않는지 검증.
+- [x] Sentry logging event 중복 방지 설정 유지 확인.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 기존 커밋과 분리한 `fix:` 커밋 생성.
+
+## 2026-07-14 LAN-138 AI 응답 품질 검증 및 개선
+
+- [x] 현재 `closing-message`, `message-feedback` 구현과 테스트 경로 확인.
+- [x] 마무리 멘트와 피드백 판정의 우선 확인 대상 정리.
+- [x] 수정 전 재현과 수정 후 비교를 포함한 구현 계획 작성.
+- [x] 비식별화한 품질 평가 사례와 판정 기준 확정.
+- [x] 현재 OpenRouter 모델로 수정 전 기준선 수집.
+- [x] 마무리 멘트 원인 확인, 실패 테스트 작성, 최소 수정.
+- [x] `GOOD`, `NEEDS_IMPROVEMENT` 판정 원인 확인, 실패 테스트 작성, 최소 수정.
+- [x] 같은 사례와 모델로 수정 후 품질 재평가.
+- [x] 품질 평가 도구가 운영 검증 전 LLM 후보를 검사하도록 수정.
+- [x] 메타 종료 변형과 정상적인 `wrap up` 표현의 오탐·미탐 테스트 추가.
+- [x] `MAX_TURNS_REACHED`와 기대 맥락 검증 사례 추가.
+- [x] 평가 결과에 모델, 실행 시각, 사례 파일 해시 기록.
+- [x] `openai/gpt-5.4-mini`로 10개 사례를 각 3회 최종 재평가.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 최종 평가 결과와 남은 위험 기록.
+- [x] GOOD 과보정 진단 사례를 GOOD 4개, NEEDS_IMPROVEMENT 4개로 균형화.
+- [x] `openai/gpt-5.4-mini`로 메시지 피드백 8개 사례를 각 5회 재평가.
+
+## 2026-07-14 CI 자동 검사 워크플로우
+
+- [x] Landit BE CI의 PR 이벤트와 검사 범위 확인.
+- [x] `develop`, `main` 대상 PR과 push에서 실행되는 CI workflow 추가.
+- [x] Python 3.12 의존성 설치, unittest, compileall, pip check, Docker build 단계 추가.
+- [x] YAML 문법과 로컬 Python 검사 검증.
+- [x] 개발 문서에 CI 트리거와 검사 범위 기록.
+
+## 2026-07-14 LAN-144 다음 메시지·속마음 생성 분리 계획
+
+- [x] 확정된 BE·AI 책임과 API 계약을 현재 구현에 대조.
+- [x] 최소 변경 파일과 TDD 구현 순서 정리.
+- [x] 구현 범위에서 BE 상태 관리와 `closing-message` 변경 제외.
+- [x] 구현 계획 자체 검토와 diff 확인.
+
+## 2026-07-14 LAN-144 다음 메시지·속마음 생성 분리 구현
+
+- [x] `next-message` 응답에서 속마음 필드와 생성 프롬프트 제거.
+- [x] 마지막 사용자 발화 기반 `inner-thought` 동기 API 추가.
+- [x] 성공, 요청 검증 400, 모델 응답 검증 502, OpenRouter 실패 503 테스트 추가.
+- [x] conversation API 모듈과 전체 unittest, compileall, OpenAPI 스키마, diff 검증.
+- [x] 논리 단위 커밋 생성.

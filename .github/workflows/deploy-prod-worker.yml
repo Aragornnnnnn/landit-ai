@@ -70,6 +70,7 @@ jobs:
             --output json
 
       - name: Verify ECS service
+        timeout-minutes: 12
         run: |
           desired_count="$(aws ecs describe-services \
             --cluster "$ECS_CLUSTER" \
@@ -82,16 +83,63 @@ jobs:
             exit 1
           fi
 
-          aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
-            --output json
+          print_service_state() {
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE" \
+              --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,deployments:deployments[*].{status:status,rolloutState:rolloutState,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,failedTasks:failedTasks}}' \
+              --output json
+          }
+
+          print_service_events() {
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE" \
+              --query 'services[0].events[0:10].[createdAt,message]' \
+              --output table
+          }
+
+          print_service_state
 
           if [ "$desired_count" -gt 0 ]; then
-            aws ecs wait services-stable \
-              --cluster "$ECS_CLUSTER" \
-              --services "$ECS_SERVICE"
+            for attempt in $(seq 1 40); do
+              rollout_state="$(aws ecs describe-services \
+                --cluster "$ECS_CLUSTER" \
+                --services "$ECS_SERVICE" \
+                --query 'services[0].deployments[?status==`PRIMARY`][0].rolloutState' \
+                --output text)"
+              deployment_count="$(aws ecs describe-services \
+                --cluster "$ECS_CLUSTER" \
+                --services "$ECS_SERVICE" \
+                --query 'length(services[0].deployments)' \
+                --output text)"
+              running_count="$(aws ecs describe-services \
+                --cluster "$ECS_CLUSTER" \
+                --services "$ECS_SERVICE" \
+                --query 'services[0].runningCount' \
+                --output text)"
+
+              print_service_state
+
+              if [ "$rollout_state" = "FAILED" ]; then
+                echo "PRIMARY ECS deployment failed"
+                print_service_events
+                exit 1
+              fi
+
+              if [ "$deployment_count" -eq 1 ] && [ "$running_count" -eq "$desired_count" ]; then
+                echo "ECS service is stable"
+                break
+              fi
+
+              if [ "$attempt" -eq 40 ]; then
+                echo "ECS service did not become stable within 10 minutes"
+                print_service_events
+                exit 1
+              fi
+
+              sleep 15
+            done
           else
             echo "desired count is 0; skipping services-stable wait"
           fi

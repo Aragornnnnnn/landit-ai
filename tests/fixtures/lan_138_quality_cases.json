@@ -1,0 +1,342 @@
+[
+  {
+    "caseId": "closing-roommate-request",
+    "kind": "closing",
+    "expectedContextTerms": ["quiet", "down", "class", "조용", "수업"],
+    "payload": {
+      "sessionId": 100,
+      "submittedMessageId": 1007,
+      "submittedTurnNumber": 4,
+      "scenario": {
+        "scenarioId": 10,
+        "title": "기숙사에서 조용히 해달라고 말하기",
+        "briefing": "룸메이트에게 밤에 조용히 해달라고 말하는 상황입니다.",
+        "conversationGoal": "불편함을 공격적이지 않게 전달합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 1006,
+          "turnNumber": 4,
+          "role": "AI",
+          "content": "What do you want me to do?"
+        },
+        {
+          "messageId": 1007,
+          "turnNumber": 4,
+          "role": "USER",
+          "content": "Could you keep it down at night? I have an early class tomorrow."
+        }
+      ],
+      "closingReason": "GOAL_COMPLETED",
+      "goalCompletionStatus": "COMPLETED"
+    }
+  },
+  {
+    "caseId": "closing-invitation-acceptance",
+    "kind": "closing",
+    "expectedContextTerms": ["tonight", "party", "see you", "오늘", "파티", "보자"],
+    "payload": {
+      "sessionId": 101,
+      "submittedMessageId": 1011,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 11,
+        "title": "친구의 파티 초대 수락하기",
+        "briefing": "친구의 파티 초대에 답합니다.",
+        "conversationGoal": "초대를 자연스럽게 수락합니다.",
+        "counterpartRole": "friend"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 1010,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "Do you want to come to my party tonight?"
+        },
+        {
+          "messageId": 1011,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "Sure, I'd love to."
+        }
+      ],
+      "closingReason": "GOAL_COMPLETED",
+      "goalCompletionStatus": "COMPLETED"
+    }
+  },
+  {
+    "caseId": "closing-invitation-decline",
+    "kind": "closing",
+    "expectedContextTerms": ["no worries", "another time", "next time", "괜찮", "다음"],
+    "payload": {
+      "sessionId": 102,
+      "submittedMessageId": 1021,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 12,
+        "title": "친구의 파티 초대 거절하기",
+        "briefing": "친구의 파티 초대에 정중히 답합니다.",
+        "conversationGoal": "초대를 부드럽게 거절합니다.",
+        "counterpartRole": "friend"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 1020,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "Do you want to come to my party tonight?"
+        },
+        {
+          "messageId": 1021,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "I don't think I can make it tonight."
+        }
+      ],
+      "closingReason": "USER_ENDED",
+      "goalCompletionStatus": "PARTIAL"
+    }
+  },
+  {
+    "caseId": "closing-max-turns-passport",
+    "kind": "closing",
+    "expectedContextTerms": ["passport", "trip", "travel", "여권", "여행"],
+    "payload": {
+      "sessionId": 103,
+      "submittedMessageId": 1035,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 13,
+        "title": "친구와 여행 준비하기",
+        "briefing": "친구와 해외여행 준비물을 이야기합니다.",
+        "conversationGoal": "여행 계획과 준비물을 자연스럽게 설명합니다.",
+        "counterpartRole": "friend"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 1030,
+          "turnNumber": 1,
+          "role": "AI",
+          "content": "Where would you like to travel?"
+        },
+        {
+          "messageId": 1031,
+          "turnNumber": 1,
+          "role": "USER",
+          "content": "I'd like to visit Japan."
+        },
+        {
+          "messageId": 1032,
+          "turnNumber": 2,
+          "role": "AI",
+          "content": "What would you like to do there?"
+        },
+        {
+          "messageId": 1033,
+          "turnNumber": 2,
+          "role": "USER",
+          "content": "I want to visit temples in Kyoto."
+        },
+        {
+          "messageId": 1034,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "What's one important thing you'll pack for the trip?"
+        },
+        {
+          "messageId": 1035,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "My passport."
+        }
+      ],
+      "closingReason": "MAX_TURNS_REACHED",
+      "goalCompletionStatus": "PARTIAL"
+    }
+  },
+  {
+    "caseId": "feedback-natural-colloquial",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "payload": {
+      "sessionId": 200,
+      "messageId": 2001,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 20,
+        "title": "친구와 약속 잡기",
+        "briefing": "친구와 주말 약속을 잡는 상황입니다.",
+        "conversationGoal": "제안에 자연스럽게 답합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Do you want to watch a movie this weekend?"
+      },
+      "userMessage": "Yeah, sounds good to me."
+    }
+  },
+  {
+    "caseId": "feedback-short-clear-answer",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "payload": {
+      "sessionId": 201,
+      "messageId": 2011,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 21,
+        "title": "음식 취향 묻기",
+        "briefing": "친구에게 매운 음식을 좋아하는지 묻습니다.",
+        "conversationGoal": "간단한 질문에 자연스럽게 답합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Do you like spicy food?"
+      },
+      "userMessage": "Yes, I do."
+    }
+  },
+  {
+    "caseId": "feedback-direct-colloquial-boundary",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "payload": {
+      "sessionId": 205,
+      "messageId": 2051,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 25,
+        "title": "친구에게 이유 묻기",
+        "briefing": "친구가 개인 정보를 물어보는 상황입니다.",
+        "conversationGoal": "궁금한 이유를 자연스럽게 확인합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Can I have your phone number?"
+      },
+      "userMessage": "Why do you wanna know that?"
+    }
+  },
+  {
+    "caseId": "feedback-material-grammar-error",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "payload": {
+      "sessionId": 202,
+      "messageId": 2021,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 22,
+        "title": "음식 취향 설명하기",
+        "briefing": "좋아하는 음식과 이유를 말합니다.",
+        "conversationGoal": "이유를 포함해 답합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What food do you like? Why do you like it?"
+      },
+      "userMessage": "I like pizza because spicy."
+    }
+  },
+  {
+    "caseId": "feedback-off-topic-answer",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "payload": {
+      "sessionId": 203,
+      "messageId": 2031,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 23,
+        "title": "카페 주문하기",
+        "briefing": "카페 점원에게 음료를 주문합니다.",
+        "conversationGoal": "주문을 자연스럽게 시작합니다.",
+        "counterpartRole": "cafe staff"
+      },
+      "evaluationContext": {
+        "type": "SCENARIO_OPENING_INSTRUCTION",
+        "content": "점원에게 먼저 주문하고 싶은 음료를 말해보세요."
+      },
+      "userMessage": "I like soccer."
+    }
+  },
+  {
+    "caseId": "feedback-opening-instruction-fulfilled",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "payload": {
+      "sessionId": 204,
+      "messageId": 2041,
+      "turnNumber": 1,
+      "messageSequence": 1,
+      "scenario": {
+        "scenarioId": 24,
+        "title": "카페 주문하기",
+        "briefing": "카페 점원에게 음료를 주문합니다.",
+        "conversationGoal": "주문을 자연스럽게 시작합니다.",
+        "counterpartRole": "cafe staff"
+      },
+      "evaluationContext": {
+        "type": "SCENARIO_OPENING_INSTRUCTION",
+        "content": "점원에게 먼저 주문하고 싶은 음료를 말해보세요."
+      },
+      "userMessage": "An iced americano, please."
+    }
+  },
+  {
+    "caseId": "feedback-ai-message-off-topic",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "payload": {
+      "sessionId": 206,
+      "messageId": 2061,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 26,
+        "title": "친구의 주말 계획 묻기",
+        "briefing": "친구에게 지난 주말에 무엇을 했는지 묻습니다.",
+        "conversationGoal": "질문에 맞는 경험을 자연스럽게 답합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What did you do last weekend?"
+      },
+      "userMessage": "I like spicy food."
+    }
+  },
+  {
+    "caseId": "feedback-professor-dismissive-refusal",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "payload": {
+      "sessionId": 207,
+      "messageId": 2071,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 27,
+        "title": "교수님께 결석 사유 설명하기",
+        "briefing": "교수님이 어제 수업에 결석한 이유를 묻습니다.",
+        "conversationGoal": "결석 사유를 공손하게 설명합니다.",
+        "counterpartRole": "professor"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Could you explain why you missed class yesterday?"
+      },
+      "userMessage": "That is none of your business."
+    }
+  }
+]
