@@ -391,6 +391,13 @@ def _parse_message_feedback_judgement(
         for core_ask in judgement.coreAsks
     ):
         raise AiResponseInvalidError("message_feedback_judgement_bare_reason")
+    if any(
+        _is_missed_evaluation_answer(core_ask, request.userMessage)
+        for core_ask in judgement.coreAsks
+    ):
+        raise AiResponseInvalidError(
+            "message_feedback_judgement_missed_evaluation_answer",
+        )
 
     addressed_count = sum(core_ask.addressed for core_ask in judgement.coreAsks)
     expected_context_fit = (
@@ -891,6 +898,22 @@ def _is_bare_evaluation_reason(core_ask: MessageFeedbackCoreAsk) -> bool:
         return False
     evidence_words = _meaningful_evidence_words(core_ask.evidence)
     return bool(evidence_words) and evidence_words <= _GENERIC_EVALUATION_WORDS
+
+
+def _is_missed_evaluation_answer(
+    core_ask: MessageFeedbackCoreAsk,
+    user_message: str,
+) -> bool:
+    if core_ask.addressed:
+        return False
+    normalized_ask = core_ask.ask.casefold()
+    asks_what_is_liked = "what" in normalized_ask and (
+        "like about" in normalized_ask or "love about" in normalized_ask
+    )
+    if not asks_what_is_liked:
+        return False
+    user_words = _meaningful_evidence_words(user_message)
+    return bool(user_words & _GENERIC_EVALUATION_WORDS)
 
 
 def _contains_unverified_quantitative_claim(value: str) -> bool:

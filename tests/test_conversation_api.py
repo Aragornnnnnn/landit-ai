@@ -1046,6 +1046,36 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(judgement.scoreEvidence.contextFit, 2)
 
+    def test_message_feedback_judgement_rejects_missed_evaluation_answer(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What do you like about reading?"
+        )
+        payload["userMessage"] = "I like reading a book. This is so cool."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=0,
+            language_accuracy=1,
+            core_asks=[
+                {
+                    "ask": "what do you like about reading",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your reason]",
+                },
+            ],
+            stated_facts=["I like reading a book.", "This is so cool."],
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_judgement_missed_evaluation_answer",
+        ):
+            next_message_service._parse_message_feedback_judgement(
+                judgement_data,
+                request,
+            )
+
     def test_message_feedback_copy_preserves_addressed_evidence_words(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(
             message_feedback_judgement(
