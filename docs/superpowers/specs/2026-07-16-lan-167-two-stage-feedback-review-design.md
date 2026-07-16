@@ -106,22 +106,15 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 `AiResponseInvalidError`는 외부 오류 메시지를 바꾸지 않는 내부 `reason` 값을 가진다. 판정 스키마, 판정 근거, 문구 스키마, 필수 플레이스홀더, 문구 의미 근거처럼 실패 지점을 구분한다. 품질 평가 JSON에는 `validationReason`을 기록하지만 API 응답과 로그에는 원시 사용자 발화와 모델 JSON을 기록하지 않는다.
 
-### 판정의 언어 교정 근거
+### 판정의 이유 근거
 
-판정 결과에 내부 전용 `languageIssues`를 추가한다. 각 항목은 실제 사용자 발화의 `evidence`와 의미를 유지하는 `replacement`를 가진다. `languageAccuracy=2`면 목록은 비어 있어야 하고, 0 또는 1이면 한 개 이상의 항목을 요구한다. 서버는 `evidence`가 실제 사용자 발화에 포함되는지 확인한다.
-
-명시적인 why 질문에서 `best`, `good`, `great`처럼 추천을 반복하는 평가만 말한 경우는 이유를 답한 것으로 인정하지 않는다. 반면 what-do-you-like-about 질문의 `This is so cool` 같은 평가는 표현이 모호하더라도 해당 질문에는 답한 것으로 보고, 표현 문제는 `languageIssues`와 `languageAccuracy`에 반영한다.
+명시적인 why 또는 reason 핵심 요청에서 `best`, `good`, `great`, `cool`처럼 추천이나 선호를 반복하는 평가만 말한 경우는 이유를 답한 것으로 인정하지 않는다. 서버가 이런 판정을 거부하면 기존 판정 복구가 `[your reason]`을 포함한 미응답 요청으로 다시 생성한다. 반면 what-do-you-like-about 질문의 `This is so cool` 같은 평가는 표현이 모호하더라도 해당 질문에는 답한 것으로 보고, 표현 문제는 `languageAccuracy`에 반영한다.
 
 ### 교정 표현의 허용 어휘
 
-NEEDS_IMPROVEMENT 교정 표현의 구체 내용은 다음 원천에서만 가져온다.
+NEEDS_IMPROVEMENT 교정 표현은 답했다고 판정한 각 핵심 요청의 evidence에서 기능어를 제외한 핵심 단어를 하나 이상 유지해야 한다. `This is so cool`을 `it helps me relax`로 바꾸는 것처럼 근거의 핵심 단어가 전부 사라지면 `message_feedback_copy_unsupported_content`로 문구 후보를 거부하고 기존 문구 복구를 한 번 수행한다.
 
-- 실제 `userMessage`의 단어.
-- 판정에서 검증된 `languageIssues.replacement`의 단어.
-- 판정에서 요구한 `[your ...]` 플레이스홀더.
-- 문장을 완성하는 제한된 기능어와 기존 검증 문장 뼈대의 단어.
-
-이 원천에 없는 새 내용어가 발견되면 `message_feedback_copy_unsupported_content`로 문구 후보를 거부하고 기존 문구 복구를 한 번 수행한다. 복구 프롬프트에는 원시 사용자 데이터 대신 검증 원인 코드와 허용 원천 규칙을 전달한다. 복구 결과도 같은 검증을 통과하지 못하면 502로 종료한다.
+복구 프롬프트에는 검증 원인 코드와 필수 `[your ...]` 플레이스홀더 목록을 별도 항목으로 전달한다. 복구 결과도 같은 검증을 통과하지 못하면 502로 종료한다.
 
 ### 운영 완료 기준
 

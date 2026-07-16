@@ -991,75 +991,54 @@ git add app/conversation/application/next_message_service.py scripts/evaluate_co
 git commit -m "test: 메시지 피드백 검증 실패 원인을 내부 기록"
 ```
 
-### Task 12: 사용자 근거 밖의 교정 내용을 문구 복구로 보낸다
+### Task 12: 이유 판정과 교정 근거 이탈을 문구 복구로 보낸다
 
 **Files**
 
-- Modify: `app/models/conversation.py`.
 - Modify: `app/conversation/application/next_message_service.py`.
 - Modify: `tests/test_conversation_api.py`.
 
 **Interfaces**
 
-- Add internal `MessageFeedbackLanguageIssue` with `evidence: str` and `replacement: str`.
-- Add `MessageFeedbackJudgement.languageIssues: list[MessageFeedbackLanguageIssue]`.
-- Add `_unsupported_correction_content_words(judgement, request, correction_expression) -> set[str]`.
+- Add `_is_bare_evaluation_reason(core_ask: MessageFeedbackCoreAsk) -> bool`.
+- Add `_meaningful_evidence_words(value: str) -> set[str]`.
+- Extend `_validate_message_feedback_copy(judgement, feedback)` with evidence retention.
 
-- [ ] **Step 1: 판정 언어 근거의 RED 테스트를 작성한다.**
+- [x] **Step 1: 이유 판정 근거의 RED 테스트를 작성한다.**
 
-다음을 검증한다.
+명시적인 why 핵심 요청에서 `Busan is best`의 `best`만 evidence로 사용하면 판정 파서가 `message_feedback_judgement_bare_reason`으로 거부하는지 확인한다. what-do-you-like-about 핵심 요청에서 `This is so cool`은 같은 검증에 걸리지 않아야 한다.
 
-- `languageAccuracy=2`인데 `languageIssues`가 있으면 거부한다.
-- `languageAccuracy<2`인데 `languageIssues=[]`면 거부한다.
-- `languageIssues.evidence`가 사용자 발화에 없으면 거부한다.
-- 명시적인 why 질문에서 `Busan is best`의 `best`만 이유 근거로 사용하면 판정 복구 대상이다.
-
-- [ ] **Step 2: 교정 내용 근거의 RED 테스트를 작성한다.**
+- [x] **Step 2: 교정 내용 근거의 RED 테스트를 작성한다.**
 
 ```python
 with self.assertRaisesRegex(
     AiResponseInvalidError,
     "message_feedback_copy_unsupported_content",
 ):
-    next_message_service._parse_and_assemble_message_feedback_copy(
-        {
-            **message_feedback_copy(),
-            "correctionExpression": "I like reading because it helps me relax.",
-        },
-        judgement,
-        request,
-    )
+    next_message_service._validate_message_feedback_copy(judgement, feedback)
 ```
 
 `I like reading books because it is so cool.`과 `I recommend Busan because [your reason].`은 통과시킨다.
 
-- [ ] **Step 3: RED를 확인한다.**
+- [x] **Step 3: RED를 확인한다.**
 
 Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
 
-Expected: 내부 language issue 모델과 unsupported-content 검증이 없어 FAIL한다.
+Expected: 이유 판정 불변식과 unsupported-content 검증이 없어 FAIL한다.
 
-- [ ] **Step 4: 판정 모델과 근거 검증을 구현한다.**
+- [x] **Step 4: 이유 판정 불변식을 구현한다.**
 
-```python
-class MessageFeedbackLanguageIssue(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+핵심 요청의 `ask`가 why 또는 reason을 포함하고, addressed evidence의 의미 단어가 `best`, `good`, `great`, `cool`, `nice`, `awesome`으로만 구성되면 `message_feedback_judgement_bare_reason`으로 거부한다. 판정 프롬프트에도 같은 구분을 명시한다.
 
-    evidence: str
-    replacement: str
-```
+- [x] **Step 5: evidence 유지 검증을 구현한다.**
 
-판정 프롬프트와 출력 스키마에 `languageIssues`를 추가하고, 서버에서 evidence grounding과 점수 조합을 검증한다. 명시적인 why/reason 핵심 요청은 단순 평가 형용사만으로 addressed 처리하지 않도록 한다.
+영문 단어를 소문자로 토큰화하고 기능어를 제외한다. addressed evidence에 의미 단어가 있으면 교정 표현과 하나 이상 겹쳐야 한다. 하나도 겹치지 않으면 `message_feedback_copy_unsupported_content`로 거부한다.
 
-- [ ] **Step 5: 허용 어휘 검증을 구현한다.**
+- [x] **Step 6: 문구 복구 프롬프트에 검증 원인을 전달한다.**
 
-교정 표현을 소문자 영단어로 토큰화한다. userMessage, 검증된 replacement, 필수 placeholder, 제한된 기능어·문장 뼈대 어휘에 없는 내용어를 반환한다. 집합이 비어 있지 않으면 `message_feedback_copy_unsupported_content`로 거부한다.
+`type(error).__name__` 대신 `error.reason`을 전달한다. 복구 프롬프트에는 판정의 모든 필수 플레이스홀더를 별도 목록으로 넣고, unsupported-content에서는 evidence의 핵심 단어를 유지하라고 명시한다.
 
-- [ ] **Step 6: 문구 복구 프롬프트에 검증 원인을 전달한다.**
-
-`type(error).__name__` 대신 `error.reason`을 전달하고, unsupported-content에서는 사용자 발화 밖의 구체 내용을 제거하거나 필요한 개인 정보는 기존 플레이스홀더로 유지하라고 명시한다.
-
-- [ ] **Step 7: 메시지 피드백 전체 테스트를 통과시킨다.**
+- [x] **Step 7: 메시지 피드백 전체 테스트를 통과시킨다.**
 
 Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
 
@@ -1068,7 +1047,7 @@ Expected: PASS with normal path 2 calls and repair path at most 3 calls.
 - [ ] **Step 8: 커밋한다.**
 
 ```bash
-git add app/models/conversation.py app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
 git commit -m "fix: 사용자 근거 밖의 교정 내용을 문구 복구로 제한"
 ```
 

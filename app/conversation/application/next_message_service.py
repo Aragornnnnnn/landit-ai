@@ -25,6 +25,7 @@ from app.models.conversation import (
     InnerThoughtResponse,
     MessageFeedbackData,
     MessageFeedbackCopy,
+    MessageFeedbackCoreAsk,
     MessageFeedbackJudgement,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
@@ -104,6 +105,50 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
 
 _BENCHMARK_PATTERN_CATALOG = _load_benchmark_pattern_catalog()
 logger = logging.getLogger(__name__)
+
+_GENERIC_EVALUATION_WORDS = {
+    "awesome",
+    "best",
+    "cool",
+    "good",
+    "great",
+    "nice",
+}
+_EVIDENCE_FUNCTION_WORDS = {
+    "and",
+    "are",
+    "because",
+    "but",
+    "does",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "her",
+    "him",
+    "his",
+    "its",
+    "our",
+    "she",
+    "that",
+    "the",
+    "their",
+    "them",
+    "they",
+    "this",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+    "you",
+    "your",
+}
 
 
 @dataclass(frozen=True)
@@ -341,6 +386,11 @@ def _parse_message_feedback_judgement(
     for stated_fact in judgement.statedFacts:
         if _normalize_evidence(stated_fact) not in normalized_user_message:
             raise AiResponseInvalidError
+    if any(
+        _is_bare_evaluation_reason(core_ask)
+        for core_ask in judgement.coreAsks
+    ):
+        raise AiResponseInvalidError("message_feedback_judgement_bare_reason")
 
     addressed_count = sum(core_ask.addressed for core_ask in judgement.coreAsks)
     expected_context_fit = (
@@ -437,6 +487,19 @@ def _validate_message_feedback_copy(
         raise AiResponseInvalidError("message_feedback_copy_placeholder_format")
     if re.search(r"[가-힣]", correction_reason) is None:
         raise AiResponseInvalidError("message_feedback_copy_reason_locale")
+
+    correction_words = _meaningful_evidence_words(correction_expression)
+    for core_ask in judgement.coreAsks:
+        if not core_ask.addressed or core_ask.evidence is None:
+            continue
+        evidence_words = _meaningful_evidence_words(core_ask.evidence)
+        if evidence_words and not _words_overlap(
+            evidence_words,
+            correction_words,
+        ):
+            raise AiResponseInvalidError(
+                "message_feedback_copy_unsupported_content",
+            )
 
 
 def generate_session_feedback(
@@ -797,6 +860,37 @@ def _with_benchmark_message(
 
 def _normalize_evidence(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _meaningful_evidence_words(value: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z]+(?:'[a-z]+)?", value.casefold())
+        if len(word) >= 3 and word not in _EVIDENCE_FUNCTION_WORDS
+    }
+
+
+def _words_overlap(source_words: set[str], target_words: set[str]) -> bool:
+    return any(
+        source == target
+        or (
+            len(source) >= 3
+            and len(target) >= 3
+            and (source.startswith(target) or target.startswith(source))
+        )
+        for source in source_words
+        for target in target_words
+    )
+
+
+def _is_bare_evaluation_reason(core_ask: MessageFeedbackCoreAsk) -> bool:
+    if not core_ask.addressed or core_ask.evidence is None:
+        return False
+    normalized_ask = core_ask.ask.casefold()
+    if "why" not in normalized_ask and "reason" not in normalized_ask:
+        return False
+    evidence_words = _meaningful_evidence_words(core_ask.evidence)
+    return bool(evidence_words) and evidence_words <= _GENERIC_EVALUATION_WORDS
 
 
 def _contains_unverified_quantitative_claim(value: str) -> bool:
@@ -1258,6 +1352,8 @@ def _message_feedback_judgement_system_prompt(
             "Do not infer additional asks from the scenario title, briefing, or conversation goal. "
             "For each core ask, decide whether the user answered it. "
             "An incomplete stem such as 'My name is' does not answer a name core ask. "
+            "A core ask that explicitly asks why or asks for a reason needs an actual supporting detail; a generic evaluation such as best, good, great, cool, nice, or awesome alone does not answer why. "
+            "This restriction applies only to an explicit why or reason core ask, not to a question about what the learner likes about something. "
             "When answered, copy the exact supporting substring from the user utterance as evidence. "
             "When unanswered, set evidence to null and use a concrete [your ...] placeholder only when a learner must add personal information to answer it. "
             "For missing personal information, use the smallest concrete placeholder: tell a little about yourself -> [your hobby], why you like an activity -> [your reason], must-visit place -> [your recommended place], proof of travel plans -> [your travel proof], dealbreaker -> [your dealbreaker], daily routine -> [your daily routine], wake-up time -> [your wake up time], bedtime -> [your bedtime], contact number -> [your contact number], and booking method -> [your booking method]. "
@@ -1347,6 +1443,7 @@ def _message_feedback_copy_system_prompt(
             "Do not change its core asks, stated facts, scoreEvidence, or feedback type. "
             "Write only the learner-facing fields that explain the same issue. "
             "For NEEDS_IMPROVEMENT, preserve stated facts, intent, tense, and negation. "
+            "Retain at least one meaningful content word from the evidence of every answered core ask in correctionExpression. "
             "Do not replace a stated fact with a placeholder. "
             "Include every required [your ...] placeholder from the judgement in correctionExpression. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
@@ -1429,6 +1526,7 @@ def _message_feedback_copy_repair_system_prompt(
         (
             "Copy Repair Task:\n"
             "The previous copy is invalid. Return a replacement that follows the authoritative judgement and output schema exactly. "
+            "Retain at least one meaningful content word from every answered core ask's evidence and include every required placeholder listed in the repair request. "
             "Do not change the judgement or add feedbackType or scoreEvidence."
         ),
     ])
@@ -1445,12 +1543,25 @@ def _message_feedback_copy_repair_user_prompt(
         if invalid_copy is not None
         else "null"
     )
+    required_placeholders = [
+        core_ask.requiredPlaceholder
+        for core_ask in judgement.coreAsks
+        if core_ask.requiredPlaceholder is not None
+    ]
+    required_placeholders_text = (
+        "\n".join(required_placeholders)
+        if required_placeholders
+        else "(none)"
+    )
+    validation_reason = getattr(error, "reason", type(error).__name__)
     return (
         f"{_message_feedback_copy_user_prompt(request, judgement)}\n\n"
         "Invalid copy JSON:\n"
         f"{invalid_copy_json}\n\n"
+        "Required correction placeholders:\n"
+        f"{required_placeholders_text}\n\n"
         "Validation failure:\n"
-        f"{type(error).__name__}"
+        f"{validation_reason}"
     )
 
 

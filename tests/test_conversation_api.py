@@ -976,6 +976,156 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 feedback,
             )
 
+    def test_message_feedback_judgement_rejects_bare_evaluation_as_why_reason(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "Tell me your must-visit spot and why I should go."
+        )
+        payload["userMessage"] = "Busan is best."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=2,
+            language_accuracy=1,
+            core_asks=[
+                {
+                    "ask": "recommended place",
+                    "addressed": True,
+                    "evidence": "Busan",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "why the friend should go",
+                    "addressed": True,
+                    "evidence": "best",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["Busan", "best"],
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_judgement_bare_reason",
+        ):
+            next_message_service._parse_message_feedback_judgement(
+                judgement_data,
+                request,
+            )
+
+    def test_message_feedback_judgement_allows_evaluation_for_what_is_liked(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What are you into? What do you love about it?"
+        )
+        payload["userMessage"] = "I like reading a book. This is so cool."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=2,
+            language_accuracy=1,
+            core_asks=[
+                {
+                    "ask": "what activity the user likes",
+                    "addressed": True,
+                    "evidence": "reading a book",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "what the user loves about it",
+                    "addressed": True,
+                    "evidence": "This is so cool",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["reading a book", "This is so cool"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
+
+    def test_message_feedback_copy_preserves_addressed_evidence_words(self):
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=2,
+                language_accuracy=1,
+                core_asks=[
+                    {
+                        "ask": "what the user loves about reading",
+                        "addressed": True,
+                        "evidence": "This is so cool",
+                        "requiredPlaceholder": None,
+                    },
+                ],
+                stated_facts=["This is so cool"],
+            ),
+        )
+        unsupported_feedback = conversation_models.MessageFeedbackData(
+            messageId=1001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="좋아하는 이유를 바꿔 말한 것과 같아요.",
+            positiveFeedback="독서를 좋아한다고 말했어요.",
+            correctionExpression="I like reading because it helps me relax.",
+            correctionReason="표현을 자연스럽게 연결해 보세요.",
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_copy_unsupported_content",
+        ):
+            next_message_service._validate_message_feedback_copy(
+                judgement,
+                unsupported_feedback,
+            )
+
+        supported_feedback = unsupported_feedback.model_copy(
+            update={
+                "correctionExpression": "I like reading because it is so cool.",
+            },
+        )
+        next_message_service._validate_message_feedback_copy(
+            judgement,
+            supported_feedback,
+        )
+
+    def test_message_feedback_copy_repair_prompt_lists_required_placeholders(self):
+        request = MessageFeedbackRequest.model_validate(
+            multiple_hobby_questions_payload(),
+        )
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=1,
+                core_asks=[
+                    {
+                        "ask": "say what activity you like",
+                        "addressed": True,
+                        "evidence": "jogging",
+                        "requiredPlaceholder": None,
+                    },
+                    {
+                        "ask": "say why you like it",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your reason]",
+                    },
+                ],
+            ),
+        )
+
+        prompt = next_message_service._message_feedback_copy_repair_user_prompt(
+            request,
+            judgement,
+            None,
+            next_message_service.AiResponseInvalidError(
+                "message_feedback_copy_missing_placeholder",
+            ),
+        )
+
+        self.assertIn("Required correction placeholders:\n[your reason]", prompt)
+        self.assertIn("message_feedback_copy_missing_placeholder", prompt)
+
     def test_message_feedback_locks_judgement_while_generating_copy(self):
         judgement = message_feedback_judgement(
             context_fit=1,
