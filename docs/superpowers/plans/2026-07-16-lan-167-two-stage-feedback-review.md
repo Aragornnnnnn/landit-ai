@@ -1085,6 +1085,10 @@ Expected: PASS while the public response and normal two-call path remain unchang
 
 `This is so cool` 같은 답은 what-do-you-like-about 요청에 `contextFit=2`, `clarity=1`, `languageAccuracy=2`가 되도록 판정 불변식과 프롬프트를 추가한다.
 
+- [x] **Step 7: contextFit=0 교정 근거와 문법 뼈대를 분리한다.**
+
+핵심 요청을 하나도 답하지 않은 경우 무관한 사용자 사실을 허용 어휘에서 제외한다. 자기소개와 여행 증빙 문장을 완성하는 제한된 뼈대 어휘는 허용하고, 모호한 일반 평가의 명료도는 서버가 결정적으로 정규화한다.
+
 ### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**

@@ -1134,16 +1134,6 @@ class MessageFeedbackApiTests(unittest.TestCase):
             stated_facts=["I like reading a book.", "This is so cool."],
         )
 
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_judgement_generic_evaluation_clarity",
-        ):
-            next_message_service._parse_message_feedback_judgement(
-                judgement_data,
-                request,
-            )
-
-        judgement_data["scoreEvidence"]["clarity"] = 1
         judgement = next_message_service._parse_message_feedback_judgement(
             judgement_data,
             request,
@@ -1151,6 +1141,94 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.contextFit, 2)
         self.assertEqual(judgement.scoreEvidence.clarity, 1)
         self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
+
+    def test_message_feedback_copy_excludes_unrelated_facts_when_context_fit_is_zero(self):
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=0,
+                language_accuracy=1,
+                language_issue_evidence="is boom",
+                core_asks=[
+                    {
+                        "ask": "proof of travel during July",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your travel proof]",
+                    },
+                ],
+                stated_facts=["My aircon bill is boom"],
+            ),
+        )
+        unrelated_feedback = conversation_models.MessageFeedbackData(
+            messageId=1001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="다른 이야기를 한 것과 같아요.",
+            positiveFeedback="요금 문제를 설명했어요.",
+            correctionExpression=(
+                "My aircon bill is boom, but I can provide "
+                "[your travel proof]."
+            ),
+            correctionReason="여행 증빙을 말해 보세요.",
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_copy_unsupported_content",
+        ):
+            next_message_service._validate_message_feedback_copy(
+                judgement,
+                unrelated_feedback,
+            )
+
+        grounded_feedback = unrelated_feedback.model_copy(
+            update={
+                "correctionExpression": (
+                    "I can provide [your travel proof]."
+                ),
+            },
+        )
+        next_message_service._validate_message_feedback_copy(
+            judgement,
+            grounded_feedback,
+        )
+
+    def test_message_feedback_copy_allows_age_and_introduction_scaffolds(self):
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=1,
+                core_asks=[
+                    {
+                        "ask": "name",
+                        "addressed": True,
+                        "evidence": "My name is sandman",
+                        "requiredPlaceholder": None,
+                    },
+                    {
+                        "ask": "tell me a little about yourself",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your hobby]",
+                    },
+                ],
+                stated_facts=["My name is sandman", "I'm 25 years"],
+            ),
+        )
+        feedback = conversation_models.MessageFeedbackData(
+            messageId=1001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="이름과 나이를 먼저 말한 것과 같아요.",
+            positiveFeedback="이름과 나이를 말했어요.",
+            correctionExpression=(
+                "Hi, my name is sandman. I'm 25 years old, and I like "
+                "[your hobby]."
+            ),
+            correctionReason="취미를 덧붙여 자기소개를 완성해 보세요.",
+        )
+
+        next_message_service._validate_message_feedback_copy(
+            judgement,
+            feedback,
+        )
 
     def test_message_feedback_judgement_rejects_missed_evaluation_answer(self):
         payload = valid_message_feedback_payload()

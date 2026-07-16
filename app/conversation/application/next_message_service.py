@@ -126,8 +126,10 @@ _CORRECTION_SCAFFOLD_WORDS = {
     "like",
     "live",
     "need",
+    "old",
     "please",
     "prefer",
+    "provide",
     "reach",
     "recommend",
     "say",
@@ -151,6 +153,7 @@ _EVIDENCE_FUNCTION_WORDS = {
     "her",
     "him",
     "his",
+    "i'm",
     "its",
     "our",
     "she",
@@ -436,8 +439,12 @@ def _parse_message_feedback_judgement(
             for core_ask in judgement.coreAsks
         )
     ):
-        raise AiResponseInvalidError(
-            "message_feedback_judgement_generic_evaluation_clarity",
+        judgement = judgement.model_copy(
+            update={
+                "scoreEvidence": judgement.scoreEvidence.model_copy(
+                    update={"clarity": 1},
+                ),
+            },
         )
 
     addressed_count = sum(core_ask.addressed for core_ask in judgement.coreAsks)
@@ -993,17 +1000,23 @@ def _unsupported_correction_content_words(
     correction_words = _meaningful_evidence_words(
         correction_without_placeholders,
     )
+    addressed_core_asks = [
+        core_ask
+        for core_ask in judgement.coreAsks
+        if core_ask.addressed
+    ]
     source_values = [
         *(core_ask.ask for core_ask in judgement.coreAsks),
         *(
             core_ask.evidence
-            for core_ask in judgement.coreAsks
+            for core_ask in addressed_core_asks
             if core_ask.evidence is not None
         ),
-        *judgement.statedFacts,
     ]
-    if judgement.languageIssueEvidence is not None:
-        source_values.append(judgement.languageIssueEvidence)
+    if addressed_core_asks:
+        source_values.extend(judgement.statedFacts)
+        if judgement.languageIssueEvidence is not None:
+            source_values.append(judgement.languageIssueEvidence)
     source_words = _meaningful_evidence_words(" ".join(source_values))
     return {
         word
