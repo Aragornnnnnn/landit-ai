@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from app.conversation.application.next_message_service import (
+    _get_expected_message_feedback_entries,
     _generate_closing_message_candidate,
     _looks_like_meta_closing,
     _looks_like_question,
+    _message_score_from_evidence,
     clear_message_feedback_cache,
     generate_message_feedback,
-    get_cached_message_feedback,
 )
 from app.core.config import Settings
 from app.models.conversation import ClosingMessageRequest, MessageFeedbackRequest
@@ -101,15 +102,19 @@ def _evaluate_feedback_case(
     clear_message_feedback_cache()
     try:
         generate_message_feedback(request, settings)
-        feedback = get_cached_message_feedback(request.sessionId, request.messageId)
+        feedback_entry = _get_expected_message_feedback_entries(
+            request.sessionId,
+            [request.messageId],
+        )[0]
     finally:
         clear_message_feedback_cache()
 
-    if feedback is None:
-        raise RuntimeError("message feedback was not cached")
-
+    feedback = feedback_entry.feedback
+    score_evidence = feedback_entry.score_evidence
+    message_score = _message_score_from_evidence(score_evidence)
     feedback_type = feedback.feedbackType.value
     expected_feedback_type = case["expectedFeedbackType"]
+    expected_score_range = case.get("expectedMessageScoreRange")
     return {
         "caseId": case["caseId"],
         "kind": "message-feedback",
@@ -117,6 +122,14 @@ def _evaluate_feedback_case(
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
         "feedbackTypeMatchesExpectation": feedback_type == expected_feedback_type,
+        "scoreEvidence": score_evidence.model_dump(),
+        "messageScore": message_score,
+        "expectedMessageScoreRange": expected_score_range,
+        "messageScoreWithinExpectation": (
+            expected_score_range[0] <= message_score <= expected_score_range[1]
+            if expected_score_range is not None
+            else None
+        ),
     }
 
 

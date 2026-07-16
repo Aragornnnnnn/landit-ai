@@ -260,3 +260,46 @@
 - [x] 성공, 요청 검증 400, 모델 응답 검증 502, OpenRouter 실패 503 테스트 추가.
 - [x] conversation API 모듈과 전체 unittest, compileall, OpenAPI 스키마, diff 검증.
 - [x] 논리 단위 커밋 생성.
+
+## 2026-07-16 LAN-166 메시지 평가 근거 기반 세션 점수 산정
+
+- [x] 최신 `origin/develop`에서 `feat/LAN-166` 브랜치 생성.
+- [x] 문맥 적합성 40%, 의미 명확성 30%, 언어 정확성 30% 평가 기준 확정.
+- [x] 메시지별 평가 근거와 피드백 유형 일관성 실패 테스트 작성 및 RED 확인.
+- [x] 메시지별 점수와 세션 평균 점수 실패 테스트 작성 및 RED 확인.
+- [x] 내부 평가 근거 저장과 세션 점수 계산 최소 구현.
+- [x] 외부 API와 OpenAPI 스키마에 내부 평가 근거가 노출되지 않는지 확인.
+- [x] 점수 정책 문서와 작업 결정 사항 반영.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 독립 코드 리뷰의 점수 타입 강제 변환 지적 반영.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-16 LAN-166 실제 대화 점수 백테스트
+
+- [x] 품질 평가 결과에 메시지별 평가 근거와 점수를 기록하는 실패 테스트 작성 및 RED 확인.
+- [x] 실제 질문과 시나리오를 포함한 점수 경계 회귀 사례 추가.
+- [x] 운영 OpenRouter 모델로 경계 사례 반복 평가.
+- [x] 과대평가가 재현된 평가 경계만 최소 수정.
+- [x] 관련 unittest와 전체 unittest 실행.
+- [x] 백테스트 결과와 남은 위험을 작업 기록에 반영.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-16 LAN-166 세션 별점 일관성 보정
+
+- [x] `GOOD` 비율이 낮은 3발화 이상 세션의 별점 상한 실패 테스트 작성 및 RED 확인.
+- [x] 별점 상한 최소 구현과 기존 단일 발화 별점 유지 확인.
+- [x] 세션 피드백 및 전체 unittest 실행.
+- [x] API 문서와 작업 결정 사항 반영.
+- [x] 논리 단위 커밋 생성.
+
+## 2026-07-16 LAN-166 benchmarkMessage 근거 검증과 다중 질문 보정
+
+- [x] catalog 기반 benchmarkMessage 덮어쓰기와 정량·출처 문구 fallback 실패 테스트 작성 및 RED 확인.
+- [x] 다중 핵심 질문의 부분 답변을 `contextFit=1`로 안내하는 프롬프트 회귀 테스트 추가.
+- [x] 내부 `detectedPatterns`와 사용자 발화 evidence를 검증하는 catalog 보정 구현.
+- [x] SayNow `error_patterns.json` 원본 12개 항목을 Landit catalog에 복사하고 `feedback_copy` 기반 benchmark 문구 변환 테스트 추가.
+- [x] 검증되지 않은 정량·출처 주장을 기본 비정량 문구로 대체.
+- [x] 빈 Landit catalog와 API 문서, 작업 결정 사항 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenRouter 모델로 기존 경계와 세션 113 회귀 사례 재평가.
+- [x] 최종 diff 검토와 논리 단위 커밋 생성.

@@ -15,6 +15,7 @@ from app.models.conversation import (
     FeedbackStatus,
     MessageFeedbackData,
     MessageFeedbackResponse,
+    MessageFeedbackScoreEvidence,
 )
 from scripts.evaluate_conversation_quality import evaluate_cases, main
 
@@ -60,6 +61,7 @@ def feedback_case():
         "caseId": "feedback-natural-colloquial",
         "kind": "message-feedback",
         "expectedFeedbackType": "GOOD",
+        "expectedMessageScoreRange": [100, 100],
         "payload": {
             "sessionId": 200,
             "messageId": 2001,
@@ -82,6 +84,35 @@ def feedback_case():
 
 
 class QualityEvaluationTests(unittest.TestCase):
+    def test_lan_166_scoring_fixture_covers_reported_score_boundaries(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_166_scoring_cases.json"
+        )
+
+        self.assertTrue(fixture_path.exists())
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        cases_by_id = {case["caseId"]: case for case in cases}
+
+        expected_ranges = {
+            "lan166-partial-multi-question-duration": [50, 50],
+            "lan166-partial-multi-question-party": [65, 65],
+            "lan166-short-context-complete-food": [100, 100],
+            "lan166-harsh-roommate-boundary": [65, 85],
+            "lan166-unnatural-word-choice-boundary": [85, 85],
+            "lan166-valid-alternative-question-answer": [100, 100],
+            "lan166-session-113-cleaning-no-answer": [80, 80],
+            "lan166-session-113-daily-rhythm-partial": [80, 80],
+            "lan166-session-113-roommate-dealbreakers-partial": [80, 80],
+        }
+        self.assertEqual(set(cases_by_id), set(expected_ranges))
+        for case_id, expected_range in expected_ranges.items():
+            self.assertEqual(
+                cases_by_id[case_id]["expectedMessageScoreRange"],
+                expected_range,
+            )
+
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             cases_path = Path(directory) / "cases.json"
@@ -181,6 +212,11 @@ class QualityEvaluationTests(unittest.TestCase):
             messageId=2001,
             feedbackStatus=FeedbackStatus.PREPARING,
         )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=2,
+            clarity=2,
+            languageAccuracy=2,
+        )
 
         with (
             patch(
@@ -188,8 +224,13 @@ class QualityEvaluationTests(unittest.TestCase):
                 return_value=response,
             ),
             patch(
-                "scripts.evaluate_conversation_quality.get_cached_message_feedback",
-                return_value=feedback,
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                    ),
+                ],
             ),
         ):
             results = evaluate_cases(
@@ -202,3 +243,11 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["feedbackType"], "GOOD")
         self.assertEqual(results[0]["expectedFeedbackType"], "GOOD")
         self.assertTrue(results[0]["feedbackTypeMatchesExpectation"])
+        self.assertIn("scoreEvidence", results[0])
+        self.assertEqual(
+            results[0]["scoreEvidence"],
+            {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
+        )
+        self.assertEqual(results[0]["messageScore"], 100)
+        self.assertEqual(results[0]["expectedMessageScoreRange"], [100, 100])
+        self.assertTrue(results[0]["messageScoreWithinExpectation"])

@@ -338,6 +338,32 @@ class MessageFeedbackData(BaseModel):
         return self
 
 
+class MessageFeedbackScoreEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contextFit: int = Field(strict=True, ge=0, le=2)
+    clarity: int = Field(strict=True, ge=0, le=2)
+    languageAccuracy: int = Field(strict=True, ge=0, le=2)
+
+
+class MessageFeedbackEvaluation(MessageFeedbackData):
+    scoreEvidence: MessageFeedbackScoreEvidence
+
+    @model_validator(mode="after")
+    def score_evidence_must_match_feedback_type(self) -> Self:
+        all_scores_are_max = all(
+            score == 2
+            for score in (
+                self.scoreEvidence.contextFit,
+                self.scoreEvidence.clarity,
+                self.scoreEvidence.languageAccuracy,
+            )
+        )
+        if (self.feedbackType == FeedbackType.GOOD) != all_scores_are_max:
+            raise ValueError("scoreEvidence must match feedbackType")
+        return self
+
+
 class SessionFeedbackRequest(BaseModel):
     sessionId: int = Field(gt=0)
     scenario: ScenarioContext

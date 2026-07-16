@@ -179,12 +179,17 @@ def good_message_feedback(message_id=1001):
     return {
         "messageId": message_id,
         "feedbackType": "GOOD",
+        "scoreEvidence": {
+            "contextFit": 2,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        },
         "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
         "positiveFeedback": None,
         "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
         "correctionExpression": None,
         "correctionReason": None,
-        "benchmarkMessage": "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
+        "benchmarkMessage": "이유를 자연스럽게 붙여 말했어요.",
     }
 
 
@@ -192,6 +197,11 @@ def needs_improvement_message_feedback(message_id=1003):
     return {
         "messageId": message_id,
         "feedbackType": "NEEDS_IMPROVEMENT",
+        "scoreEvidence": {
+            "contextFit": 2,
+            "clarity": 2,
+            "languageAccuracy": 1,
+        },
         "baseLocaleAnalogy": '"피자를 좋아해요. 매워서"라고 이유를 끝맺지 못한 것과 같아요.',
         "positiveFeedback": "좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.",
         "feedbackDetail": None,
@@ -600,10 +610,227 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("Why do you wanna know that?", examples)
         self.assertIn('"feedbackType":"GOOD"', examples)
 
+    def test_feedback_examples_keep_hostility_and_word_choice_in_language_accuracy(self):
+        examples = next_message_service._message_feedback_examples(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn("I hate having guests.", examples)
+        self.assertIn("Total quiet condition.", examples)
+        self.assertIn(
+            '"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1}',
+            examples,
+        )
+
+    def test_feedback_examples_show_second_or_question_branch_as_good(self):
+        examples = next_message_service._message_feedback_examples(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn("I want to learn pottery.", examples)
+        self.assertIn(
+            '"feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}',
+            examples,
+        )
+
+    def test_feedback_prompt_requests_internal_score_evidence(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn("Scoring Evidence Policy", prompt)
+        self.assertIn("contextFit", prompt)
+        self.assertIn("clarity", prompt)
+        self.assertIn("languageAccuracy", prompt)
+        self.assertIn(
+            "Do not reward length, complexity, or advanced vocabulary by itself.",
+            prompt,
+        )
+        self.assertIn(
+            '"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}',
+            prompt,
+        )
+
+    def test_feedback_prompt_allows_short_complete_and_or_answers(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "A short noun phrase can fully answer a what-question.",
+            prompt,
+        )
+        self.assertIn(
+            "An answer that clearly satisfies either branch of an or-question "
+            "has contextFit=2.",
+            prompt,
+        )
+
+    def test_feedback_prompt_requires_all_core_asks_for_full_context_fit(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "For multiple explicit core asks, contextFit=2 only when the "
+            "utterance fulfills all of them.",
+            prompt,
+        )
+        self.assertIn(
+            "Answering only one core ask has contextFit=1.",
+            prompt,
+        )
+        self.assertIn(
+            "A bare no or I don't know can answer only the explicit ask it addresses.",
+            prompt,
+        )
+        self.assertIn("I don't know.", prompt)
+        self.assertIn("I usually wake up at 9.", prompt)
+        self.assertIn("um... no", prompt)
+        self.assertIn(
+            "An incomplete clause such as yes I like has languageAccuracy=1.",
+            prompt,
+        )
+        self.assertIn('"scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2}', prompt)
+
+    def test_feedback_prompt_exposes_verified_catalog_patterns_only(self):
+        catalog = {
+            "informal_question": {
+                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
+                "gamifiable": True,
+                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
+                "source": "Landit 검증 출처",
+                "sourceVerified": True,
+            },
+        }
+
+        with patch.object(
+            next_message_service,
+            "_BENCHMARK_PATTERN_CATALOG",
+            catalog,
+            create=True,
+        ):
+            prompt = next_message_service._message_feedback_system_prompt(
+                EvaluationContextType.AI_MESSAGE,
+            )
+
+        self.assertIn("Detected Pattern Catalog", prompt)
+        self.assertIn('"errorType":"informal_question"', prompt)
+
+    def test_feedback_prompt_does_not_double_penalize_language_issue(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "Do not lower contextFit or clarity solely because of an actionable "
+            "grammar, word-choice, nuance, or politeness issue.",
+            prompt,
+        )
+
+    def test_feedback_prompt_marks_hostile_counterpart_reply_as_needing_improvement(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "A hostile or dismissive reply to the counterpart has "
+            "languageAccuracy=1 even when the meaning is clear.",
+            prompt,
+        )
+        self.assertIn(
+            "The directness exception does not apply to hostile or dismissive "
+            "replies to the counterpart.",
+            prompt,
+        )
+
+    def test_message_feedback_accepts_internal_score_evidence(self):
+        ai_response = good_message_feedback()
+        ai_response["scoreEvidence"] = {
+            "contextFit": 2,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertNotIn("scoreEvidence", response.json()["data"])
+        self.assertIsNotNone(get_cached_message_feedback(100, 1001))
+
+    def test_message_feedback_rejects_score_evidence_inconsistent_with_type(self):
+        inconsistent_responses = [
+            (
+                good_message_feedback(),
+                {"contextFit": 2, "clarity": 2, "languageAccuracy": 1},
+            ),
+            (
+                needs_improvement_message_feedback(1001),
+                {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
+            ),
+        ]
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        for ai_response, score_evidence in inconsistent_responses:
+            with self.subTest(feedback_type=ai_response["feedbackType"]):
+                ai_response["scoreEvidence"] = score_evidence
+                fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+                with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                    response = make_client(app).post(
+                        "/api/v1/conversation/message-feedback",
+                        json=valid_message_feedback_payload(),
+                    )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertIsNone(get_cached_message_feedback(100, 1001))
+
+    def test_message_feedback_rejects_non_integer_score_evidence(self):
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        for invalid_score in ["2", 2.0, True]:
+            with self.subTest(invalid_score=invalid_score):
+                ai_response = needs_improvement_message_feedback(1001)
+                ai_response["scoreEvidence"]["contextFit"] = invalid_score
+                fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+                with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                    response = make_client(app).post(
+                        "/api/v1/conversation/message-feedback",
+                        json=valid_message_feedback_payload(),
+                    )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertIsNone(get_cached_message_feedback(100, 1001))
+
     def test_message_feedback_generates_feedback_and_returns_preparing(self):
         ai_response = {
             "messageId": 1001,
             "feedbackType": "GOOD",
+            "scoreEvidence": {
+                "contextFit": 2,
+                "clarity": 2,
+                "languageAccuracy": 2,
+            },
             "baseLocaleAnalogy": '"왜 그게 필요한데?"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.',
             "positiveFeedback": None,
             "feedbackDetail": "친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.",
@@ -670,6 +897,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
         ai_response = {
             "messageId": 1001,
             "feedbackType": "GOOD",
+            "scoreEvidence": {
+                "contextFit": 2,
+                "clarity": 2,
+                "languageAccuracy": 2,
+            },
             "baseLocaleAnalogy": '"아이스 아메리카노 한 잔 주세요"라고 자연스럽게 주문하는 것과 같아요.',
             "positiveFeedback": None,
             "feedbackDetail": "원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.",
@@ -770,11 +1002,18 @@ class MessageFeedbackApiTests(unittest.TestCase):
             schemas["EvaluationContextType"]["enum"],
             ["AI_MESSAGE", "SCENARIO_OPENING_INSTRUCTION"],
         )
+        self.assertNotIn("MessageFeedbackEvaluation", schemas)
+        self.assertNotIn("MessageFeedbackScoreEvidence", schemas)
 
     def test_message_feedback_generates_and_caches_good_feedback(self):
         ai_response = {
             "messageId": 1001,
             "feedbackType": "GOOD",
+            "scoreEvidence": {
+                "contextFit": 2,
+                "clarity": 2,
+                "languageAccuracy": 2,
+            },
             "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
             "positiveFeedback": None,
             "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
@@ -814,6 +1053,174 @@ class MessageFeedbackApiTests(unittest.TestCase):
             [cached_feedback],
         )
 
+    def test_message_feedback_overwrites_benchmark_from_verified_catalog_pattern(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "질문 의도를 자연스럽게 확인했어요."
+        ai_response["detectedPatterns"] = [
+            {
+                "errorType": "informal_question",
+                "status": "correct",
+                "evidence": "why do you wanna know that?",
+            },
+        ]
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+        catalog = {
+            "informal_question": {
+                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
+                "gamifiable": True,
+                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
+                "source": "Landit 검증 출처",
+                "sourceVerified": True,
+            },
+        }
+
+        with (
+            patch.object(
+                next_message_service,
+                "_BENCHMARK_PATTERN_CATALOG",
+                catalog,
+                create=True,
+            ),
+            patch("app.core.openai_client.OpenAI", return_value=fake_openai),
+        ):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "검증된 정량 benchmark 문구예요.",
+        )
+
+    def test_message_feedback_uses_saynow_article_catalog_benchmark(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "관사를 자연스럽게 사용했어요."
+        ai_response["detectedPatterns"] = [
+            {
+                "errorType": "article_a_omission",
+                "status": "correct",
+                "evidence": "an apple",
+            },
+        ]
+        payload = valid_message_feedback_payload()
+        payload["userMessage"] = "I ate an apple because I was hungry."
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "한국인의 79%가 틀리는 a/an을 정확히 썼어요",
+        )
+
+    def test_catalog_benchmark_requires_evidence_from_user_utterance(self):
+        catalog = {
+            "informal_question": {
+                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
+                "gamifiable": True,
+                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
+                "source": "Landit 검증 출처",
+                "sourceVerified": True,
+            },
+        }
+        detected_patterns = [
+            {
+                "errorType": "informal_question",
+                "status": "correct",
+                "evidence": "what do you need it for",
+            },
+        ]
+
+        with patch.object(
+            next_message_service,
+            "_BENCHMARK_PATTERN_CATALOG",
+            catalog,
+            create=True,
+        ):
+            benchmark_message = (
+                next_message_service._benchmark_message_from_detected_patterns(
+                    detected_patterns,
+                    "why do you wanna know that?",
+                )
+            )
+
+        self.assertIsNone(benchmark_message)
+
+    def test_message_feedback_uses_default_for_unverified_quantitative_benchmark(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "한국인의 23%가 놓치는 이유 연결을 챙겼어요."
+        ai_response["detectedPatterns"] = []
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "질문에 맞는 핵심을 자연스럽게 전달했어요.",
+        )
+
+    def test_message_feedback_uses_default_for_unverified_benchmark_source_claim(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "조사에 따르면 이유를 덧붙인 표현이에요."
+        ai_response["detectedPatterns"] = []
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "질문에 맞는 핵심을 자연스럽게 전달했어요.",
+        )
+
     def test_message_feedback_invalid_ai_response_returns_502(self):
         fake_openai = FakeOpenAI(
             content=json.dumps(
@@ -851,6 +1258,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
         ai_response = {
             "messageId": 9999,
             "feedbackType": "GOOD",
+            "scoreEvidence": {
+                "contextFit": 2,
+                "clarity": 2,
+                "languageAccuracy": 2,
+            },
             "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
             "positiveFeedback": None,
             "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
@@ -926,6 +1338,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
         ai_response = {
             "messageId": 1001,
             "feedbackType": "GOOD",
+            "scoreEvidence": {
+                "contextFit": 2,
+                "clarity": 2,
+                "languageAccuracy": 2,
+            },
             "baseLocaleAnalogy": '"피자를 좋아해요. 매워서요"라고 이유를 바로 붙여 말하는 것과 같아요.',
             "positiveFeedback": None,
             "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
@@ -987,6 +1404,136 @@ class SessionFeedbackApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 202)
 
+    def _request_session_feedback(self, app, expected_message_ids):
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = expected_message_ids
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "sessionId": 100,
+                    "highlightMessage": "대화 의도를 정확히 전달했어요.",
+                    "summaryMessage": "상황에 맞게 대화를 이어갔어요.",
+                },
+            ),
+        )
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            return make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=payload,
+            )
+
+    def test_session_feedback_scores_context_appropriate_message_at_100(self):
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001), user_message="Saturday.")
+
+        response = self._request_session_feedback(app, [1001])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 100)
+        self.assertEqual(response.json()["data"]["starRating"], 3.0)
+
+    def test_session_feedback_scores_minor_language_issue_at_85(self):
+        app = self._app()
+        self._cache_feedback(
+            app,
+            needs_improvement_message_feedback(1001),
+            user_message="I like pizza because spicy.",
+        )
+
+        response = self._request_session_feedback(app, [1001])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 85)
+        self.assertEqual(response.json()["data"]["starRating"], 2.5)
+
+    def test_session_feedback_scores_irrelevant_clear_message_at_60(self):
+        app = self._app()
+        feedback = needs_improvement_message_feedback(1001)
+        feedback["scoreEvidence"] = {
+            "contextFit": 0,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        }
+        self._cache_feedback(app, feedback, user_message="I like soccer.")
+
+        response = self._request_session_feedback(app, [1001])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 60)
+        self.assertEqual(response.json()["data"]["starRating"], 1.5)
+
+    def test_session_feedback_floors_low_message_score_at_50(self):
+        app = self._app()
+        feedback = needs_improvement_message_feedback(1001)
+        feedback["scoreEvidence"] = {
+            "contextFit": 0,
+            "clarity": 0,
+            "languageAccuracy": 0,
+        }
+        self._cache_feedback(app, feedback, user_message="...")
+
+        response = self._request_session_feedback(app, [1001])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 50)
+        self.assertEqual(response.json()["data"]["starRating"], 1.0)
+
+    def test_session_feedback_averages_message_scores(self):
+        app = self._app()
+        perfect = good_message_feedback(1001)
+        minor_issue = needs_improvement_message_feedback(1003)
+        irrelevant = needs_improvement_message_feedback(1005)
+        irrelevant["scoreEvidence"] = {
+            "contextFit": 0,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        }
+        self._cache_feedback(app, perfect)
+        self._cache_feedback(app, minor_issue)
+        self._cache_feedback(app, irrelevant)
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 82)
+        self.assertEqual(response.json()["data"]["starRating"], 2.0)
+
+    def test_session_feedback_caps_star_when_three_messages_need_improvement(self):
+        app = self._app()
+        self._cache_feedback(app, needs_improvement_message_feedback(1001))
+        self._cache_feedback(app, needs_improvement_message_feedback(1003))
+        self._cache_feedback(app, needs_improvement_message_feedback(1005))
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 85)
+        self.assertEqual(response.json()["data"]["starRating"], 2.0)
+
+    def test_session_feedback_caps_star_when_good_is_one_third(self):
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        self._cache_feedback(app, needs_improvement_message_feedback(1003))
+        self._cache_feedback(app, needs_improvement_message_feedback(1005))
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 90)
+        self.assertEqual(response.json()["data"]["starRating"], 2.0)
+
+    def test_session_feedback_keeps_star_when_good_exceeds_one_third(self):
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        self._cache_feedback(app, good_message_feedback(1003))
+        self._cache_feedback(app, needs_improvement_message_feedback(1005))
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 95)
+        self.assertEqual(response.json()["data"]["starRating"], 3.0)
+
     def test_session_feedback_returns_summary_score_star_and_cached_feedbacks(self):
         app = self._app()
         self._cache_feedback(
@@ -1020,8 +1567,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(body["success"], True)
         self.assertIsNone(body["error"])
         self.assertEqual(body["data"]["sessionId"], 100)
-        self.assertEqual(body["data"]["nativeScore"], 64)
-        self.assertEqual(body["data"]["starRating"], 1.5)
+        self.assertEqual(body["data"]["nativeScore"], 93)
+        self.assertEqual(body["data"]["starRating"], 3.0)
         self.assertEqual(
             body["data"]["highlightMessage"],
             "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
@@ -1041,6 +1588,14 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             body["data"]["messageFeedbacks"][1]["correctionExpression"],
             "I like pizza because it is spicy.",
+        )
+        self.assertNotIn(
+            "scoreEvidence",
+            body["data"]["messageFeedbacks"][0],
+        )
+        self.assertNotIn(
+            "detectedPatterns",
+            body["data"]["messageFeedbacks"][0],
         )
         self.assertIsNone(get_cached_message_feedback(100, 1001))
         self.assertIsNone(get_cached_message_feedback(100, 1003))
