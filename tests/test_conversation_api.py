@@ -1528,6 +1528,45 @@ class MessageFeedbackApiTests(unittest.TestCase):
             ["[your cleaning preference]", "[your previous cleaning routine]"],
         )
 
+    def test_message_feedback_judgement_normalizes_explicit_non_answer(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "How do you split cleaning, and what worked before?"
+        )
+        payload["userMessage"] = "I don't know."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=1,
+            language_accuracy=2,
+            core_asks=[
+                {
+                    "ask": "how do you split cleaning",
+                    "addressed": True,
+                    "evidence": "I don't know",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "what worked before",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your previous cleaning routine]",
+                },
+            ],
+            stated_facts=["I don't know"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.contextFit, 0)
+        self.assertTrue(all(not core_ask.addressed for core_ask in judgement.coreAsks))
+        self.assertEqual(
+            [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
+            ["[your cleaning preference]", "[your previous cleaning routine]"],
+        )
+
     def test_message_feedback_copy_allows_placeholder_label_as_scaffold(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(
             message_feedback_judgement(
@@ -1652,6 +1691,58 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             feedback.correctionExpression,
             "I have [your travel proof].",
+        )
+
+    def test_message_feedback_copy_uses_grounded_travel_ticket_template(self):
+        request_payload = valid_message_feedback_payload()
+        request_payload["evaluationContext"]["content"] = (
+            "Do you have proof that you were traveling?"
+        )
+        request_payload["userMessage"] = (
+            "I don't have anything, but ticket for my airplane."
+        )
+        request = MessageFeedbackRequest.model_validate(request_payload)
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=2,
+                clarity=1,
+                language_accuracy=1,
+                language_corrections=[
+                    {
+                        "evidence": "ticket for my airplane",
+                        "replacement": "an airplane ticket",
+                    },
+                ],
+                core_asks=[
+                    {
+                        "ask": "proof that the user was traveling",
+                        "addressed": True,
+                        "evidence": (
+                            "I don't have anything, but ticket for my airplane"
+                        ),
+                        "requiredPlaceholder": None,
+                    },
+                ],
+                stated_facts=[
+                    "I don't have anything",
+                    "ticket for my airplane",
+                ],
+            ),
+        )
+        copy_data = message_feedback_copy()
+        copy_data["correctionExpression"] = "I have an airplane ticket."
+
+        feedback, _, _ = (
+            next_message_service._parse_and_assemble_message_feedback_copy(
+                copy_data,
+                judgement,
+                request,
+            )
+        )
+
+        self.assertEqual(
+            feedback.correctionExpression,
+            "I don't have anything, but I have an airplane ticket.",
         )
 
     def test_message_feedback_copy_preserves_addressed_evidence_words(self):

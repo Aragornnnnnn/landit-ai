@@ -422,6 +422,7 @@ def _parse_message_feedback_judgement(
                 "message_feedback_judgement_language_correction_evidence",
             )
     judgement = _without_natural_preference_alternative_corrections(judgement)
+    judgement = _with_explicit_non_answer(judgement, request.userMessage)
     judgement = _with_inferred_required_placeholders(judgement)
     if any(
         _is_bare_evaluation_reason(core_ask)
@@ -561,6 +562,25 @@ def _safe_correction_expression(
             return f"I recommend {place_evidence} because {reason}."
     if "[your travel proof]" in required_placeholders:
         return "I have [your travel proof]."
+    travel_ticket = next((
+        correction.replacement.strip(" .!?")
+        for correction in judgement.languageCorrections
+        if "ticket" in _meaningful_evidence_words(correction.replacement)
+    ), None)
+    if (
+        travel_ticket is not None
+        and any(
+            "travel" in core_ask.ask.casefold()
+            or "proof" in core_ask.ask.casefold()
+            for core_ask in judgement.coreAsks
+        )
+        and any(
+            "don't have anything" in stated_fact.casefold()
+            or "do not have anything" in stated_fact.casefold()
+            for stated_fact in judgement.statedFacts
+        )
+    ):
+        return f"I don't have anything, but I have {travel_ticket}."
     if {
         "[your cleaning preference]",
         "[your previous cleaning routine]",
@@ -1059,6 +1079,37 @@ def _with_inferred_required_placeholders(
     if normalized_core_asks == judgement.coreAsks:
         return judgement
     return judgement.model_copy(update={"coreAsks": normalized_core_asks})
+
+
+def _with_explicit_non_answer(
+    judgement: MessageFeedbackJudgement,
+    user_message: str,
+) -> MessageFeedbackJudgement:
+    normalized_message = _normalize_spoken_form(user_message)
+    if normalized_message not in {
+        "i don t know",
+        "i do not know",
+        "i m not sure",
+        "i am not sure",
+        "no idea",
+    }:
+        return judgement
+    return judgement.model_copy(
+        update={
+            "coreAsks": [
+                core_ask.model_copy(
+                    update={
+                        "addressed": False,
+                        "evidence": None,
+                    },
+                )
+                for core_ask in judgement.coreAsks
+            ],
+            "scoreEvidence": judgement.scoreEvidence.model_copy(
+                update={"contextFit": 0},
+            ),
+        },
+    )
 
 
 def _required_placeholder_for_ask(ask: str) -> str | None:
