@@ -1112,6 +1112,46 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(judgement.scoreEvidence.contextFit, 2)
 
+    def test_message_feedback_judgement_requires_lower_clarity_for_vague_evaluation(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What do you like about reading?"
+        )
+        payload["userMessage"] = "I like reading a book. This is so cool."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=2,
+            clarity=2,
+            language_accuracy=2,
+            core_asks=[
+                {
+                    "ask": "what do you like about reading",
+                    "addressed": True,
+                    "evidence": "This is so cool",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["I like reading a book.", "This is so cool."],
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_judgement_generic_evaluation_clarity",
+        ):
+            next_message_service._parse_message_feedback_judgement(
+                judgement_data,
+                request,
+            )
+
+        judgement_data["scoreEvidence"]["clarity"] = 1
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
+        self.assertEqual(judgement.scoreEvidence.clarity, 1)
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
+
     def test_message_feedback_judgement_rejects_missed_evaluation_answer(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (
@@ -1558,6 +1598,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertIn(
             '"languageIssueEvidence":"exact user substring or null"',
+            prompt,
+        )
+        self.assertIn(
+            "A vague demonstrative evaluation such as 'This is so cool' answers a what-do-you-like-about ask but requires clarity=1",
             prompt,
         )
         self.assertIn(

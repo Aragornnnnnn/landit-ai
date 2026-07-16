@@ -429,6 +429,16 @@ def _parse_message_feedback_judgement(
         raise AiResponseInvalidError(
             "message_feedback_judgement_missed_evaluation_answer",
         )
+    if (
+        judgement.scoreEvidence.clarity == 2
+        and any(
+            _is_vague_generic_evaluation_answer(core_ask)
+            for core_ask in judgement.coreAsks
+        )
+    ):
+        raise AiResponseInvalidError(
+            "message_feedback_judgement_generic_evaluation_clarity",
+        )
 
     addressed_count = sum(core_ask.addressed for core_ask in judgement.coreAsks)
     expected_context_fit = (
@@ -951,6 +961,26 @@ def _is_missed_evaluation_answer(
     return bool(user_words & _GENERIC_EVALUATION_WORDS)
 
 
+def _is_vague_generic_evaluation_answer(
+    core_ask: MessageFeedbackCoreAsk,
+) -> bool:
+    if not core_ask.addressed or core_ask.evidence is None:
+        return False
+    normalized_ask = core_ask.ask.casefold()
+    asks_what_is_liked = "what" in normalized_ask and (
+        "like about" in normalized_ask or "love about" in normalized_ask
+    )
+    if not asks_what_is_liked:
+        return False
+    normalized_evidence = core_ask.evidence.casefold().strip(" .!?,'\"")
+    return re.fullmatch(
+        r"(?:this|that|it)(?:'s|\s+is)\s+"
+        r"(?:(?:so|very|really)\s+)?"
+        r"(?:awesome|best|cool|good|great|nice)",
+        normalized_evidence,
+    ) is not None
+
+
 def _unsupported_correction_content_words(
     judgement: MessageFeedbackJudgement,
     correction_expression: str,
@@ -1444,7 +1474,7 @@ def _message_feedback_judgement_system_prompt(
             "An incomplete stem such as 'My name is' does not answer a name core ask. "
             "A core ask that explicitly asks why or asks for a reason needs an actual supporting detail; a generic evaluation such as best, good, great, cool, nice, or awesome alone does not answer why. "
             "This restriction applies only to an explicit why or reason core ask, not to a question about what the learner likes about something. "
-            "When answered, copy the exact supporting substring from the user utterance as evidence. "
+            "When answered, copy the smallest exact supporting substring from the user utterance as evidence. "
             "When unanswered, set evidence to null and use a concrete [your ...] placeholder only when a learner must add personal information to answer it. "
             "For missing personal information, use the smallest concrete placeholder: tell a little about yourself -> [your hobby], why you like an activity -> [your reason], must-visit place -> [your recommended place], proof of travel plans -> [your travel proof], dealbreaker -> [your dealbreaker], daily routine -> [your daily routine], wake-up time -> [your wake up time], bedtime -> [your bedtime], contact number -> [your contact number], and booking method -> [your booking method]. "
             "List statedFacts as exact substrings from the user utterance that a correction must preserve. "
@@ -1461,6 +1491,7 @@ def _message_feedback_judgement_system_prompt(
             "When languageAccuracy is 2, languageIssueEvidence must be null. "
             "Do not lower any score for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative alone. "
             "A short noun phrase can fully answer a what-question. "
+            "A vague demonstrative evaluation such as 'This is so cool' answers a what-do-you-like-about ask but requires clarity=1. "
             "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
             "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
             "A direct question about why personal information is needed can be GOOD when a friend has not explained the reason. "
