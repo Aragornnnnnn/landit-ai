@@ -1084,6 +1084,95 @@ class MessageFeedbackApiTests(unittest.TestCase):
             fake_openai.completions.calls[2]["messages"][0]["content"],
         )
 
+    def test_message_feedback_repairs_invalid_judgement_once(self):
+        valid_judgement = message_feedback_judgement(
+            context_fit=1,
+            core_asks=[
+                {
+                    "ask": "say what activity you like",
+                    "addressed": True,
+                    "evidence": "jogging",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "say why you like it",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your reason]",
+                },
+            ],
+        )
+        invalid_judgement = dict(valid_judgement)
+        invalid_judgement["messageId"] = 9999
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(invalid_judgement),
+                json.dumps(valid_judgement),
+                json.dumps(message_feedback_copy()),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=multiple_hobby_questions_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertIn(
+            "Judgement Repair Task",
+            fake_openai.completions.calls[1]["messages"][0]["content"],
+        )
+
+    def test_message_feedback_rejects_invalid_judgement_after_one_repair(self):
+        invalid_judgement = message_feedback_judgement(
+            context_fit=1,
+            core_asks=[
+                {
+                    "ask": "say what activity you like",
+                    "addressed": True,
+                    "evidence": "jogging",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "say why you like it",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your reason]",
+                },
+            ],
+        )
+        invalid_judgement["messageId"] = 9999
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(invalid_judgement),
+                json.dumps(invalid_judgement),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=multiple_hobby_questions_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIsNone(get_cached_message_feedback(100, 1001))
+
     def test_message_feedback_rejects_invalid_copy_after_one_repair(self):
         judgement = message_feedback_judgement(
             context_fit=1,
@@ -1866,6 +1955,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 },
             },
         )
+        self.assertEqual(len(fake_openai.completions.calls), 1)
 
     def test_message_feedback_missing_model_returns_503(self):
         app = create_app(

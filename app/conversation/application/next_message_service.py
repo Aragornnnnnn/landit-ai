@@ -209,17 +209,9 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    judgement_data = _request_json_completion(
-        resolved_settings,
-        system_prompt=_message_feedback_judgement_system_prompt(
-            request.evaluationContext.type,
-        ),
-        user_prompt=_message_feedback_judgement_user_prompt(request),
-        max_tokens=512,
-    )
-    judgement = _parse_message_feedback_judgement(
-        judgement_data,
+    judgement, _judgement_was_repaired = _generate_message_feedback_judgement(
         request,
+        resolved_settings,
     )
     copy_data: dict[str, Any] | None = None
     copy_was_repaired = False
@@ -283,6 +275,43 @@ def generate_message_feedback(
         messageId=request.messageId,
         feedbackStatus=FeedbackStatus.PREPARING,
     )
+
+
+def _generate_message_feedback_judgement(
+    request: MessageFeedbackRequest,
+    settings: Settings,
+) -> tuple[MessageFeedbackJudgement, bool]:
+    judgement_data: dict[str, Any] | None = None
+    try:
+        judgement_data = _request_json_completion(
+            settings,
+            system_prompt=_message_feedback_judgement_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_judgement_user_prompt(request),
+            max_tokens=512,
+        )
+        return _parse_message_feedback_judgement(judgement_data, request), False
+    except AiResponseInvalidError as exc:
+        logger.warning(
+            "AI 메시지별 피드백 판정을 복구합니다. "
+            "workflow=message_feedback_judgement_repair sessionId=%s messageId=%s",
+            request.sessionId,
+            request.messageId,
+        )
+        repaired_data = _request_json_completion(
+            settings,
+            system_prompt=_message_feedback_judgement_repair_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_judgement_repair_user_prompt(
+                request,
+                judgement_data,
+                exc,
+            ),
+            max_tokens=512,
+        )
+        return _parse_message_feedback_judgement(repaired_data, request), True
 
 
 def _parse_message_feedback_judgement(
@@ -1256,6 +1285,43 @@ def _message_feedback_judgement_system_prompt(
 
 def _message_feedback_judgement_user_prompt(request: MessageFeedbackRequest) -> str:
     return _message_feedback_user_prompt(request)
+
+
+def _message_feedback_judgement_repair_system_prompt(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
+    return "\n\n".join([
+        _message_feedback_judgement_system_prompt(evaluation_context_type),
+        (
+            "Judgement Repair Task:\n"
+            "The previous judgement is invalid. Return one replacement that follows "
+            "the judgement schema, evidence grounding, contextFit invariant, and "
+            "[your ...] placeholder format exactly."
+        ),
+    ])
+
+
+def _message_feedback_judgement_repair_user_prompt(
+    request: MessageFeedbackRequest,
+    invalid_judgement: dict[str, Any] | None,
+    error: Exception,
+) -> str:
+    invalid_judgement_json = (
+        json.dumps(
+            invalid_judgement,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if invalid_judgement is not None
+        else "null"
+    )
+    return (
+        f"{_message_feedback_judgement_user_prompt(request)}\n\n"
+        "Invalid judgement JSON:\n"
+        f"{invalid_judgement_json}\n\n"
+        "Validation failure:\n"
+        f"{type(error).__name__}"
+    )
 
 
 def _message_feedback_copy_system_prompt(
