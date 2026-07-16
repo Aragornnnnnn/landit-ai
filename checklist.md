@@ -359,3 +359,14 @@
 - [x] 외부 API와 OpenAPI 계약 유지 확인.
 - [x] 전체 unittest, compileall, pip check, diff check 통과.
 - [x] 구현과 품질 결과를 논리 단위로 커밋.
+
+## 2026-07-17 LAN-167 전체 피드백 생성·검수 재설계
+
+- [x] split judgement/copy 내부 DTO와 서버 의미 검증 경로를 제거.
+- [x] 전체 후보 생성 후 전체 피드백을 검수·재작성하는 정상 2회 호출로 전환.
+- [x] 각 단계의 구조 실패만 한 번 복구하고 provider 실패는 복구하지 않도록 테스트.
+- [x] 외부 응답과 OpenAPI에서 `scoreEvidence`, `detectedPatterns`가 숨겨지는지 확인.
+- [x] catalog 예시 근거가 없는 benchmark 문구를 기본 비정량 문구로 대체.
+- [x] 전체 unittest, compileall, pip check, diff check 실행.
+- [x] 대표 7개 실제 모델 사례를 유형·점수·사실 보존 관점에서 재평가.
+- [ ] 전체 실제 사용자 발화로 구조 실패율과 플레이스홀더 구체성을 운영 기준으로 재측정.

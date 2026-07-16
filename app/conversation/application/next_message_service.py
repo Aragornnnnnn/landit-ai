@@ -24,10 +24,7 @@ from app.models.conversation import (
     InnerThoughtRequest,
     InnerThoughtResponse,
     MessageFeedbackData,
-    MessageFeedbackLanguageCorrection,
-    MessageFeedbackCopy,
-    MessageFeedbackCoreAsk,
-    MessageFeedbackJudgement,
+    MessageFeedbackEvaluation,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -82,6 +79,7 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
         error_type = raw_pattern.get("error_type")
         description = raw_pattern.get("display_name")
         feedback_copy = raw_pattern.get("feedback_copy")
+        example_right = raw_pattern.get("example_right")
         source = raw_pattern.get("source")
         if (
             not isinstance(error_type, str)
@@ -99,6 +97,9 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
             "description": description,
             "gamifiable": raw_pattern["gamifiable"],
             "benchmarkMessage": _benchmark_message_from_feedback_copy(feedback_copy),
+            "exampleRight": example_right.strip()
+            if isinstance(example_right, str) and example_right.strip()
+            else None,
             "source": source,
         }
     return catalog
@@ -107,87 +108,12 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
 _BENCHMARK_PATTERN_CATALOG = _load_benchmark_pattern_catalog()
 logger = logging.getLogger(__name__)
 
-_GENERIC_EVALUATION_WORDS = {
-    "awesome",
-    "best",
-    "cool",
-    "good",
-    "great",
-    "nice",
-}
-_CORRECTION_SCAFFOLD_WORDS = {
-    "answer",
-    "ask",
-    "asked",
-    "can",
-    "can't",
-    "cannot",
-    "could",
-    "enjoy",
-    "like",
-    "live",
-    "need",
-    "old",
-    "please",
-    "prefer",
-    "provide",
-    "reach",
-    "recommend",
-    "say",
-    "stand",
-    "tell",
-    "think",
-    "want",
-    "would",
-}
-_EVIDENCE_FUNCTION_WORDS = {
-    "and",
-    "are",
-    "because",
-    "but",
-    "does",
-    "for",
-    "from",
-    "had",
-    "has",
-    "have",
-    "her",
-    "him",
-    "his",
-    "i'm",
-    "its",
-    "our",
-    "she",
-    "that",
-    "the",
-    "their",
-    "them",
-    "they",
-    "this",
-    "was",
-    "were",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "why",
-    "with",
-    "you",
-    "your",
-}
-
-
 @dataclass(frozen=True)
 class _MessageFeedbackCacheEntry:
     feedback: MessageFeedbackData
     score_evidence: MessageFeedbackScoreEvidence
     user_message: str
     expires_at: float
-    judgement: MessageFeedbackJudgement | None = None
-    generated_copy: MessageFeedbackCopy | None = None
-    judgement_was_repaired: bool = False
-    copy_was_repaired: bool = False
 
 
 # ponytail: 단일 프로세스 TTL cache다. 여러 인스턴스 공유가 필요해지면 외부 저장소로 옮긴다.
@@ -286,52 +212,19 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    judgement, judgement_was_repaired = _generate_message_feedback_judgement(
+    candidate, detected_patterns = _generate_message_feedback_candidate(
         request,
         resolved_settings,
     )
-    copy_data: dict[str, Any] | None = None
-    copy_was_repaired = False
-    try:
-        copy_data = _request_json_completion(
-            resolved_settings,
-            system_prompt=_message_feedback_copy_system_prompt(
-                request.evaluationContext.type,
-            ),
-            user_prompt=_message_feedback_copy_user_prompt(request, judgement),
-            max_tokens=768,
-        )
-        feedback, generated_copy, detected_patterns = _parse_and_assemble_message_feedback_copy(
-            copy_data,
-            judgement,
-            request,
-        )
-    except (AiGenerationFailedError, AiResponseInvalidError) as exc:
-        copy_was_repaired = True
-        logger.warning(
-            "AI 메시지별 피드백 문구를 복구합니다. "
-            "workflow=message_feedback_copy_repair sessionId=%s messageId=%s",
-            request.sessionId,
-            request.messageId,
-        )
-        repaired_data = _request_json_completion(
-            resolved_settings,
-            system_prompt=_message_feedback_copy_repair_system_prompt(
-                request.evaluationContext.type,
-            ),
-            user_prompt=_message_feedback_copy_repair_user_prompt(
-                request,
-                judgement,
-                copy_data,
-                exc,
-            ),
-            max_tokens=768,
-        )
-        feedback, generated_copy, detected_patterns = _parse_and_assemble_message_feedback_copy(
-            repaired_data,
-            judgement,
-            request,
-        )
+    reviewed, detected_patterns = _review_message_feedback_candidate(
+        request,
+        candidate,
+        detected_patterns,
+        resolved_settings,
+    )
+    feedback = MessageFeedbackData.model_validate(
+        reviewed.model_dump(exclude={"scoreEvidence"}),
+    )
     feedback = _postprocess_message_feedback_benchmark(
         feedback,
         detected_patterns,
@@ -341,12 +234,8 @@ def generate_message_feedback(
     _store_message_feedback(
         request.sessionId,
         feedback,
-        score_evidence=judgement.scoreEvidence,
+        score_evidence=reviewed.scoreEvidence,
         user_message=request.userMessage,
-        judgement=judgement,
-        generated_copy=generated_copy,
-        judgement_was_repaired=judgement_was_repaired,
-        copy_was_repaired=copy_was_repaired,
     )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
@@ -355,317 +244,114 @@ def generate_message_feedback(
     )
 
 
-def _generate_message_feedback_judgement(
+def _generate_message_feedback_candidate(
     request: MessageFeedbackRequest,
     settings: Settings,
-) -> tuple[MessageFeedbackJudgement, bool]:
-    judgement_data: dict[str, Any] | None = None
+) -> tuple[MessageFeedbackEvaluation, Any]:
+    candidate_data: dict[str, Any] | None = None
     try:
-        judgement_data = _request_json_completion(
+        candidate_data = _request_json_completion(
             settings,
-            system_prompt=_message_feedback_judgement_system_prompt(
+            system_prompt=_message_feedback_system_prompt(
                 request.evaluationContext.type,
             ),
-            user_prompt=_message_feedback_judgement_user_prompt(request),
-            max_tokens=512,
+            user_prompt=_message_feedback_user_prompt(request),
+            max_tokens=768,
         )
-        return _parse_message_feedback_judgement(judgement_data, request), False
+        return _parse_message_feedback_candidate(candidate_data, request.messageId)
     except AiResponseInvalidError as exc:
         logger.warning(
-            "AI 메시지별 피드백 판정을 복구합니다. "
-            "workflow=message_feedback_judgement_repair sessionId=%s messageId=%s",
+            "AI 메시지별 피드백 생성 결과를 구조 복구합니다. "
+            "workflow=message_feedback_candidate_repair sessionId=%s messageId=%s",
             request.sessionId,
             request.messageId,
         )
         repaired_data = _request_json_completion(
             settings,
-            system_prompt=_message_feedback_judgement_repair_system_prompt(
+            system_prompt=_message_feedback_repair_system_prompt(
                 request.evaluationContext.type,
             ),
-            user_prompt=_message_feedback_judgement_repair_user_prompt(
+            user_prompt=_message_feedback_repair_user_prompt(
                 request,
-                judgement_data,
+                candidate_data,
                 exc,
             ),
-            max_tokens=512,
+            max_tokens=768,
         )
-        return _parse_message_feedback_judgement(repaired_data, request), True
+        return _parse_message_feedback_candidate(repaired_data, request.messageId)
 
 
-def _parse_message_feedback_judgement(
-    data: dict[str, Any],
+def _review_message_feedback_candidate(
     request: MessageFeedbackRequest,
-) -> MessageFeedbackJudgement:
+    candidate: MessageFeedbackEvaluation,
+    detected_patterns: Any,
+    settings: Settings,
+) -> tuple[MessageFeedbackEvaluation, Any]:
+    reviewed_data: dict[str, Any] | None = None
     try:
-        judgement = MessageFeedbackJudgement.model_validate(data)
-    except ValidationError as exc:
-        raise AiResponseInvalidError from exc
-    if judgement.messageId not in (None, request.messageId):
-        raise AiResponseInvalidError
-
-    normalized_user_message = _normalize_evidence(request.userMessage)
-    for core_ask in judgement.coreAsks:
-        if (
-            core_ask.evidence is not None
-            and _normalize_evidence(core_ask.evidence) not in normalized_user_message
-        ):
-            raise AiResponseInvalidError
-    for stated_fact in judgement.statedFacts:
-        if _normalize_evidence(stated_fact) not in normalized_user_message:
-            raise AiResponseInvalidError
-    for language_correction in judgement.languageCorrections:
-        if (
-            _normalize_evidence(language_correction.evidence)
-            not in normalized_user_message
-        ):
-            raise AiResponseInvalidError(
-                "message_feedback_judgement_language_correction_evidence",
-            )
-    judgement = _without_natural_preference_alternative_corrections(
-        judgement,
-        request.userMessage,
-    )
-    judgement = _with_known_age_correction(judgement, request.userMessage)
-    judgement = _with_explicit_non_answer(
-        judgement,
-        request.userMessage,
-        request.evaluationContext.content,
-    )
-    judgement = _with_required_reason_ask(
-        judgement,
-        request.evaluationContext.content,
-    )
-    judgement = _with_inferred_required_placeholders(judgement)
-    if any(
-        _is_bare_evaluation_reason(core_ask)
-        for core_ask in judgement.coreAsks
-    ):
-        raise AiResponseInvalidError("message_feedback_judgement_bare_reason")
-    judgement = _with_generic_evaluation_answers(
-        judgement,
-        request.userMessage,
-    )
-    judgement = _with_stated_self_introduction(judgement)
-    if (
-        judgement.scoreEvidence.clarity == 2
-        and any(
-            _is_vague_generic_evaluation_answer(core_ask)
-            for core_ask in judgement.coreAsks
+        reviewed_data = _request_json_completion(
+            settings,
+            system_prompt=_message_feedback_review_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_review_user_prompt(
+                request,
+                candidate,
+                detected_patterns,
+            ),
+            max_tokens=768,
         )
-    ):
-        judgement = judgement.model_copy(
-            update={
-                "scoreEvidence": judgement.scoreEvidence.model_copy(
-                    update={"clarity": 1},
-                ),
-            },
+        return _parse_message_feedback_candidate(
+            reviewed_data,
+            request.messageId,
+        )
+    except AiResponseInvalidError as exc:
+        logger.warning(
+            "AI 메시지별 피드백 검수 결과를 구조 복구합니다. "
+            "workflow=message_feedback_review_repair sessionId=%s messageId=%s",
+            request.sessionId,
+            request.messageId,
+        )
+        repaired_data = _request_json_completion(
+            settings,
+            system_prompt=_message_feedback_review_repair_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_review_repair_user_prompt(
+                request,
+                candidate,
+                detected_patterns,
+                reviewed_data,
+                exc,
+            ),
+            max_tokens=768,
+        )
+        return _parse_message_feedback_candidate(
+            repaired_data,
+            request.messageId,
         )
 
-    addressed_count = sum(core_ask.addressed for core_ask in judgement.coreAsks)
-    expected_context_fit = (
-        2
-        if addressed_count == len(judgement.coreAsks)
-        else 1
-        if addressed_count > 0
-        else 0
-    )
-    if judgement.scoreEvidence.contextFit != expected_context_fit:
-        raise AiResponseInvalidError
-    return judgement
 
-
-def _feedback_type_from_score_evidence(
-    score_evidence: MessageFeedbackScoreEvidence,
-) -> FeedbackType:
-    scores = (
-        score_evidence.contextFit,
-        score_evidence.clarity,
-        score_evidence.languageAccuracy,
-    )
-    return (
-        FeedbackType.GOOD
-        if all(score == 2 for score in scores)
-        else FeedbackType.NEEDS_IMPROVEMENT
-    )
-
-
-def _parse_and_assemble_message_feedback_copy(
+def _parse_message_feedback_candidate(
     data: dict[str, Any],
-    judgement: MessageFeedbackJudgement,
-    request: MessageFeedbackRequest,
-) -> tuple[MessageFeedbackData, MessageFeedbackCopy, Any]:
-    copy_data = dict(data)
-    detected_patterns = copy_data.pop("detectedPatterns", None)
+    expected_message_id: int,
+) -> tuple[MessageFeedbackEvaluation, Any]:
+    candidate_data = dict(data)
+    detected_patterns = candidate_data.pop("detectedPatterns", None)
     try:
-        copy = MessageFeedbackCopy.model_validate(copy_data)
+        evaluation = MessageFeedbackEvaluation.model_validate(candidate_data)
     except ValidationError as exc:
-        raise AiResponseInvalidError("message_feedback_copy_schema") from exc
-    if copy.messageId not in (None, request.messageId):
-        raise AiResponseInvalidError("message_feedback_copy_message_id")
-
-    feedback_type = _feedback_type_from_score_evidence(judgement.scoreEvidence)
-    copy_fields = copy.model_dump()
-    copy_fields["messageId"] = request.messageId
-    if feedback_type == FeedbackType.GOOD:
-        copy_fields.update({
-            "positiveFeedback": None,
-            "correctionExpression": None,
-            "correctionReason": None,
-        })
-    else:
-        copy_fields.update({
-            "feedbackDetail": None,
-            "benchmarkMessage": None,
-        })
-    try:
-        feedback = MessageFeedbackData.model_validate({
-            **copy_fields,
-            "feedbackType": feedback_type,
-        })
-    except ValidationError as exc:
-        raise AiResponseInvalidError("message_feedback_copy_field_contract") from exc
-    feedback = _with_safe_correction_template(judgement, feedback)
-    _validate_message_feedback_copy(judgement, feedback)
-    return feedback, copy, detected_patterns
+        raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
+    if evaluation.messageId != expected_message_id:
+        raise AiResponseInvalidError("message_feedback_message_id")
+    return evaluation, detected_patterns
 
 
-def _with_safe_correction_template(
-    judgement: MessageFeedbackJudgement,
-    feedback: MessageFeedbackData,
-) -> MessageFeedbackData:
-    if feedback.feedbackType != FeedbackType.NEEDS_IMPROVEMENT:
-        return feedback
-    required_placeholders = {
-        core_ask.requiredPlaceholder
-        for core_ask in judgement.coreAsks
-        if core_ask.requiredPlaceholder is not None
-    }
-    correction_expression = _safe_correction_expression(
-        judgement,
-        required_placeholders,
-    )
-    if correction_expression is None:
-        return feedback
-    return feedback.model_copy(
-        update={"correctionExpression": correction_expression},
-    )
-
-
-def _safe_correction_expression(
-    judgement: MessageFeedbackJudgement,
-    required_placeholders: set[str],
-) -> str | None:
-    recommended_place = "[your recommended place]"
-    reason = "[your reason]"
-    if recommended_place in required_placeholders and reason in required_placeholders:
-        return f"I recommend {recommended_place} because {reason}."
-    if reason in required_placeholders:
-        place_evidence = next((
-            core_ask.evidence
-            for core_ask in judgement.coreAsks
-            if core_ask.addressed
-            and core_ask.evidence is not None
-            and any(
-                keyword in core_ask.ask.casefold()
-                for keyword in ("place", "spot", "recommend")
-            )
-        ), None)
-        if place_evidence is not None:
-            return f"I recommend {place_evidence} because {reason}."
-    if "[your travel proof]" in required_placeholders:
-        return "I have [your travel proof]."
-    travel_ticket = next((
-        correction.replacement.strip(" .!?")
-        for correction in judgement.languageCorrections
-        if "ticket" in _meaningful_evidence_words(correction.replacement)
-    ), None)
-    if (
-        travel_ticket is not None
-        and any(
-            "travel" in core_ask.ask.casefold()
-            or "proof" in core_ask.ask.casefold()
-            for core_ask in judgement.coreAsks
-        )
-        and any(
-            "don't have anything" in stated_fact.casefold()
-            or "do not have anything" in stated_fact.casefold()
-            for stated_fact in judgement.statedFacts
-        )
-    ):
-        return f"I don't have anything, but I have {travel_ticket}."
-    if {
-        "[your cleaning preference]",
-        "[your previous cleaning routine]",
-    }.issubset(required_placeholders):
-        return (
-            "I usually split the cleaning by [your cleaning preference], "
-            "and [your previous cleaning routine] worked for me before."
-        )
-    if any(
-        _is_vague_generic_evaluation_answer(core_ask)
-        for core_ask in judgement.coreAsks
-    ):
-        preference_fact = next((
-            stated_fact.strip(" .!?")
-            for stated_fact in judgement.statedFacts
-            if re.search(
-                r"\bI\s+(?:like|love|enjoy)\b",
-                stated_fact,
-                re.IGNORECASE,
-            )
-        ), None)
-        if preference_fact is not None:
-            return f"{preference_fact} because [your reason]."
-    return None
-
-
-def _validate_message_feedback_copy(
-    judgement: MessageFeedbackJudgement,
-    feedback: MessageFeedbackData,
-) -> None:
-    if feedback.feedbackType != FeedbackType.NEEDS_IMPROVEMENT:
-        return
-
-    required_placeholders = [
-        core_ask.requiredPlaceholder
-        for core_ask in judgement.coreAsks
-        if core_ask.requiredPlaceholder is not None
-    ]
-    correction_expression = feedback.correctionExpression
-    correction_reason = feedback.correctionReason
-    if correction_expression is None or correction_reason is None:
-        raise AiResponseInvalidError("message_feedback_copy_required_fields")
-    if any(
-        placeholder not in correction_expression
-        for placeholder in required_placeholders
-    ):
-        raise AiResponseInvalidError("message_feedback_copy_missing_placeholder")
-    if any(
-        re.fullmatch(r"\[your [a-z][a-z ]*\]", placeholder) is None
-        for placeholder in re.findall(r"\[[^\]]+\]", correction_expression)
-    ):
-        raise AiResponseInvalidError("message_feedback_copy_placeholder_format")
-    if re.search(r"[가-힣]", correction_reason) is None:
-        raise AiResponseInvalidError("message_feedback_copy_reason_locale")
-
-    correction_words = _meaningful_evidence_words(correction_expression)
-    for core_ask in judgement.coreAsks:
-        if not core_ask.addressed or core_ask.evidence is None:
-            continue
-        if _is_vague_generic_evaluation_answer(core_ask):
-            continue
-        evidence_words = _meaningful_evidence_words(core_ask.evidence)
-        if evidence_words and not _words_overlap(
-            evidence_words,
-            correction_words,
-        ):
-            raise AiResponseInvalidError(
-                "message_feedback_copy_unsupported_content",
-            )
-    if _unsupported_correction_content_words(judgement, correction_expression):
-        raise AiResponseInvalidError(
-            "message_feedback_copy_unsupported_content",
-        )
+def _message_feedback_validation_reason(error: ValidationError) -> str:
+    errors = error.errors()
+    if not errors:
+        return "message_feedback_schema"
+    return f"message_feedback_schema: {errors[0]['msg']}"
 
 
 def generate_session_feedback(
@@ -881,10 +567,6 @@ def _store_message_feedback(
     *,
     score_evidence: MessageFeedbackScoreEvidence,
     user_message: str,
-    judgement: MessageFeedbackJudgement | None = None,
-    generated_copy: MessageFeedbackCopy | None = None,
-    judgement_was_repaired: bool = False,
-    copy_was_repaired: bool = False,
     now: float | None = None,
 ) -> None:
     current_time = _cache_now() if now is None else now
@@ -896,10 +578,6 @@ def _store_message_feedback(
             score_evidence=score_evidence,
             user_message=user_message,
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
-            judgement=judgement,
-            generated_copy=generated_copy,
-            judgement_was_repaired=judgement_was_repaired,
-            copy_was_repaired=copy_was_repaired,
         )
 
 
@@ -979,6 +657,7 @@ def _postprocess_message_feedback_benchmark(
     if (
         feedback.benchmarkMessage is not None
         and not _contains_unverified_quantitative_claim(feedback.benchmarkMessage)
+        and not _is_catalog_benchmark_message(feedback.benchmarkMessage)
     ):
         return feedback
     return _with_benchmark_message(feedback, _DEFAULT_GOOD_BENCHMARK_MESSAGE)
@@ -1009,10 +688,21 @@ def _benchmark_message_from_detected_patterns(
         normalized_evidence = _normalize_evidence(evidence)
         if not normalized_evidence or normalized_evidence not in normalized_user_message:
             continue
+        example_right = catalog_pattern.get("exampleRight")
+        if isinstance(example_right, str) and example_right.strip():
+            if normalized_evidence not in _normalize_evidence(example_right):
+                continue
         benchmark_message = catalog_pattern.get("benchmarkMessage")
         if isinstance(benchmark_message, str) and benchmark_message.strip():
             return benchmark_message
     return None
+
+
+def _is_catalog_benchmark_message(value: str) -> bool:
+    return any(
+        value == catalog_pattern.get("benchmarkMessage")
+        for catalog_pattern in _BENCHMARK_PATTERN_CATALOG.values()
+    )
 
 
 def _with_benchmark_message(
@@ -1028,480 +718,6 @@ def _normalize_evidence(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def _normalize_spoken_form(value: str) -> str:
-    return " ".join(re.sub(r"[^\w\s]", " ", value.casefold()).split())
-
-
-def _meaningful_evidence_words(value: str) -> set[str]:
-    return {
-        word
-        for word in re.findall(r"[a-z]+(?:'[a-z]+)?", value.casefold())
-        if len(word) >= 3 and word not in _EVIDENCE_FUNCTION_WORDS
-    }
-
-
-def _words_overlap(source_words: set[str], target_words: set[str]) -> bool:
-    return any(
-        source == target
-        or (
-            len(source) >= 3
-            and len(target) >= 3
-            and (source.startswith(target) or target.startswith(source))
-        )
-        for source in source_words
-        for target in target_words
-    )
-
-
-def _is_bare_evaluation_reason(core_ask: MessageFeedbackCoreAsk) -> bool:
-    if not core_ask.addressed or core_ask.evidence is None:
-        return False
-    normalized_ask = core_ask.ask.casefold()
-    if "why" not in normalized_ask and "reason" not in normalized_ask:
-        return False
-    evidence_words = _meaningful_evidence_words(core_ask.evidence)
-    return bool(evidence_words) and evidence_words <= _GENERIC_EVALUATION_WORDS
-
-
-def _without_natural_preference_alternative_corrections(
-    judgement: MessageFeedbackJudgement,
-    user_message: str,
-) -> MessageFeedbackJudgement:
-    retained_corrections = [
-        correction
-        for correction in judgement.languageCorrections
-        if not _is_non_actionable_language_alternative(correction, user_message)
-    ]
-    if len(retained_corrections) == len(judgement.languageCorrections):
-        return judgement
-    language_accuracy = (
-        judgement.scoreEvidence.languageAccuracy
-        if retained_corrections
-        else 2
-    )
-    return judgement.model_copy(
-        update={
-            "languageCorrections": retained_corrections,
-            "scoreEvidence": judgement.scoreEvidence.model_copy(
-                update={"languageAccuracy": language_accuracy},
-            ),
-        },
-    )
-
-
-def _with_inferred_required_placeholders(
-    judgement: MessageFeedbackJudgement,
-) -> MessageFeedbackJudgement:
-    normalized_core_asks: list[MessageFeedbackCoreAsk] = []
-    for core_ask in judgement.coreAsks:
-        inferred_placeholder = (
-            _required_placeholder_for_ask(core_ask.ask)
-            if not core_ask.addressed
-            else None
-        )
-        normalized_core_asks.append(
-            core_ask.model_copy(
-                update={"requiredPlaceholder": inferred_placeholder},
-            )
-            if inferred_placeholder is not None
-            else core_ask
-        )
-    if normalized_core_asks == judgement.coreAsks:
-        return judgement
-    return judgement.model_copy(update={"coreAsks": normalized_core_asks})
-
-
-def _with_explicit_non_answer(
-    judgement: MessageFeedbackJudgement,
-    user_message: str,
-    evaluation_content: str,
-) -> MessageFeedbackJudgement:
-    normalized_message = _normalize_spoken_form(user_message)
-    if normalized_message not in {
-        "i don t know",
-        "i do not know",
-        "i m not sure",
-        "i am not sure",
-        "no idea",
-    }:
-        return judgement
-    normalized_evaluation = evaluation_content.casefold()
-    if (
-        "clean" in normalized_evaluation
-        and "split" in normalized_evaluation
-        and "worked" in normalized_evaluation
-        and "before" in normalized_evaluation
-    ):
-        core_asks = [
-            MessageFeedbackCoreAsk(
-                ask="how to usually split cleaning",
-                addressed=False,
-                evidence=None,
-                requiredPlaceholder="[your cleaning preference]",
-            ),
-            MessageFeedbackCoreAsk(
-                ask="what worked before",
-                addressed=False,
-                evidence=None,
-                requiredPlaceholder="[your previous cleaning routine]",
-            ),
-        ]
-    else:
-        core_asks = [
-            core_ask.model_copy(
-                update={
-                    "addressed": False,
-                    "evidence": None,
-                },
-            )
-            for core_ask in judgement.coreAsks
-        ]
-    return judgement.model_copy(
-        update={
-            "coreAsks": core_asks,
-            "scoreEvidence": judgement.scoreEvidence.model_copy(
-                update={"contextFit": 0},
-            ),
-        },
-    )
-
-
-def _with_required_reason_ask(
-    judgement: MessageFeedbackJudgement,
-    evaluation_content: str,
-) -> MessageFeedbackJudgement:
-    if not _asks_for_preference_reason(evaluation_content) or any(
-        _asks_for_preference_reason(core_ask.ask)
-        for core_ask in judgement.coreAsks
-    ):
-        return judgement
-    core_asks = [
-        *judgement.coreAsks,
-        MessageFeedbackCoreAsk(
-            ask="what do you love about it",
-            addressed=False,
-            evidence=None,
-            requiredPlaceholder="[your reason]",
-        ),
-    ]
-    context_fit = 1 if any(core_ask.addressed for core_ask in core_asks) else 0
-    return judgement.model_copy(
-        update={
-            "coreAsks": core_asks,
-            "scoreEvidence": judgement.scoreEvidence.model_copy(
-                update={"contextFit": context_fit},
-            ),
-        },
-    )
-
-
-def _required_placeholder_for_ask(ask: str) -> str | None:
-    normalized_ask = ask.casefold()
-    if "clean" in normalized_ask and "split" in normalized_ask:
-        return "[your cleaning preference]"
-    if "worked" in normalized_ask and "before" in normalized_ask:
-        return "[your previous cleaning routine]"
-    if "why" in normalized_ask or "reason" in normalized_ask:
-        return "[your reason]"
-    if "travel" in normalized_ask and "proof" in normalized_ask:
-        return "[your travel proof]"
-    if any(
-        keyword in normalized_ask
-        for keyword in ("must-visit", "recommended place", "recommended spot")
-    ):
-        return "[your recommended place]"
-    if "name" in normalized_ask:
-        return "[your name]"
-    if "hobby" in normalized_ask or "about yourself" in normalized_ask:
-        return "[your hobby]"
-    return None
-
-
-def _is_natural_preference_alternative(
-    correction: MessageFeedbackLanguageCorrection,
-) -> bool:
-    evidence = correction.evidence.casefold().strip(" .!?,'\"")
-    replacement = correction.replacement.casefold().strip(" .!?,'\"")
-    return _matches_to_infinitive_and_gerund(evidence, replacement) or (
-        _matches_to_infinitive_and_gerund(replacement, evidence)
-    )
-
-
-def _is_non_actionable_language_alternative(
-    correction: MessageFeedbackLanguageCorrection,
-    user_message: str,
-) -> bool:
-    if _normalize_spoken_form(correction.evidence) == _normalize_spoken_form(
-        correction.replacement,
-    ):
-        return True
-    if _is_natural_preference_alternative(correction):
-        return True
-    normalized_pair = {
-        _normalize_evidence(correction.evidence).strip(" .!?,'\""),
-        _normalize_evidence(correction.replacement).strip(" .!?,'\""),
-    }
-    if normalized_pair == {"aircon", "air conditioning"}:
-        return True
-    return (
-        "i like reading a book" in _normalize_evidence(user_message)
-        and normalized_pair in (
-            {"a book", "books"},
-            {"reading a book", "reading books"},
-        )
-    )
-
-
-def _with_known_age_correction(
-    judgement: MessageFeedbackJudgement,
-    user_message: str,
-) -> MessageFeedbackJudgement:
-    match = re.search(
-        r"\bI(?:'m|\s+am)\s+\d+\s+years\b(?!\s+old\b)",
-        user_message,
-        re.IGNORECASE,
-    )
-    if match is None:
-        return judgement
-    evidence = match.group(0)
-    if any(
-        _normalize_evidence(correction.evidence) == _normalize_evidence(evidence)
-        for correction in judgement.languageCorrections
-    ):
-        return judgement
-    correction = MessageFeedbackLanguageCorrection(
-        evidence=evidence,
-        replacement=f"{evidence} old",
-    )
-    return judgement.model_copy(
-        update={
-            "languageCorrections": [*judgement.languageCorrections, correction],
-            "scoreEvidence": judgement.scoreEvidence.model_copy(
-                update={
-                    "languageAccuracy": min(
-                        judgement.scoreEvidence.languageAccuracy,
-                        1,
-                    ),
-                },
-            ),
-        },
-    )
-
-
-def _matches_to_infinitive_and_gerund(
-    to_infinitive: str,
-    gerund: str,
-) -> bool:
-    to_match = re.fullmatch(r"(.*\blike)\s+to\s+([a-z]+)(.*)", to_infinitive)
-    gerund_match = re.fullmatch(r"(.*\blike)\s+([a-z]+ing)(.*)", gerund)
-    if to_match is None or gerund_match is None:
-        return False
-    prefix, verb, suffix = to_match.groups()
-    gerund_prefix, gerund_verb, gerund_suffix = gerund_match.groups()
-    return (
-        prefix == gerund_prefix
-        and suffix == gerund_suffix
-        and _gerund_matches_verb(verb, gerund_verb)
-    )
-
-
-def _gerund_matches_verb(verb: str, gerund: str) -> bool:
-    candidates = {f"{verb}ing"}
-    if verb.endswith("e"):
-        candidates.add(f"{verb[:-1]}ing")
-    if len(verb) >= 3:
-        candidates.add(f"{verb}{verb[-1]}ing")
-    return gerund in candidates
-
-
-def _with_generic_evaluation_answers(
-    judgement: MessageFeedbackJudgement,
-    user_message: str,
-) -> MessageFeedbackJudgement:
-    evidence = _generic_evaluation_evidence(user_message)
-    if evidence is None:
-        return judgement
-    normalized_core_asks = [
-        core_ask.model_copy(
-            update={
-                "addressed": True,
-                "evidence": evidence,
-                "requiredPlaceholder": None,
-            },
-        )
-        if not core_ask.addressed and _asks_what_is_liked(core_ask.ask)
-        else core_ask
-        for core_ask in judgement.coreAsks
-    ]
-    if normalized_core_asks == judgement.coreAsks:
-        return judgement
-    addressed_count = sum(core_ask.addressed for core_ask in normalized_core_asks)
-    context_fit = (
-        2
-        if addressed_count == len(normalized_core_asks)
-        else 1
-        if addressed_count > 0
-        else 0
-    )
-    return judgement.model_copy(
-        update={
-            "coreAsks": normalized_core_asks,
-            "scoreEvidence": judgement.scoreEvidence.model_copy(
-                update={
-                    "contextFit": context_fit,
-                    "clarity": min(judgement.scoreEvidence.clarity, 1),
-                },
-            ),
-        },
-    )
-
-
-def _with_stated_self_introduction(
-    judgement: MessageFeedbackJudgement,
-) -> MessageFeedbackJudgement:
-    unused_personal_facts = [
-        stated_fact
-        for stated_fact in judgement.statedFacts
-        if _is_self_introduction_fact(stated_fact)
-        and all(
-            core_ask.evidence is None
-            or _normalize_evidence(core_ask.evidence)
-            != _normalize_evidence(stated_fact)
-            for core_ask in judgement.coreAsks
-        )
-    ]
-    if not unused_personal_facts:
-        return judgement
-    normalized_core_asks = list(judgement.coreAsks)
-    for index, core_ask in enumerate(normalized_core_asks):
-        if not core_ask.addressed and "about yourself" in core_ask.ask.casefold():
-            normalized_core_asks[index] = core_ask.model_copy(
-                update={
-                    "addressed": True,
-                    "evidence": unused_personal_facts[0],
-                    "requiredPlaceholder": None,
-                },
-            )
-            break
-    if normalized_core_asks == judgement.coreAsks:
-        return judgement
-    addressed_count = sum(core_ask.addressed for core_ask in normalized_core_asks)
-    context_fit = 2 if addressed_count == len(normalized_core_asks) else 1
-    return judgement.model_copy(
-        update={
-            "coreAsks": normalized_core_asks,
-            "scoreEvidence": judgement.scoreEvidence.model_copy(
-                update={"contextFit": context_fit},
-            ),
-        },
-    )
-
-
-def _is_self_introduction_fact(value: str) -> bool:
-    return re.search(
-        r"\b(?:i(?:'m|\s+am|\s+like|\s+love|\s+enjoy|\s+live|\s+work|\s+study)"
-        r"|my\s+(?:hobby|favorite|job|age))\b",
-        value,
-        re.IGNORECASE,
-    ) is not None
-
-
-def _generic_evaluation_evidence(user_message: str) -> str | None:
-    pattern = re.compile(
-        r"\b(?:this|that|it)(?:'s|\s+is)\s+"
-        r"(?:(?:so|very|really)\s+)?"
-        r"(?:awesome|best|cool|good|great|nice)\b",
-        re.IGNORECASE,
-    )
-    for match in pattern.finditer(user_message):
-        prefix = user_message[max(0, match.start() - 24):match.start()].casefold()
-        if re.search(r"(?:don't|do not|not)\s+(?:think\s+)?$", prefix):
-            continue
-        return match.group(0)
-    return None
-
-
-def _asks_what_is_liked(ask: str) -> bool:
-    normalized_ask = ask.casefold()
-    return "what" in normalized_ask and re.search(
-        r"\b(?:likes?|loves?)\s+about\b",
-        normalized_ask,
-    ) is not None
-
-
-def _asks_for_preference_reason(ask: str) -> bool:
-    normalized_ask = ask.casefold()
-    return (
-        _asks_what_is_liked(ask)
-        or "reason" in normalized_ask
-        or (
-            "why" in normalized_ask
-            and ("like" in normalized_ask or "love" in normalized_ask)
-        )
-    )
-
-
-def _is_vague_generic_evaluation_answer(
-    core_ask: MessageFeedbackCoreAsk,
-) -> bool:
-    if not core_ask.addressed or core_ask.evidence is None:
-        return False
-    if not _asks_what_is_liked(core_ask.ask):
-        return False
-    normalized_evidence = core_ask.evidence.casefold().strip(" .!?,'\"")
-    return re.fullmatch(
-        r"(?:this|that|it)(?:'s|\s+is)\s+"
-        r"(?:(?:so|very|really)\s+)?"
-        r"(?:awesome|best|cool|good|great|nice)",
-        normalized_evidence,
-    ) is not None
-
-
-def _unsupported_correction_content_words(
-    judgement: MessageFeedbackJudgement,
-    correction_expression: str,
-) -> set[str]:
-    correction_without_placeholders = re.sub(
-        r"\[[^\]]+\]",
-        "",
-        correction_expression,
-    )
-    correction_words = _meaningful_evidence_words(
-        correction_without_placeholders,
-    )
-    addressed_core_asks = [
-        core_ask
-        for core_ask in judgement.coreAsks
-        if core_ask.addressed
-    ]
-    source_values = [
-        *(core_ask.ask for core_ask in judgement.coreAsks),
-        *(
-            core_ask.evidence
-            for core_ask in addressed_core_asks
-            if core_ask.evidence is not None
-        ),
-    ]
-    source_values.extend(
-        core_ask.requiredPlaceholder.removeprefix("[your ").removesuffix("]")
-        for core_ask in judgement.coreAsks
-        if core_ask.requiredPlaceholder is not None
-    )
-    if addressed_core_asks:
-        source_values.extend(judgement.statedFacts)
-        source_values.extend(
-            language_correction.replacement
-            for language_correction in judgement.languageCorrections
-        )
-    source_words = _meaningful_evidence_words(" ".join(source_values))
-    return {
-        word
-        for word in correction_words
-        if word not in _CORRECTION_SCAFFOLD_WORDS
-        and not _words_overlap({word}, source_words)
-    }
-
-
 def _contains_unverified_quantitative_claim(value: str) -> bool:
     return _contains_quantitative_hook(value) or bool(
         re.search(r"(?:통계|조사|출처|연구)|한국인의\s*\d", value),
@@ -1513,9 +729,11 @@ def _detected_pattern_catalog_for_prompt() -> list[dict[str, str]]:
     for error_type, catalog_pattern in _BENCHMARK_PATTERN_CATALOG.items():
         description = catalog_pattern.get("description")
         if catalog_pattern.get("gamifiable") is True and isinstance(description, str):
-            catalog_patterns.append(
-                {"errorType": error_type, "description": description},
-            )
+            pattern = {"errorType": error_type, "description": description}
+            example_right = catalog_pattern.get("exampleRight")
+            if isinstance(example_right, str) and example_right.strip():
+                pattern["exampleRight"] = example_right
+            catalog_patterns.append(pattern)
     return catalog_patterns
 
 
@@ -1945,140 +1163,117 @@ def _contains_quantitative_hook(value: str) -> bool:
     )
 
 
-def _message_feedback_judgement_system_prompt(
+def _message_feedback_system_prompt(
     evaluation_context_type: EvaluationContextType,
 ) -> str:
     return "\n\n".join([
         (
             "Role:\n"
-            "You judge a Korean learner's English utterance before any learner-facing feedback is written."
+            "You evaluate a Korean learner's English utterance and write learner-facing feedback."
         ),
         _shared_safety_policy(),
         (
-            "Judgement Task:\n"
-            "Identify the independent core asks in the current evaluation context only. "
-            "The current evaluation context is the only source of core asks. "
-            "Do not infer additional asks from the scenario title, briefing, or conversation goal. "
-            "For each core ask, decide whether the user answered it. "
-            "An incomplete stem such as 'My name is' does not answer a name core ask. "
-            "A core ask that explicitly asks why or asks for a reason needs an actual supporting detail; a generic evaluation such as best, good, great, cool, nice, or awesome alone does not answer why. "
-            "This restriction applies only to an explicit why or reason core ask, not to a question about what the learner likes about something. "
-            "When answered, copy the smallest exact supporting substring from the user utterance as evidence. "
-            "When unanswered, set evidence to null and use a concrete [your ...] placeholder only when a learner must add personal information to answer it. "
-            "For missing personal information, use the smallest concrete placeholder: tell a little about yourself -> [your hobby], why you like an activity -> [your reason], must-visit place -> [your recommended place], proof of travel plans -> [your travel proof], dealbreaker -> [your dealbreaker], daily routine -> [your daily routine], wake-up time -> [your wake up time], bedtime -> [your bedtime], contact number -> [your contact number], and booking method -> [your booking method]. "
-            "List statedFacts as exact substrings from the user utterance that a correction must preserve. "
-            "Do not write learner-facing feedback, correction expressions, benchmark messages, or detected patterns."
+            "Feedback Task:\n"
+            "Evaluate only the current evaluation context with the scenario and conversation as supporting context. "
+            "contextFit is 2 when the user answers the context completely, 1 when an important part is missing, and 0 when the utterance does not answer it. "
+            "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
+            "clarity is 2 when meaning is understandable without guesswork, 1 when inference is needed, and 0 when meaning is hard to understand. "
+            "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
+            "Do not lower a score only for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative. "
+            "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
+            "A short answer can be complete when it fits the question. "
+            "If information needed to answer is missing, use a [your ...] placeholder in correctionExpression rather than inventing it. "
+            "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
+            "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
+            "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
+            "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
+            "When the utterance is irrelevant or unclear, show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
+            "Do not give formal praise to hostile, irrelevant, or unintelligible utterances."
         ),
         (
-            "Scoring Evidence Policy:\n"
-            "scoreEvidence has integer contextFit, clarity, and languageAccuracy values from 0 to 2. "
-            "contextFit is 2 only when every core ask is answered, 1 when some but not all are answered, and 0 when none are answered. "
-            "clarity is 2 when the meaning is understandable without guesswork, 1 when some inference is needed, and 0 when the meaning is hard to understand. "
-            "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
-            "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question. "
-            "When languageAccuracy is 0 or 1, languageCorrections must contain one or more evidence/replacement pairs. "
-            "Each evidence must copy the smallest exact user substring with the actionable issue, and replacement must correct only that substring without adding a new fact. "
-            "When languageAccuracy is 2, languageCorrections must be an empty array. "
-            "Do not lower any score for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative alone. "
-            "A short noun phrase can fully answer a what-question. "
-            "A vague demonstrative evaluation such as 'This is so cool' answers a what-do-you-like-about ask but requires clarity=1. "
-            "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
-            "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
-            "A direct question about why personal information is needed can be GOOD when a friend has not explained the reason. "
-            "Do not lower contextFit or clarity solely for a languageAccuracy issue. "
-            "Missing one core ask alone must not lower languageAccuracy when the answered part is natural. "
-            "An unrelated but grammatically natural utterance can have contextFit=0 and languageAccuracy=2. "
-            "A hostile or dismissive reply can have languageAccuracy=1 even when it is clear."
+            "Field Policy:\n"
+            "All three scoreEvidence values are integers from 0 to 2. feedbackType is GOOD only when all three values are 2; otherwise it is NEEDS_IMPROVEMENT. "
+            "baseLocaleAnalogy is a Korean analogy for the same issue. "
+            "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
+            "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
+            "correctionReason is natural Korean. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
+            "detectedPatterns is internal-only. Include an item only when its evidence is an exact substring of the user utterance."
         ),
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"coreAsks":[{"ask":"short core ask","addressed":true,"evidence":"exact user substring","requiredPlaceholder":null}],"statedFacts":["exact user substring"],"languageCorrections":[{"evidence":"exact user substring","replacement":"corrected expression"}],"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}}. '
-            "Do not include messageId. "
-            "Use null, not an empty string, for missing core-ask evidence or requiredPlaceholder. Use [] when there is no language correction."
+            '{"messageId":1,"feedbackType":"GOOD or NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            "Use the JSON literal null for absent fields."
+        ),
+        "Detected Pattern Catalog:\n"
+        + json.dumps(
+            _detected_pattern_catalog_for_prompt(),
+            ensure_ascii=False,
+            separators=(",", ":"),
         ),
         f"Evaluation context type: {evaluation_context_type}",
     ])
 
 
-def _message_feedback_judgement_user_prompt(request: MessageFeedbackRequest) -> str:
-    return _message_feedback_user_prompt(request)
-
-
-def _message_feedback_judgement_repair_system_prompt(
+def _message_feedback_repair_system_prompt(
     evaluation_context_type: EvaluationContextType,
 ) -> str:
     return "\n\n".join([
-        _message_feedback_judgement_system_prompt(evaluation_context_type),
+        _message_feedback_system_prompt(evaluation_context_type),
         (
-            "Judgement Repair Task:\n"
-            "The previous judgement is invalid. Return one replacement that follows "
-            "the judgement schema, evidence grounding, contextFit invariant, and "
-            "[your ...] placeholder format exactly."
+            "Structure Repair Task:\n"
+            "The previous JSON did not satisfy the output schema. Return one complete replacement JSON object."
         ),
     ])
 
 
-def _message_feedback_judgement_repair_user_prompt(
+def _message_feedback_repair_user_prompt(
     request: MessageFeedbackRequest,
-    invalid_judgement: dict[str, Any] | None,
+    invalid_candidate: dict[str, Any] | None,
     error: Exception,
 ) -> str:
-    invalid_judgement_json = (
+    invalid_candidate_json = (
         json.dumps(
-            invalid_judgement,
+            invalid_candidate,
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        if invalid_judgement is not None
+        if invalid_candidate is not None
         else "null"
     )
     validation_reason = getattr(error, "reason", type(error).__name__)
     return (
-        f"{_message_feedback_judgement_user_prompt(request)}\n\n"
-        "Invalid judgement JSON:\n"
-        f"{invalid_judgement_json}\n\n"
+        f"{_message_feedback_user_prompt(request)}\n\n"
+        "Invalid candidate JSON:\n"
+        f"{invalid_candidate_json}\n\n"
         "Validation failure:\n"
         f"{validation_reason}"
     )
 
 
-def _message_feedback_copy_system_prompt(
+def _message_feedback_review_system_prompt(
     evaluation_context_type: EvaluationContextType,
 ) -> str:
     return "\n\n".join([
         (
             "Role:\n"
-            "You write learner-facing Korean feedback for a Korean learner's English utterance."
+            "You are the final reviewer for Korean learner English feedback."
         ),
         _shared_safety_policy(),
         (
-            "Copy Task:\n"
-            "The authoritative judgement supplied by the server is final. "
-            "Do not change its core asks, stated facts, scoreEvidence, or feedback type. "
-            "Write only the learner-facing fields that explain the same issue. "
-            "For NEEDS_IMPROVEMENT, preserve stated facts, intent, tense, and negation. "
-            "Retain at least one meaningful content word from the evidence of every answered core ask in correctionExpression. "
-            "For an identified language issue, use the approved replacement from languageCorrections and do not invent a different correction fact. "
-            "Do not replace a stated fact with a placeholder. "
-            "Include every required [your ...] placeholder from the judgement in correctionExpression. "
-            "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
-            "Do not add concrete content words that are absent from the authoritative core asks, evidence, stated facts, or approved language correction replacements. "
-            "Never fill an unanswered personal fact with a concrete example; use a concrete [your ...] placeholder instead. "
-            "Never use a placeholder in a grammatically or semantically incompatible position, such as a bill being a travel proof. "
-            "For contextFit=0, correctionExpression must answer the current evaluation context directly. "
-            "For contextFit=0, do not reuse a stated fact unless it directly answers a core ask. "
-            "Do not attach a placeholder directly to an uncertain or incomplete utterance. "
-            "Do not turn correctionExpression into a question for the counterpart. "
-            "Use a distinct placeholder for each different missing fact, and do not combine opposite meanings in one expression. "
-            "Use [your reason] with a grammatically compatible reason clause. "
-            "correctionExpression must be a complete English sentence. "
-            "When a fresh answer begins with a placeholder, add a complete sentence scaffold. "
-            "For a must-visit place and reason, use 'I recommend [your recommended place] because [your reason].' "
-            "For a negative answer followed by a missing dealbreaker, use 'No, but I can't stand [your dealbreaker].' "
-            "Do not treat capitalization, punctuation, a neutral filler, or a natural grammatical alternative alone as an issue. "
-            "If there is no genuine strength, use a neutral observation instead of praise. "
-            "correctionReason must be natural Korean and explain what to add or change without exposing internal generation rules."
+            "Review Task:\n"
+            "Review the candidate against the original request and return the complete final JSON object. You may correct feedbackType and scoreEvidence. "
+            "Preserve valid fields and rewrite any invalid field. Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
+            "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
+            "Preserve the user's meaning, intent, tense, and negation. When information needed to answer is unavailable, use a [your ...] placeholder in correctionExpression. "
+            "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
+            "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
+            "Do not make capitalization, punctuation, or a meaning-neutral filler the only improvement. Do not replace a natural grammar alternative only because you prefer another form. "
+            "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
+            "When the user answers only part of a multi-part question, help them complete the most important missing part. When the utterance is irrelevant or unclear, do not merely polish its grammar; show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
+            "Keep positive feedback factual and avoid formal praise for hostile, irrelevant, or unintelligible utterances. "
+            "Keep baseLocaleAnalogy, positiveFeedback, feedbackDetail, correctionExpression, and correctionReason focused on the same improvement. "
+            "Do not expose internal-policy language such as 없는 사실, 사실을 만들지, or 임의로 추측."
         ),
         (
             "Field Policy:\n"
@@ -2100,84 +1295,56 @@ def _message_feedback_copy_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"baseLocaleAnalogy":"...","positiveFeedback":"... or null","feedbackDetail":"... or null","correctionExpression":"... or null","correctionReason":"... or null","benchmarkMessage":"... or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
-            "Do not include messageId, feedbackType, or scoreEvidence."
+            '{"messageId":1,"feedbackType":"GOOD or NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            "Use the JSON literal null for absent fields."
         ),
         f"Evaluation context type: {evaluation_context_type}",
     ])
 
 
-def _message_feedback_copy_user_prompt(
+def _message_feedback_review_user_prompt(
     request: MessageFeedbackRequest,
-    judgement: MessageFeedbackJudgement,
+    candidate: MessageFeedbackEvaluation,
+    detected_patterns: Any,
 ) -> str:
-    feedback_type = _feedback_type_from_score_evidence(
-        judgement.scoreEvidence,
-    )
     return (
         f"{_message_feedback_user_prompt(request)}\n\n"
-        f"Locked feedback type: {feedback_type.value}\n\n"
-        f"{_locked_copy_requirements(feedback_type)}\n\n"
-        "Authoritative judgement:\n"
-        f"{judgement.model_dump_json(by_alias=True)}"
+        "Candidate JSON:\n"
+        f"{candidate.model_dump_json(by_alias=True)}\n\n"
+        "Candidate detected patterns:\n"
+        f"{json.dumps(detected_patterns, ensure_ascii=False, separators=(',', ':'))}"
     )
 
 
-def _locked_copy_requirements(feedback_type: FeedbackType) -> str:
-    if feedback_type == FeedbackType.GOOD:
-        return (
-            "Locked GOOD requirements: feedbackDetail must be a Korean explanation. "
-            "positiveFeedback, correctionExpression, and correctionReason must be the JSON literal null."
-        )
-    return (
-        "Locked NEEDS_IMPROVEMENT requirements: positiveFeedback, correctionExpression, and correctionReason are required. "
-        "feedbackDetail and benchmarkMessage must be the JSON literal null."
-    )
-
-
-def _message_feedback_copy_repair_system_prompt(
+def _message_feedback_review_repair_system_prompt(
     evaluation_context_type: EvaluationContextType,
 ) -> str:
     return "\n\n".join([
-        _message_feedback_copy_system_prompt(evaluation_context_type),
+        _message_feedback_review_system_prompt(evaluation_context_type),
         (
-            "Copy Repair Task:\n"
-            "The previous copy is invalid. Return a replacement that follows the authoritative judgement and output schema exactly. "
-            "Retain at least one meaningful content word from every answered core ask's evidence and include every required placeholder listed in the repair request. "
-            "Remove concrete content words that are not grounded in the authoritative judgement. "
-            "Do not change the judgement or add feedbackType or scoreEvidence."
+            "Structure Repair Task:\n"
+            "The previous final JSON did not satisfy the output schema. Return one complete replacement JSON object."
         ),
     ])
 
 
-def _message_feedback_copy_repair_user_prompt(
+def _message_feedback_review_repair_user_prompt(
     request: MessageFeedbackRequest,
-    judgement: MessageFeedbackJudgement,
-    invalid_copy: dict[str, Any] | None,
+    candidate: MessageFeedbackEvaluation,
+    detected_patterns: Any,
+    invalid_review: dict[str, Any] | None,
     error: Exception,
 ) -> str:
-    invalid_copy_json = (
-        json.dumps(invalid_copy, ensure_ascii=False, separators=(",", ":"))
-        if invalid_copy is not None
+    invalid_review_json = (
+        json.dumps(invalid_review, ensure_ascii=False, separators=(",", ":"))
+        if invalid_review is not None
         else "null"
-    )
-    required_placeholders = [
-        core_ask.requiredPlaceholder
-        for core_ask in judgement.coreAsks
-        if core_ask.requiredPlaceholder is not None
-    ]
-    required_placeholders_text = (
-        "\n".join(required_placeholders)
-        if required_placeholders
-        else "(none)"
     )
     validation_reason = getattr(error, "reason", type(error).__name__)
     return (
-        f"{_message_feedback_copy_user_prompt(request, judgement)}\n\n"
-        "Invalid copy JSON:\n"
-        f"{invalid_copy_json}\n\n"
-        "Required correction placeholders:\n"
-        f"{required_placeholders_text}\n\n"
+        f"{_message_feedback_review_user_prompt(request, candidate, detected_patterns)}\n\n"
+        "Invalid final JSON:\n"
+        f"{invalid_review_json}\n\n"
         "Validation failure:\n"
         f"{validation_reason}"
     )

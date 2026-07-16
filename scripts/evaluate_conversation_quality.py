@@ -121,8 +121,6 @@ def _evaluate_feedback_case(
 
     feedback = feedback_entry.feedback
     score_evidence = feedback_entry.score_evidence
-    judgement = feedback_entry.judgement
-    generated_copy = feedback_entry.generated_copy
     message_score = _message_score_from_evidence(score_evidence)
     feedback_type = feedback.feedbackType.value
     expected_feedback_type = case.get("expectedFeedbackType")
@@ -163,9 +161,6 @@ def _evaluate_feedback_case(
             if expected_feedback_type is not None
             else None
         ),
-        "judgement": (
-            judgement.model_dump(mode="json") if judgement is not None else None
-        ),
         "scoreEvidence": score_evidence.model_dump(),
         "expectedContextFit": expected_context_fit,
         "contextFitMatchesExpectation": (
@@ -173,7 +168,6 @@ def _evaluate_feedback_case(
             if expected_context_fit is not None
             else None
         ),
-        "lockedFeedbackType": feedback_type,
         "messageScore": message_score,
         "expectedMessageScoreRange": expected_score_range,
         "messageScoreWithinExpectation": (
@@ -186,14 +180,6 @@ def _evaluate_feedback_case(
         "feedbackDetail": feedback.feedbackDetail,
         "correctionExpression": feedback.correctionExpression,
         "correctionReason": feedback.correctionReason,
-        "generatedCopy": (
-            generated_copy.model_dump(mode="json")
-            if generated_copy is not None
-            else None
-        ),
-        "copyValidationPassed": generated_copy is not None,
-        "judgementWasRepaired": feedback_entry.judgement_was_repaired,
-        "copyWasRepaired": feedback_entry.copy_was_repaired,
         "finalFeedback": feedback.model_dump(mode="json"),
         "expectedFeedbackTypeMatched": (
             feedback_type == expected_feedback_type
@@ -227,11 +213,9 @@ def _feedback_evaluation_error_result(
         "expectedFeedbackType": case.get("expectedFeedbackType"),
         "feedbackType": None,
         "feedbackTypeMatchesExpectation": False,
-        "judgement": None,
         "scoreEvidence": None,
         "expectedContextFit": case.get("expectedContextFit"),
         "contextFitMatchesExpectation": False,
-        "lockedFeedbackType": None,
         "messageScore": None,
         "expectedMessageScoreRange": case.get("expectedMessageScoreRange"),
         "messageScoreWithinExpectation": False,
@@ -240,10 +224,6 @@ def _feedback_evaluation_error_result(
         "feedbackDetail": None,
         "correctionExpression": None,
         "correctionReason": None,
-        "generatedCopy": None,
-        "copyValidationPassed": False,
-        "judgementWasRepaired": False,
-        "copyWasRepaired": False,
         "finalFeedback": None,
         "expectedFeedbackTypeMatched": False,
         "expectedScoreRangeMatched": False,

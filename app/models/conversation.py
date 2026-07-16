@@ -313,6 +313,22 @@ class MessageFeedbackData(BaseModel):
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
         return _optional_not_blank(value)
 
+    @field_validator("correctionExpression")
+    @classmethod
+    def correction_expression_placeholders_must_use_supported_format(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        placeholders = re.findall(r"\[[^\]]+\]", value)
+        if any(
+            re.fullmatch(r"\[your [a-z][a-z ]*\]", placeholder) is None
+            for placeholder in placeholders
+        ):
+            raise ValueError("correctionExpression placeholders must use [your ...] format")
+        return value
+
     @field_validator("correctionReason")
     @classmethod
     def correction_reason_must_not_expose_internal_policy(
@@ -362,127 +378,22 @@ class MessageFeedbackScoreEvidence(BaseModel):
     languageAccuracy: int = Field(strict=True, ge=0, le=2)
 
 
-class MessageFeedbackCoreAsk(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ask: str
-    addressed: bool
-    evidence: str | None = None
-    requiredPlaceholder: str | None = None
-
-    @field_validator("ask")
-    @classmethod
-    def ask_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
-
-    @field_validator("evidence", "requiredPlaceholder")
-    @classmethod
-    def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
-        return _optional_not_blank(value)
-
-    @model_validator(mode="after")
-    def evidence_and_placeholder_must_match_answer_status(self) -> Self:
-        if self.addressed:
-            if self.evidence is None:
-                raise ValueError("addressed core ask requires evidence")
-            if self.requiredPlaceholder is not None:
-                raise ValueError("addressed core ask must not require placeholder")
-            return self
-
-        if self.evidence is not None:
-            raise ValueError("unaddressed core ask must not include evidence")
-        if (
-            self.requiredPlaceholder is not None
-            and re.fullmatch(r"\[your [a-z][a-z ]*\]", self.requiredPlaceholder) is None
-        ):
-            raise ValueError("requiredPlaceholder must use [your ...] format")
-        return self
-
-
-class MessageFeedbackLanguageCorrection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    evidence: str
-    replacement: str
-
-    @field_validator("evidence", "replacement")
-    @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
-
-
-class MessageFeedbackJudgement(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    messageId: int | None = Field(default=None, gt=0)
-    coreAsks: list[MessageFeedbackCoreAsk] = Field(min_length=1)
-    statedFacts: list[str]
-    languageCorrections: list[MessageFeedbackLanguageCorrection]
+class MessageFeedbackEvaluation(MessageFeedbackData):
     scoreEvidence: MessageFeedbackScoreEvidence
 
-    @field_validator("statedFacts")
-    @classmethod
-    def stated_facts_must_not_be_blank(cls, value: list[str]) -> list[str]:
-        for fact in value:
-            _validate_not_blank(fact)
-        return value
-
     @model_validator(mode="after")
-    def language_corrections_must_match_accuracy(self) -> Self:
-        if self.scoreEvidence.languageAccuracy == 2:
-            if self.languageCorrections:
-                raise ValueError(
-                    "perfect languageAccuracy must not include languageCorrections",
-                )
-            return self
-        if not self.languageCorrections:
-            raise ValueError(
-                "lower languageAccuracy requires languageCorrections",
+    def score_evidence_must_match_feedback_type(self) -> Self:
+        all_scores_are_max = all(
+            score == 2
+            for score in (
+                self.scoreEvidence.contextFit,
+                self.scoreEvidence.clarity,
+                self.scoreEvidence.languageAccuracy,
             )
+        )
+        if (self.feedbackType == FeedbackType.GOOD) != all_scores_are_max:
+            raise ValueError("scoreEvidence must match feedbackType")
         return self
-
-
-class MessageFeedbackCopy(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    messageId: int | None = Field(default=None, gt=0)
-    baseLocaleAnalogy: str
-    positiveFeedback: str | None = None
-    feedbackDetail: str | None = None
-    correctionExpression: str | None = None
-    correctionReason: str | None = None
-    benchmarkMessage: str | None = None
-
-    @field_validator("baseLocaleAnalogy")
-    @classmethod
-    def base_locale_analogy_must_not_be_blank_or_framed(cls, value: str) -> str:
-        return _validate_not_blank(_strip_base_locale_analogy_framing(value))
-
-    @field_validator(
-        "positiveFeedback",
-        "feedbackDetail",
-        "correctionExpression",
-        "correctionReason",
-        "benchmarkMessage",
-    )
-    @classmethod
-    def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
-        return _optional_not_blank(value)
-
-    @field_validator("correctionReason")
-    @classmethod
-    def correction_reason_must_not_expose_internal_policy(
-        cls,
-        value: str | None,
-    ) -> str | None:
-        if value is not None and any(
-            marker in value
-            for marker in ("없는 사실", "사실을 만들지", "임의로 추측")
-        ):
-            raise ValueError(
-                "correctionReason must not expose internal generation policy",
-            )
-        return value
 
 
 class SessionFeedbackRequest(BaseModel):

@@ -13,9 +13,7 @@ from app.core.config import Settings
 from app.conversation.application.next_message_service import AiResponseInvalidError
 from app.models.conversation import (
     FeedbackStatus,
-    MessageFeedbackCopy,
     MessageFeedbackData,
-    MessageFeedbackJudgement,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
 )
@@ -272,30 +270,6 @@ class QualityEvaluationTests(unittest.TestCase):
             clarity=2,
             languageAccuracy=2,
         )
-        judgement = MessageFeedbackJudgement(
-            messageId=2001,
-            coreAsks=[
-                {
-                    "ask": "accept the movie suggestion",
-                    "addressed": True,
-                    "evidence": "Yeah, sounds good to me.",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            statedFacts=["Yeah, sounds good to me."],
-            languageCorrections=[],
-            scoreEvidence=score_evidence,
-        )
-        generated_copy = MessageFeedbackCopy(
-            messageId=2001,
-            baseLocaleAnalogy='"그래, 좋아"라고 자연스럽게 동의하는 것과 같아요.',
-            positiveFeedback=None,
-            feedbackDetail="친구의 제안에 자연스럽게 동의했어요.",
-            correctionExpression=None,
-            correctionReason=None,
-            benchmarkMessage=None,
-        )
-
         with (
             patch(
                 "scripts.evaluate_conversation_quality.generate_message_feedback",
@@ -307,10 +281,6 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
-                        judgement=judgement,
-                        generated_copy=generated_copy,
-                        judgement_was_repaired=True,
-                        copy_was_repaired=False,
                     ),
                 ],
             ),
@@ -325,19 +295,8 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["feedbackType"], "GOOD")
         self.assertEqual(results[0]["expectedFeedbackType"], "GOOD")
         self.assertTrue(results[0]["feedbackTypeMatchesExpectation"])
-        self.assertEqual(
-            results[0]["judgement"]["coreAsks"][0]["evidence"],
-            "Yeah, sounds good to me.",
-        )
-        self.assertEqual(results[0]["lockedFeedbackType"], "GOOD")
         self.assertEqual(results[0]["expectedContextFit"], 2)
         self.assertTrue(results[0]["contextFitMatchesExpectation"])
-        self.assertTrue(results[0]["copyValidationPassed"])
-        self.assertTrue(results[0]["judgementWasRepaired"])
-        self.assertEqual(
-            results[0]["generatedCopy"]["feedbackDetail"],
-            "친구의 제안에 자연스럽게 동의했어요.",
-        )
         self.assertEqual(
             results[0]["finalFeedback"]["feedbackType"],
             "GOOD",
@@ -377,36 +336,6 @@ class QualityEvaluationTests(unittest.TestCase):
             clarity=2,
             languageAccuracy=2,
         )
-        judgement = MessageFeedbackJudgement(
-            messageId=2001,
-            coreAsks=[
-                {
-                    "ask": "introduce yourself",
-                    "addressed": True,
-                    "evidence": "Sangmin",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "share a hobby",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your hobby]",
-                },
-            ],
-            statedFacts=["Sangmin"],
-            languageCorrections=[],
-            scoreEvidence=score_evidence,
-        )
-        generated_copy = MessageFeedbackCopy(
-            messageId=2001,
-            baseLocaleAnalogy='"이름만 말하고 소개는 덧붙이지 않았어요"라고 답하는 것과 같아요.',
-            positiveFeedback="이름을 자연스럽게 소개한 점은 좋아요.",
-            feedbackDetail=None,
-            correctionExpression="Hi, my name is Sangmin. I enjoy [your hobby].",
-            correctionReason="[your hobby]에 평소 좋아하는 활동을 넣어 소개를 완성해 보세요.",
-            benchmarkMessage=None,
-        )
-
         with (
             patch(
                 "scripts.evaluate_conversation_quality.generate_message_feedback",
@@ -418,10 +347,6 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
-                        judgement=judgement,
-                        generated_copy=generated_copy,
-                        judgement_was_repaired=False,
-                        copy_was_repaired=False,
                     ),
                 ],
             ),
@@ -501,6 +426,4 @@ class QualityEvaluationTests(unittest.TestCase):
 
         self.assertEqual(results[0]["validationError"], "AiResponseInvalidError")
         self.assertEqual(results[0]["validationReason"], "test_validation_reason")
-        self.assertFalse(results[0]["judgementWasRepaired"])
-        self.assertFalse(results[0]["copyValidationPassed"])
         self.assertIsNone(results[0]["finalFeedback"])

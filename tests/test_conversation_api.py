@@ -231,122 +231,11 @@ def partial_hobby_feedback(message_id=1001):
     }
 
 
-def message_feedback_judgement(
-    message_id=1001,
-    *,
-    context_fit=2,
-    clarity=2,
-    language_accuracy=2,
-    core_asks=None,
-    stated_facts=None,
-    language_corrections=...,
-):
-    resolved_stated_facts = ["jogging"] if stated_facts is None else stated_facts
-    resolved_language_corrections = language_corrections
-    if language_corrections is ...:
-        resolved_language_corrections = (
-            [
-                {
-                    "evidence": resolved_stated_facts[0],
-                    "replacement": resolved_stated_facts[0],
-                },
-            ]
-            if language_accuracy < 2 and resolved_stated_facts
-            else []
-        )
-    return {
-        "messageId": message_id,
-        "coreAsks": (
-            [
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-            ]
-            if core_asks is None
-            else core_asks
-        ),
-        "statedFacts": resolved_stated_facts,
-        "languageCorrections": resolved_language_corrections,
-        "scoreEvidence": {
-            "contextFit": context_fit,
-            "clarity": clarity,
-            "languageAccuracy": language_accuracy,
-        },
-    }
-
-
-def message_feedback_copy(message_id=1001):
-    return {
-        "messageId": message_id,
-        "baseLocaleAnalogy": '"조깅은 좋아하지만 왜 좋은지는 말 안 한 것과 같아요.',
-        "positiveFeedback": "좋아하는 활동을 분명하게 말했어요.",
-        "feedbackDetail": None,
-        "correctionExpression": "I like jogging because [your reason].",
-        "correctionReason": "좋아하는 이유가 빠졌어요. [your reason]에 이유를 넣어 보세요.",
-        "benchmarkMessage": None,
-        "detectedPatterns": [],
-    }
-
 
 def message_feedback_responses(feedback, user_message):
-    score_evidence = feedback["scoreEvidence"]
-    correction_expression = feedback.get("correctionExpression") or ""
-    placeholder_match = re.search(r"\[your [a-z][a-z ]*\]", correction_expression)
-    placeholder = placeholder_match.group(0) if placeholder_match else None
-    context_fit = score_evidence["contextFit"]
-    if context_fit == 2:
-        core_asks = [
-            {
-                "ask": "respond to the evaluation context",
-                "addressed": True,
-                "evidence": user_message,
-                "requiredPlaceholder": None,
-            },
-        ]
-    elif context_fit == 1:
-        core_asks = [
-            {
-                "ask": "answer one part of the evaluation context",
-                "addressed": True,
-                "evidence": user_message,
-                "requiredPlaceholder": None,
-            },
-            {
-                "ask": "answer the remaining part of the evaluation context",
-                "addressed": False,
-                "evidence": None,
-                "requiredPlaceholder": placeholder,
-            },
-        ]
-    else:
-        core_asks = [
-            {
-                "ask": "respond to the evaluation context",
-                "addressed": False,
-                "evidence": None,
-                "requiredPlaceholder": placeholder,
-            },
-        ]
-    judgement = {
-        "messageId": feedback["messageId"],
-        "coreAsks": core_asks,
-        "statedFacts": [user_message],
-        "languageCorrections": (
-            [{"evidence": user_message, "replacement": user_message}]
-            if score_evidence["languageAccuracy"] < 2
-            else []
-        ),
-        "scoreEvidence": score_evidence,
-    }
-    copy = {
-        key: value
-        for key, value in feedback.items()
-        if key not in {"feedbackType", "scoreEvidence"}
-    }
-    return [json.dumps(judgement), json.dumps(copy)]
+    del user_message
+    content = json.dumps(feedback)
+    return [content, content]
 
 
 def multiple_hobby_questions_payload():
@@ -757,1417 +646,136 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
-    def test_feedback_status_uses_frontend_contract_values(self):
+    def test_message_feedback_evaluation_rejects_type_and_score_mismatch(self):
+        payload = good_message_feedback()
+        payload["scoreEvidence"] = {
+            "contextFit": 2,
+            "clarity": 2,
+            "languageAccuracy": 1,
+        }
+
+        with self.assertRaises(ValueError):
+            conversation_models.MessageFeedbackEvaluation.model_validate(payload)
+
+    def test_message_feedback_rejects_malformed_placeholder(self):
+        payload = needs_improvement_message_feedback(1001)
+        payload["correctionExpression"] = "I like jogging because [my reason]."
+
+        with self.assertRaises(ValueError):
+            conversation_models.MessageFeedbackEvaluation.model_validate(payload)
+
+    def test_message_feedback_uses_reviewed_full_candidate(self):
+        first = needs_improvement_message_feedback(1001)
+        first["scoreEvidence"] = {
+            "contextFit": 1,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        }
+        reviewed = good_message_feedback(1001)
+        reviewed["scoreEvidence"] = {
+            "contextFit": 2,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        }
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(first), json.dumps(reviewed)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertEqual(
-            {status.value for status in FeedbackStatus},
-            {"PREPARING", "COMPLETED", "FAILED"},
+            get_cached_message_feedback(100, 1001).feedbackType.value,
+            "GOOD",
         )
 
-    def test_message_feedback_judgement_rejects_invalid_core_ask_contracts(self):
-        judgement_model = getattr(
-            conversation_models,
-            "MessageFeedbackJudgement",
-            None,
-        )
-        self.assertIsNotNone(judgement_model)
-
-        invalid_cases = [
-            ("empty core asks", message_feedback_judgement(core_asks=[])),
-            (
-                "answered without evidence",
-                message_feedback_judgement(
-                    core_asks=[
-                        {
-                            "ask": "say what activity you like",
-                            "addressed": True,
-                            "evidence": None,
-                            "requiredPlaceholder": None,
-                        },
-                    ],
-                ),
-            ),
-            (
-                "unanswered with evidence",
-                message_feedback_judgement(
-                    core_asks=[
-                        {
-                            "ask": "say why you like it",
-                            "addressed": False,
-                            "evidence": "because it is fun",
-                            "requiredPlaceholder": "[your reason]",
-                        },
-                    ],
-                ),
-            ),
-            (
-                "invalid placeholder",
-                message_feedback_judgement(
-                    core_asks=[
-                        {
-                            "ask": "say why you like it",
-                            "addressed": False,
-                            "evidence": None,
-                            "requiredPlaceholder": "[A reason]",
-                        },
-                    ],
-                ),
-            ),
-            (
-                "answered with placeholder",
-                message_feedback_judgement(
-                    core_asks=[
-                        {
-                            "ask": "say what activity you like",
-                            "addressed": True,
-                            "evidence": "jogging",
-                            "requiredPlaceholder": "[your hobby]",
-                        },
-                    ],
-                ),
-            ),
-            (
-                "non-integer score",
-                message_feedback_judgement(context_fit="2"),
-            ),
-        ]
-
-        for case_name, payload in invalid_cases:
-            with self.subTest(case_name=case_name):
-                with self.assertRaises(ValueError):
-                    judgement_model.model_validate(payload)
-
-    def test_message_feedback_judgement_requires_request_grounded_evidence_and_context_fit(self):
-        parser = getattr(
-            next_message_service,
-            "_parse_message_feedback_judgement",
-            None,
-        )
-        feedback_type_from_evidence = getattr(
-            next_message_service,
-            "_feedback_type_from_score_evidence",
-            None,
-        )
-        self.assertIsNotNone(parser)
-        self.assertIsNotNone(feedback_type_from_evidence)
-
-        request = MessageFeedbackRequest.model_validate(
-            multiple_hobby_questions_payload(),
-        )
-        partial_judgement = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
+    def test_message_feedback_repairs_only_invalid_candidate_structure(self):
+        invalid_candidate = good_message_feedback(1001)
+        invalid_candidate["positiveFeedback"] = "질문에 답한 점이 좋아요."
+        valid_feedback = good_message_feedback(1001)
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(invalid_candidate),
+                json.dumps(valid_feedback),
+                json.dumps(valid_feedback),
             ],
         )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
 
-        judgement = parser(partial_judgement, request)
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
 
-        self.assertEqual(judgement.scoreEvidence.contextFit, 1)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertIn(
+            "positiveFeedback must be null for GOOD",
+            fake_openai.completions.calls[1]["messages"][1]["content"],
+        )
         self.assertEqual(
-            feedback_type_from_evidence(judgement.scoreEvidence).value,
+            get_cached_message_feedback(100, 1001).feedbackType.value,
+            "GOOD",
+        )
+
+    def test_message_feedback_repairs_only_invalid_review_structure(self):
+        candidate = good_message_feedback(1001)
+        invalid_review = good_message_feedback(1001)
+        invalid_review.pop("scoreEvidence")
+        final_feedback = needs_improvement_message_feedback(1001)
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(candidate),
+                json.dumps(invalid_review),
+                json.dumps(final_feedback),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertEqual(
+            get_cached_message_feedback(100, 1001).feedbackType.value,
             "NEEDS_IMPROVEMENT",
         )
 
-        invalid_cases = [
-            (
-                "evidence outside user utterance",
-                message_feedback_judgement(
-                    context_fit=1,
-                    core_asks=[
-                        {
-                            "ask": "say what activity you like",
-                            "addressed": True,
-                            "evidence": "reading",
-                            "requiredPlaceholder": None,
-                        },
-                        {
-                            "ask": "say why you like it",
-                            "addressed": False,
-                            "evidence": None,
-                            "requiredPlaceholder": "[your reason]",
-                        },
-                    ],
-                ),
-            ),
-            (
-                "stated fact outside user utterance",
-                message_feedback_judgement(
-                    context_fit=1,
-                    core_asks=partial_judgement["coreAsks"],
-                    stated_facts=["relaxing"],
-                ),
-            ),
-            (
-                "partial answer marked complete",
-                message_feedback_judgement(
-                    context_fit=2,
-                    core_asks=partial_judgement["coreAsks"],
-                ),
-            ),
-        ]
-        for case_name, invalid_judgement in invalid_cases:
-            with self.subTest(case_name=case_name):
-                with self.assertRaises(next_message_service.AiResponseInvalidError):
-                    parser(invalid_judgement, request)
-
-    def test_message_feedback_server_assigns_request_message_id_when_llm_omits_it(self):
-        request = MessageFeedbackRequest.model_validate(
-            multiple_hobby_questions_payload(),
-        )
-        judgement_data = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-        judgement_data.pop("messageId")
-        copy_data = message_feedback_copy()
-        copy_data.pop("messageId")
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-        feedback, _, _ = next_message_service._parse_and_assemble_message_feedback_copy(
-            copy_data,
-            judgement,
-            request,
-        )
-
-        self.assertEqual(feedback.messageId, request.messageId)
-
-    def test_message_feedback_copy_reports_missing_placeholder_reason(self):
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=1,
-                core_asks=[
-                    {
-                        "ask": "say what activity you like",
-                        "addressed": True,
-                        "evidence": "jogging",
-                        "requiredPlaceholder": None,
-                    },
-                    {
-                        "ask": "say why you like it",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your reason]",
-                    },
-                ],
-            ),
-        )
-        feedback = conversation_models.MessageFeedbackData(
-            messageId=1001,
-            feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="좋아하는 활동만 말한 것과 같아요.",
-            positiveFeedback="좋아하는 활동을 말했어요.",
-            correctionExpression="I like jogging.",
-            correctionReason="좋아하는 이유도 덧붙여 보세요.",
-        )
-
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_copy_missing_placeholder",
-        ):
-            next_message_service._validate_message_feedback_copy(
-                judgement,
-                feedback,
-            )
-
-    def test_message_feedback_judgement_requires_language_corrections(self):
-        judgement_data = message_feedback_judgement(language_accuracy=1)
-        judgement_data["languageCorrections"] = []
-
-        with self.assertRaises(ValueError):
-            conversation_models.MessageFeedbackJudgement.model_validate(
-                judgement_data,
-            )
-
-    def test_message_feedback_judgement_rejects_corrections_for_perfect_accuracy(self):
-        judgement_data = message_feedback_judgement(language_accuracy=2)
-        judgement_data["languageCorrections"] = [
-            {"evidence": "jogging", "replacement": "go jogging"},
-        ]
-
-        with self.assertRaises(ValueError):
-            conversation_models.MessageFeedbackJudgement.model_validate(
-                judgement_data,
-            )
-
-    def test_message_feedback_judgement_rejects_ungrounded_language_correction(self):
-        request = MessageFeedbackRequest.model_validate(
-            multiple_hobby_questions_payload(),
-        )
-        judgement_data = message_feedback_judgement(
-            context_fit=1,
-            language_accuracy=1,
-            language_corrections=[
-                {"evidence": "swimming", "replacement": "go swimming"},
-            ],
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_judgement_language_correction_evidence",
-        ):
-            next_message_service._parse_message_feedback_judgement(
-                judgement_data,
-                request,
-            )
-
-    def test_message_feedback_judgement_ignores_natural_preference_alternative(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = "What sport do you like?"
-        payload["userMessage"] = "I like to watch Formula One."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            language_accuracy=1,
-            language_corrections=[
-                {
-                    "evidence": "like to watch Formula One",
-                    "replacement": "like watching Formula One",
-                },
-            ],
-            core_asks=[
-                {
-                    "ask": "sport the user likes",
-                    "addressed": True,
-                    "evidence": "Formula One",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["I like to watch Formula One"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
-        self.assertEqual(judgement.languageCorrections, [])
-
-    def test_message_feedback_judgement_ignores_natural_aircon_alternative(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "Do you have proof of your travel plans?"
-        )
-        payload["userMessage"] = "My aircon bill is very high."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=0,
-            language_accuracy=1,
-            language_corrections=[
-                {"evidence": "aircon", "replacement": "air conditioning"},
-            ],
-            core_asks=[
-                {
-                    "ask": "proof of travel plans",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your travel proof]",
-                },
-            ],
-            stated_facts=["My aircon bill is very high"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
-        self.assertEqual(judgement.languageCorrections, [])
-
-    def test_message_feedback_judgement_ignores_natural_reading_alternative(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What do you love about reading?"
-        )
-        payload["userMessage"] = "I like reading a book. This is so cool."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            language_accuracy=1,
-            language_corrections=[
-                {"evidence": "a book", "replacement": "books"},
-            ],
-            core_asks=[
-                {
-                    "ask": "what the user loves about reading",
-                    "addressed": True,
-                    "evidence": "This is so cool",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["I like reading a book", "This is so cool"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
-        self.assertEqual(judgement.languageCorrections, [])
-
-    def test_message_feedback_judgement_restores_missing_age_correction(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = "Tell me about yourself."
-        payload["userMessage"] = "Hi, my name is sandman. I'm 25 years."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            language_accuracy=2,
-            language_corrections=[],
-            core_asks=[
-                {
-                    "ask": "tell me about yourself",
-                    "addressed": True,
-                    "evidence": "I'm 25 years",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["my name is sandman", "I'm 25 years"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 1)
-        self.assertEqual(
-            [
-                correction.model_dump()
-                for correction in judgement.languageCorrections
-            ],
-            [
-                {
-                    "evidence": "I'm 25 years",
-                    "replacement": "I'm 25 years old",
-                },
-            ],
-        )
-
-    def test_message_feedback_judgement_ignores_capitalization_only_correction(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What's your name? Tell me a little about yourself!"
-        )
-        payload["userMessage"] = "My name is junseo, I like pizza."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            language_accuracy=1,
-            language_corrections=[
-                {"evidence": "junseo", "replacement": "Junseo"},
-                {"evidence": "I like pizza", "replacement": "I like pizza."},
-            ],
-            core_asks=[
-                {
-                    "ask": "name and information about the user",
-                    "addressed": True,
-                    "evidence": "My name is junseo, I like pizza",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["My name is junseo", "I like pizza"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
-        self.assertEqual(judgement.languageCorrections, [])
-
-    def test_message_feedback_judgement_keeps_meaningful_language_correction(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What's your name? Tell me a little about yourself!"
-        )
-        payload["userMessage"] = "Hi, My name is sandman. I'm 25 years."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            language_accuracy=1,
-            language_corrections=[
-                {
-                    "evidence": "Hi, My name is",
-                    "replacement": "Hi, my name is",
-                },
-                {
-                    "evidence": "I'm 25 years",
-                    "replacement": "I'm 25 years old",
-                },
-            ],
-            core_asks=[
-                {
-                    "ask": "name and information about the user",
-                    "addressed": True,
-                    "evidence": "My name is sandman. I'm 25 years",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["My name is sandman", "I'm 25 years"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 1)
-        self.assertEqual(
-            [correction.evidence for correction in judgement.languageCorrections],
-            ["I'm 25 years"],
-        )
-
-    def test_message_feedback_judgement_rejects_bare_evaluation_as_why_reason(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "Tell me your must-visit spot and why I should go."
-        )
-        payload["userMessage"] = "Busan is best."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=2,
-            language_accuracy=1,
-            core_asks=[
-                {
-                    "ask": "recommended place",
-                    "addressed": True,
-                    "evidence": "Busan",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "why the friend should go",
-                    "addressed": True,
-                    "evidence": "best",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["Busan", "best"],
-        )
-
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_judgement_bare_reason",
-        ):
-            next_message_service._parse_message_feedback_judgement(
-                judgement_data,
-                request,
-            )
-
-    def test_message_feedback_judgement_allows_evaluation_for_what_is_liked(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What are you into? What do you love about it?"
-        )
-        payload["userMessage"] = "I like reading a book. This is so cool."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=2,
-            language_accuracy=1,
-            core_asks=[
-                {
-                    "ask": "what activity the user likes",
-                    "addressed": True,
-                    "evidence": "reading a book",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "what the user loves about it",
-                    "addressed": True,
-                    "evidence": "This is so cool",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["reading a book", "This is so cool"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
-
-    def test_message_feedback_judgement_requires_lower_clarity_for_vague_evaluation(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What do you like about reading?"
-        )
-        payload["userMessage"] = "I like reading a book. This is so cool."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=2,
-            clarity=2,
-            language_accuracy=2,
-            core_asks=[
-                {
-                    "ask": "what do you like about reading",
-                    "addressed": True,
-                    "evidence": "This is so cool",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["I like reading a book.", "This is so cool."],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
-        self.assertEqual(judgement.scoreEvidence.clarity, 1)
-        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
-
-    def test_message_feedback_judgement_restores_omitted_reason_question(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What are you into? What do you love about it?"
-        )
-        payload["userMessage"] = (
-            "I like to watch Formula One. Do you know Formula One?"
-        )
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=2,
-            language_accuracy=2,
-            core_asks=[
-                {
-                    "ask": "what are you into",
-                    "addressed": True,
-                    "evidence": "I like to watch Formula One",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=[
-                "I like to watch Formula One",
-                "Do you know Formula One?",
-            ],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(len(judgement.coreAsks), 2)
-        self.assertFalse(judgement.coreAsks[1].addressed)
-        self.assertEqual(judgement.coreAsks[1].requiredPlaceholder, "[your reason]")
-        self.assertEqual(judgement.scoreEvidence.contextFit, 1)
-
-    def test_message_feedback_copy_excludes_unrelated_facts_when_context_fit_is_zero(self):
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=0,
-                language_accuracy=1,
-                language_corrections=[
-                    {"evidence": "is boom", "replacement": "is huge"},
-                ],
-                core_asks=[
-                    {
-                        "ask": "proof of travel during July",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your travel proof]",
-                    },
-                ],
-                stated_facts=["My aircon bill is boom"],
-            ),
-        )
-        unrelated_feedback = conversation_models.MessageFeedbackData(
-            messageId=1001,
-            feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="다른 이야기를 한 것과 같아요.",
-            positiveFeedback="요금 문제를 설명했어요.",
-            correctionExpression=(
-                "My aircon bill is boom, but I can provide "
-                "[your travel proof]."
-            ),
-            correctionReason="여행 증빙을 말해 보세요.",
-        )
-
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_copy_unsupported_content",
-        ):
-            next_message_service._validate_message_feedback_copy(
-                judgement,
-                unrelated_feedback,
-            )
-
-        grounded_feedback = unrelated_feedback.model_copy(
-            update={
-                "correctionExpression": (
-                    "I can provide [your travel proof]."
-                ),
-            },
-        )
-        next_message_service._validate_message_feedback_copy(
-            judgement,
-            grounded_feedback,
-        )
-
-    def test_message_feedback_copy_allows_age_and_introduction_scaffolds(self):
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=1,
-                core_asks=[
-                    {
-                        "ask": "name",
-                        "addressed": True,
-                        "evidence": "My name is sandman",
-                        "requiredPlaceholder": None,
-                    },
-                    {
-                        "ask": "tell me a little about yourself",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your hobby]",
-                    },
-                ],
-                stated_facts=["My name is sandman", "I'm 25 years"],
-            ),
-        )
-        feedback = conversation_models.MessageFeedbackData(
-            messageId=1001,
-            feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="이름과 나이를 먼저 말한 것과 같아요.",
-            positiveFeedback="이름과 나이를 말했어요.",
-            correctionExpression=(
-                "Hi, my name is sandman. I'm 25 years old, and I like "
-                "[your hobby]."
-            ),
-            correctionReason="취미를 덧붙여 자기소개를 완성해 보세요.",
-        )
-
-        next_message_service._validate_message_feedback_copy(
-            judgement,
-            feedback,
-        )
-
-    def test_message_feedback_copy_allows_only_approved_replacement_words(self):
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=2,
-                language_accuracy=1,
-                language_corrections=[
-                    {"evidence": "is boom", "replacement": "is huge"},
-                ],
-                core_asks=[
-                    {
-                        "ask": "describe the aircon bill",
-                        "addressed": True,
-                        "evidence": "My aircon bill is boom",
-                        "requiredPlaceholder": None,
-                    },
-                ],
-                stated_facts=["My aircon bill is boom"],
-            ),
-        )
-        feedback = conversation_models.MessageFeedbackData(
-            messageId=1001,
-            feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="요금이 크게 나왔다고 말한 것과 같아요.",
-            positiveFeedback="에어컨 요금 상태를 설명했어요.",
-            correctionExpression="My aircon bill is huge.",
-            correctionReason="boom 대신 huge를 쓰면 의미가 자연스러워요.",
-        )
-
-        next_message_service._validate_message_feedback_copy(
-            judgement,
-            feedback,
-        )
-
-        unsupported_feedback = feedback.model_copy(
-            update={"correctionExpression": "My aircon bill is expensive."},
-        )
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_copy_unsupported_content",
-        ):
-            next_message_service._validate_message_feedback_copy(
-                judgement,
-                unsupported_feedback,
-            )
-
-    def test_message_feedback_judgement_normalizes_missed_evaluation_answer(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What do you like about reading?"
-        )
-        payload["userMessage"] = "I like reading a book. This is so cool."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=0,
-            language_accuracy=1,
-            core_asks=[
-                {
-                    "ask": "what do you like about reading",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-            stated_facts=["I like reading a book.", "This is so cool."],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertTrue(judgement.coreAsks[0].addressed)
-        self.assertEqual(judgement.coreAsks[0].evidence, "This is so cool")
-        self.assertIsNone(judgement.coreAsks[0].requiredPlaceholder)
-        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
-        self.assertEqual(judgement.scoreEvidence.clarity, 1)
-
-    def test_message_feedback_judgement_normalizes_missed_self_introduction(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "What's your name? Tell me a little about yourself!"
-        )
-        payload["userMessage"] = "My name is junseo, I like pizza."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=1,
-            language_accuracy=2,
-            core_asks=[
-                {
-                    "ask": "name",
-                    "addressed": True,
-                    "evidence": "My name is junseo",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "tell me a little about yourself",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your hobby]",
-                },
-            ],
-            stated_facts=["My name is junseo", "I like pizza"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertTrue(judgement.coreAsks[1].addressed)
-        self.assertEqual(judgement.coreAsks[1].evidence, "I like pizza")
-        self.assertIsNone(judgement.coreAsks[1].requiredPlaceholder)
-        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
-
-    def test_message_feedback_judgement_infers_cleaning_placeholders(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "How do you split cleaning, and what worked before?"
-        )
-        payload["userMessage"] = "I don't know."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=0,
-            core_asks=[
-                {
-                    "ask": "how do you usually split cleaning stuff",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your cleaning split]",
-                },
-                {
-                    "ask": "what worked for you before",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your experience]",
-                },
-            ],
-            stated_facts=["I don't know"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(
-            [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
-            ["[your cleaning preference]", "[your previous cleaning routine]"],
-        )
-
-    def test_message_feedback_judgement_normalizes_explicit_non_answer(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "How do you split cleaning, and what worked before?"
-        )
-        payload["userMessage"] = "I don't know."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=1,
-            language_accuracy=2,
-            core_asks=[
-                {
-                    "ask": "how do you split cleaning",
-                    "addressed": True,
-                    "evidence": "I don't know",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "what worked before",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your previous cleaning routine]",
-                },
-            ],
-            stated_facts=["I don't know"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(judgement.scoreEvidence.contextFit, 0)
-        self.assertTrue(all(not core_ask.addressed for core_ask in judgement.coreAsks))
-        self.assertEqual(
-            [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
-            ["[your cleaning preference]", "[your previous cleaning routine]"],
-        )
-
-    def test_message_feedback_judgement_restores_cleaning_asks_for_non_answer(self):
-        payload = valid_message_feedback_payload()
-        payload["evaluationContext"]["content"] = (
-            "How do you split cleaning, and what worked before?"
-        )
-        payload["userMessage"] = "I don't know."
-        request = MessageFeedbackRequest.model_validate(payload)
-        judgement_data = message_feedback_judgement(
-            context_fit=1,
-            language_accuracy=2,
-            core_asks=[
-                {
-                    "ask": "preferred household arrangement",
-                    "addressed": True,
-                    "evidence": "I don't know",
-                    "requiredPlaceholder": None,
-                },
-            ],
-            stated_facts=["I don't know"],
-        )
-
-        judgement = next_message_service._parse_message_feedback_judgement(
-            judgement_data,
-            request,
-        )
-
-        self.assertEqual(len(judgement.coreAsks), 2)
-        self.assertEqual(
-            [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
-            ["[your cleaning preference]", "[your previous cleaning routine]"],
-        )
-        self.assertEqual(judgement.scoreEvidence.contextFit, 0)
-
-        copy_data = message_feedback_copy()
-        feedback, _, _ = (
-            next_message_service._parse_and_assemble_message_feedback_copy(
-                copy_data,
-                judgement,
-                request,
-            )
-        )
-        self.assertEqual(
-            feedback.correctionExpression,
-            (
-                "I usually split the cleaning by [your cleaning preference], "
-                "and [your previous cleaning routine] worked for me before."
-            ),
-        )
-
-    def test_message_feedback_copy_allows_placeholder_label_as_scaffold(self):
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=1,
-                core_asks=[
-                    {
-                        "ask": "name",
-                        "addressed": True,
-                        "evidence": "My name is sandman",
-                        "requiredPlaceholder": None,
-                    },
-                    {
-                        "ask": "tell me a little about yourself",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your hobby]",
-                    },
-                ],
-                stated_facts=["My name is sandman", "I'm 25 years"],
-            ),
-        )
-        feedback = conversation_models.MessageFeedbackData(
-            messageId=1001,
-            feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="이름과 나이만 말한 것과 같아요.",
-            positiveFeedback="이름과 나이를 말했어요.",
-            correctionExpression=(
-                "Hi, my name is sandman. I'm 25 years old, and my hobby is "
-                "[your hobby]."
-            ),
-            correctionReason="취미를 덧붙여 자기소개를 완성해 보세요.",
-        )
-
-        next_message_service._validate_message_feedback_copy(
-            judgement,
-            feedback,
-        )
-
-    def test_message_feedback_copy_uses_safe_recommendation_template(self):
-        request_payload = valid_message_feedback_payload()
-        request_payload["evaluationContext"]["content"] = (
-            "Tell me your must-visit spots and why I should go."
-        )
-        request_payload["userMessage"] = "I don't know."
-        request = MessageFeedbackRequest.model_validate(request_payload)
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=0,
-                core_asks=[
-                    {
-                        "ask": "must-visit spots",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your recommended place]",
-                    },
-                    {
-                        "ask": "why I should go",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your reason]",
-                    },
-                ],
-                stated_facts=["I don't know"],
-            ),
-        )
-        copy_data = message_feedback_copy()
-        copy_data["correctionExpression"] = (
-            "I don't know [your recommended place] because [your reason]."
-        )
-
-        feedback, _, _ = (
-            next_message_service._parse_and_assemble_message_feedback_copy(
-                copy_data,
-                judgement,
-                request,
-            )
-        )
-
-        self.assertEqual(
-            feedback.correctionExpression,
-            "I recommend [your recommended place] because [your reason].",
-        )
-
-    def test_message_feedback_copy_uses_safe_travel_proof_template(self):
-        request_payload = valid_message_feedback_payload()
-        request_payload["evaluationContext"]["content"] = (
-            "Do you have proof of your travel plans?"
-        )
-        request_payload["userMessage"] = "My aircon bill is boom."
-        request = MessageFeedbackRequest.model_validate(request_payload)
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=0,
-                language_accuracy=1,
-                language_corrections=[
-                    {"evidence": "boom", "replacement": "high"},
-                ],
-                core_asks=[
-                    {
-                        "ask": "proof of travel plans",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your travel proof]",
-                    },
-                ],
-                stated_facts=["My aircon bill is boom"],
-            ),
-        )
-        copy_data = message_feedback_copy()
-        copy_data["correctionExpression"] = (
-            "My aircon bill is high, but I have [your travel proof]."
-        )
-
-        feedback, _, _ = (
-            next_message_service._parse_and_assemble_message_feedback_copy(
-                copy_data,
-                judgement,
-                request,
-            )
-        )
-
-        self.assertEqual(
-            feedback.correctionExpression,
-            "I have [your travel proof].",
-        )
-
-    def test_message_feedback_copy_uses_grounded_travel_ticket_template(self):
-        request_payload = valid_message_feedback_payload()
-        request_payload["evaluationContext"]["content"] = (
-            "Do you have proof that you were traveling?"
-        )
-        request_payload["userMessage"] = (
-            "I don't have anything, but ticket for my airplane."
-        )
-        request = MessageFeedbackRequest.model_validate(request_payload)
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=2,
-                clarity=1,
-                language_accuracy=1,
-                language_corrections=[
-                    {
-                        "evidence": "ticket for my airplane",
-                        "replacement": "an airplane ticket",
-                    },
-                ],
-                core_asks=[
-                    {
-                        "ask": "proof that the user was traveling",
-                        "addressed": True,
-                        "evidence": (
-                            "I don't have anything, but ticket for my airplane"
-                        ),
-                        "requiredPlaceholder": None,
-                    },
-                ],
-                stated_facts=[
-                    "I don't have anything",
-                    "ticket for my airplane",
-                ],
-            ),
-        )
-        copy_data = message_feedback_copy()
-        copy_data["correctionExpression"] = "I have an airplane ticket."
-
-        feedback, _, _ = (
-            next_message_service._parse_and_assemble_message_feedback_copy(
-                copy_data,
-                judgement,
-                request,
-            )
-        )
-
-        self.assertEqual(
-            feedback.correctionExpression,
-            "I don't have anything, but I have an airplane ticket.",
-        )
-
-    def test_message_feedback_copy_preserves_addressed_evidence_words(self):
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=2,
-                language_accuracy=1,
-                core_asks=[
-                    {
-                        "ask": "what the user loves about reading",
-                        "addressed": True,
-                        "evidence": "This is so cool",
-                        "requiredPlaceholder": None,
-                    },
-                ],
-                stated_facts=["This is so cool"],
-            ),
-        )
-        unsupported_feedback = conversation_models.MessageFeedbackData(
-            messageId=1001,
-            feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="좋아하는 이유를 바꿔 말한 것과 같아요.",
-            positiveFeedback="독서를 좋아한다고 말했어요.",
-            correctionExpression=(
-                "I like reading because it is so cool and helps me relax."
-            ),
-            correctionReason="표현을 자연스럽게 연결해 보세요.",
-        )
-
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_copy_unsupported_content",
-        ):
-            next_message_service._validate_message_feedback_copy(
-                judgement,
-                unsupported_feedback,
-            )
-
-        supported_feedback = unsupported_feedback.model_copy(
-            update={
-                "correctionExpression": "I like reading because it is so cool.",
-            },
-        )
-        next_message_service._validate_message_feedback_copy(
-            judgement,
-            supported_feedback,
-        )
-
-    def test_message_feedback_copy_uses_vague_reason_placeholder_template(self):
-        request_payload = valid_message_feedback_payload()
-        request_payload["evaluationContext"]["content"] = (
-            "What do you love about reading?"
-        )
-        request_payload["userMessage"] = (
-            "I like reading a book. This is so cool."
-        )
-        request = MessageFeedbackRequest.model_validate(request_payload)
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=2,
-                clarity=1,
-                language_accuracy=2,
-                language_corrections=[],
-                core_asks=[
-                    {
-                        "ask": "what the user loves about reading",
-                        "addressed": True,
-                        "evidence": "This is so cool",
-                        "requiredPlaceholder": None,
-                    },
-                ],
-                stated_facts=["I like reading a book", "This is so cool"],
-            ),
-        )
-        copy_data = message_feedback_copy()
-        copy_data["correctionExpression"] = (
-            "I like reading books. This is so cool."
-        )
-
-        feedback, _, _ = (
-            next_message_service._parse_and_assemble_message_feedback_copy(
-                copy_data,
-                judgement,
-                request,
-            )
-        )
-
-        self.assertEqual(
-            feedback.correctionExpression,
-            "I like reading a book because [your reason].",
-        )
-
-    def test_message_feedback_copy_repair_prompt_lists_required_placeholders(self):
-        request = MessageFeedbackRequest.model_validate(
-            multiple_hobby_questions_payload(),
-        )
-        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
-            message_feedback_judgement(
-                context_fit=1,
-                core_asks=[
-                    {
-                        "ask": "say what activity you like",
-                        "addressed": True,
-                        "evidence": "jogging",
-                        "requiredPlaceholder": None,
-                    },
-                    {
-                        "ask": "say why you like it",
-                        "addressed": False,
-                        "evidence": None,
-                        "requiredPlaceholder": "[your reason]",
-                    },
-                ],
-            ),
-        )
-
-        prompt = next_message_service._message_feedback_copy_repair_user_prompt(
-            request,
-            judgement,
-            None,
-            next_message_service.AiResponseInvalidError(
-                "message_feedback_copy_missing_placeholder",
-            ),
-        )
-
-        self.assertIn("Required correction placeholders:\n[your reason]", prompt)
-        self.assertIn("message_feedback_copy_missing_placeholder", prompt)
-
-    def test_message_feedback_judgement_repair_prompt_includes_validation_reason(self):
-        request = MessageFeedbackRequest.model_validate(
-            multiple_hobby_questions_payload(),
-        )
-
-        prompt = next_message_service._message_feedback_judgement_repair_user_prompt(
-            request,
-            None,
-            next_message_service.AiResponseInvalidError(
-                "message_feedback_judgement_missed_evaluation_answer",
-            ),
-        )
-
-        self.assertIn(
-            "message_feedback_judgement_missed_evaluation_answer",
-            prompt,
-        )
-
-    def test_message_feedback_locks_judgement_while_generating_copy(self):
-        judgement = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-        fake_openai = FakeOpenAI(
-            contents=[json.dumps(judgement), json.dumps(message_feedback_copy())],
-        )
-        app = create_app(
-            make_settings(
-                openrouter_api_key="test-openrouter-key",
-                openrouter_model="openrouter-test-model",
-            ),
-        )
-
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/message-feedback",
-                json=multiple_hobby_questions_payload(),
-            )
-
-        self.assertEqual(response.status_code, 202)
-        cached_feedback = get_cached_message_feedback(100, 1001)
-        self.assertIsNotNone(cached_feedback)
-        self.assertEqual(cached_feedback.feedbackType, "NEEDS_IMPROVEMENT")
-        self.assertEqual(
-            cached_feedback.correctionExpression,
-            "I like jogging because [your reason].",
-        )
-        self.assertEqual(len(fake_openai.completions.calls), 2)
-        self.assertIn(
-            "Judgement Task",
-            fake_openai.completions.calls[0]["messages"][0]["content"],
-        )
-        self.assertIn(
-            "Copy Task",
-            fake_openai.completions.calls[1]["messages"][0]["content"],
-        )
-        self.assertIn(
-            "Authoritative judgement",
-            fake_openai.completions.calls[1]["messages"][1]["content"],
-        )
-
-    def test_message_feedback_discards_copy_fields_for_the_other_locked_type(self):
-        request = MessageFeedbackRequest.model_validate(
-            valid_message_feedback_payload(),
-        )
-        judgement = next_message_service._parse_message_feedback_judgement(
-            {
-                "messageId": 1001,
-                "coreAsks": [
-                    {
-                        "ask": "ask why personal information is needed",
-                        "addressed": True,
-                        "evidence": "why do you wanna know that?",
-                        "requiredPlaceholder": None,
-                    },
-                ],
-                "statedFacts": ["why do you wanna know that?"],
-                "languageCorrections": [],
-                "scoreEvidence": {
-                    "contextFit": 2,
-                    "clarity": 2,
-                    "languageAccuracy": 2,
-                },
-            },
-            request,
-        )
-        invalid_good_copy = {
-            "messageId": 1001,
-            "baseLocaleAnalogy": '"왜 필요한데?"라고 묻는 것과 같아요.',
-            "positiveFeedback": "자연스럽게 물었어요.",
-            "feedbackDetail": "필요한 이유를 확인했어요.",
-            "correctionExpression": None,
-            "correctionReason": None,
-            "benchmarkMessage": None,
-        }
-
-        feedback, _, _ = next_message_service._parse_and_assemble_message_feedback_copy(
-            invalid_good_copy,
-            judgement,
-            request,
-        )
-
-        self.assertEqual(feedback.feedbackType.value, "GOOD")
-        self.assertIsNone(feedback.positiveFeedback)
-
-    def test_message_feedback_repairs_invalid_copy_once(self):
-        judgement = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-        invalid_copy = message_feedback_copy()
-        invalid_copy["correctionExpression"] = "I like jogging."
+    def test_message_feedback_does_not_cache_after_review_repair_fails(self):
+        candidate = good_message_feedback(1001)
+        invalid_review = good_message_feedback(1001)
+        invalid_review.pop("scoreEvidence")
         fake_openai = FakeOpenAI(
             contents=[
-                json.dumps(judgement),
-                json.dumps(invalid_copy),
-                json.dumps(message_feedback_copy()),
+                json.dumps(candidate),
+                json.dumps(invalid_review),
+                json.dumps(invalid_review),
             ],
         )
         app = create_app(
@@ -2180,287 +788,56 @@ class MessageFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/message-feedback",
-                json=multiple_hobby_questions_payload(),
-            )
-
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(len(fake_openai.completions.calls), 3)
-        self.assertIn(
-            "Copy Repair Task",
-            fake_openai.completions.calls[2]["messages"][0]["content"],
-        )
-
-    def test_message_feedback_repairs_invalid_judgement_once(self):
-        valid_judgement = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-        invalid_judgement = dict(valid_judgement)
-        invalid_judgement["messageId"] = 9999
-        fake_openai = FakeOpenAI(
-            contents=[
-                json.dumps(invalid_judgement),
-                json.dumps(valid_judgement),
-                json.dumps(message_feedback_copy()),
-            ],
-        )
-        app = create_app(
-            make_settings(
-                openrouter_api_key="test-openrouter-key",
-                openrouter_model="openrouter-test-model",
-            ),
-        )
-
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/message-feedback",
-                json=multiple_hobby_questions_payload(),
-            )
-
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(len(fake_openai.completions.calls), 3)
-        self.assertIn(
-            "Judgement Repair Task",
-            fake_openai.completions.calls[1]["messages"][0]["content"],
-        )
-        feedback_entry = next_message_service._get_expected_message_feedback_entries(
-            100,
-            [1001],
-        )[0]
-        self.assertTrue(feedback_entry.judgement_was_repaired)
-
-    def test_message_feedback_rejects_invalid_judgement_after_one_repair(self):
-        invalid_judgement = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-        invalid_judgement["messageId"] = 9999
-        fake_openai = FakeOpenAI(
-            contents=[
-                json.dumps(invalid_judgement),
-                json.dumps(invalid_judgement),
-            ],
-        )
-        app = create_app(
-            make_settings(
-                openrouter_api_key="test-openrouter-key",
-                openrouter_model="openrouter-test-model",
-            ),
-        )
-
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/message-feedback",
-                json=multiple_hobby_questions_payload(),
-            )
-
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(len(fake_openai.completions.calls), 2)
-        self.assertIsNone(get_cached_message_feedback(100, 1001))
-
-    def test_message_feedback_rejects_invalid_copy_after_one_repair(self):
-        judgement = message_feedback_judgement(
-            context_fit=1,
-            core_asks=[
-                {
-                    "ask": "say what activity you like",
-                    "addressed": True,
-                    "evidence": "jogging",
-                    "requiredPlaceholder": None,
-                },
-                {
-                    "ask": "say why you like it",
-                    "addressed": False,
-                    "evidence": None,
-                    "requiredPlaceholder": "[your reason]",
-                },
-            ],
-        )
-        invalid_copy = message_feedback_copy()
-        invalid_copy["correctionReason"] = "Add your reason."
-        fake_openai = FakeOpenAI(
-            contents=[
-                json.dumps(judgement),
-                json.dumps(invalid_copy),
-                json.dumps(invalid_copy),
-            ],
-        )
-        app = create_app(
-            make_settings(
-                openrouter_api_key="test-openrouter-key",
-                openrouter_model="openrouter-test-model",
-            ),
-        )
-
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/message-feedback",
-                json=multiple_hobby_questions_payload(),
+                json=valid_message_feedback_payload(),
             )
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(len(fake_openai.completions.calls), 3)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_judgement_prompt_keeps_meaning_neutral_speaking_features_out_of_scoring(self):
-        prompt = next_message_service._message_feedback_judgement_system_prompt(
+    def test_review_prompt_requests_complete_final_json_and_preserves_user_facts(self):
+        prompt = next_message_service._message_feedback_review_system_prompt(
             EvaluationContextType.AI_MESSAGE,
         )
 
-        self.assertIn("Judgement Task", prompt)
+        self.assertIn("return the complete final JSON object", prompt)
+        self.assertIn("may correct feedbackType and scoreEvidence", prompt)
         self.assertIn(
-            "A short noun phrase can fully answer a what-question.",
+            "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons",
             prompt,
         )
         self.assertIn(
-            "An answer that clearly satisfies either branch of an or-question has contextFit=2.",
+            "Do not make capitalization, punctuation, or a meaning-neutral filler the only improvement",
             prompt,
         )
         self.assertIn(
-            "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct.",
+            "like to watch and like watching are both acceptable",
             prompt,
         )
         self.assertIn(
-            "Do not lower any score for capitalization, punctuation, a meaning-neutral filler",
+            "use a [your ...] placeholder in correctionExpression",
             prompt,
         )
         self.assertIn(
-            "A hostile or dismissive reply can have languageAccuracy=1",
+            "not a generic label such as information, detail, or document",
             prompt,
         )
         self.assertIn(
-            "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question.",
+            "retain the user's own words rather than substituting a plausible reason",
             prompt,
         )
         self.assertIn(
-            '"languageCorrections":[{"evidence":"exact user substring","replacement":"corrected expression"}]',
-            prompt,
-        )
-        self.assertIn(
-            "A vague demonstrative evaluation such as 'This is so cool' answers a what-do-you-like-about ask but requires clarity=1",
-            prompt,
-        )
-        self.assertIn(
-            "The current evaluation context is the only source of core asks.",
-            prompt,
-        )
-        self.assertIn(
-            "Do not infer additional asks from the scenario title, briefing, or conversation goal.",
-            prompt,
-        )
-        self.assertIn(
-            "must-visit place -> [your recommended place]",
-            prompt,
-        )
-        self.assertIn(
-            "dealbreaker -> [your dealbreaker]",
-            prompt,
-        )
-        self.assertIn(
-            "wake-up time -> [your wake up time]",
-            prompt,
-        )
-        self.assertIn(
-            "An incomplete stem such as 'My name is' does not answer a name core ask.",
+            "Do not lower contextFit because a relevant reason is simple or vague",
             prompt,
         )
 
-    def test_copy_prompt_preserves_facts_and_answers_current_question(self):
-        prompt = next_message_service._message_feedback_copy_system_prompt(
+    def test_review_prompt_does_not_require_core_asks_or_keyword_overlap(self):
+        prompt = next_message_service._message_feedback_review_system_prompt(
             EvaluationContextType.AI_MESSAGE,
         )
 
-        self.assertIn(
-            "Do not replace a stated fact with a placeholder.",
-            prompt,
-        )
-        self.assertIn(
-            "For contextFit=0, correctionExpression must answer the current evaluation context directly.",
-            prompt,
-        )
-        self.assertIn(
-            "Do not turn correctionExpression into a question for the counterpart.",
-            prompt,
-        )
-        self.assertIn(
-            "For contextFit=0, do not reuse a stated fact unless it directly answers a core ask.",
-            prompt,
-        )
-        self.assertIn(
-            "Do not attach a placeholder directly to an uncertain or incomplete utterance.",
-            prompt,
-        )
-        self.assertIn(
-            "Use [your reason] with a grammatically compatible reason clause.",
-            prompt,
-        )
-        self.assertIn(
-            "correctionExpression must be a complete English sentence.",
-            prompt,
-        )
-        self.assertIn(
-            "When a fresh answer begins with a placeholder, add a complete sentence scaffold.",
-            prompt,
-        )
-        self.assertIn(
-            "For a must-visit place and reason, use 'I recommend [your recommended place] because [your reason].'",
-            prompt,
-        )
-        self.assertIn(
-            "For a negative answer followed by a missing dealbreaker, use 'No, but I can't stand [your dealbreaker].'",
-            prompt,
-        )
-
-    def test_copy_prompt_exposes_verified_catalog_patterns_only(self):
-        catalog = {
-            "informal_question": {
-                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
-                "gamifiable": True,
-                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
-                "source": "Landit 검증 출처",
-                "sourceVerified": True,
-            },
-        }
-
-        with patch.object(
-            next_message_service,
-            "_BENCHMARK_PATTERN_CATALOG",
-            catalog,
-            create=True,
-        ):
-            prompt = next_message_service._message_feedback_copy_system_prompt(
-                EvaluationContextType.AI_MESSAGE,
-            )
-
-        self.assertIn("Copy Task", prompt)
-        self.assertIn("Detected Pattern Catalog", prompt)
-        self.assertIn('"errorType":"informal_question"', prompt)
+        self.assertNotIn("coreAsks", prompt)
+        self.assertNotIn("meaningful evidence words", prompt)
 
     def test_message_feedback_accepts_internal_score_evidence(self):
         ai_response = good_message_feedback()
@@ -2584,49 +961,15 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 "error": None,
             },
         )
-        judgement_messages = fake_openai.completions.calls[0]["messages"]
-        copy_messages = fake_openai.completions.calls[1]["messages"]
-        self.assertIn("Judgement Task", judgement_messages[0]["content"])
-        self.assertIn(
-            "Do not infer additional asks from the scenario title, briefing, or conversation goal.",
-            judgement_messages[0]["content"],
-        )
-        self.assertIn(
-            "Missing one core ask alone must not lower languageAccuracy",
-            judgement_messages[0]["content"],
-        )
-        self.assertIn(
-            "tell a little about yourself -> [your hobby]",
-            judgement_messages[0]["content"],
-        )
-        self.assertNotIn("baseLocaleAnalogy", judgement_messages[0]["content"])
-        self.assertIn("Counterpart role: friend", judgement_messages[1]["content"])
-        self.assertIn("Message ID: 1001", judgement_messages[1]["content"])
-        self.assertIn("Message sequence: 2", judgement_messages[1]["content"])
-        self.assertIn(
-            "User utterance: why do you wanna know that?",
-            judgement_messages[1]["content"],
-        )
-        self.assertIn("Copy Task", copy_messages[0]["content"])
-        self.assertIn("baseLocaleAnalogy", copy_messages[0]["content"])
-        self.assertIn(
-            "Do not treat capitalization, punctuation, a neutral filler",
-            copy_messages[0]["content"],
-        )
-        self.assertIn(
-            'Never return the string "null"',
-            copy_messages[0]["content"],
-        )
-        self.assertIn("Authoritative judgement", copy_messages[1]["content"])
-        self.assertIn("Locked feedback type: GOOD", copy_messages[1]["content"])
-        self.assertIn(
-            "Locked GOOD requirements: feedbackDetail must be a Korean explanation",
-            copy_messages[1]["content"],
-        )
-        self.assertIn(
-            "Never fill an unanswered personal fact with a concrete example",
-            copy_messages[0]["content"],
-        )
+        candidate_messages = fake_openai.completions.calls[0]["messages"]
+        review_messages = fake_openai.completions.calls[1]["messages"]
+        self.assertIn("Feedback Task", candidate_messages[0]["content"])
+        self.assertIn("baseLocaleAnalogy", candidate_messages[0]["content"])
+        self.assertIn("Counterpart role: friend", candidate_messages[1]["content"])
+        self.assertIn("User utterance: why do you wanna know that?", candidate_messages[1]["content"])
+        self.assertIn("Review Task", review_messages[0]["content"])
+        self.assertIn("may correct feedbackType and scoreEvidence", review_messages[0]["content"])
+        self.assertIn("Candidate JSON", review_messages[1]["content"])
         cached_feedback = get_cached_message_feedback(100, 1001)
         self.assertIsNotNone(cached_feedback)
         self.assertEqual(cached_feedback.feedbackType, "GOOD")
@@ -2665,7 +1008,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["data"]["feedbackStatus"], "PREPARING")
         judgement_messages = fake_openai.completions.calls[0]["messages"]
-        self.assertIn("Judgement Task", judgement_messages[0]["content"])
+        self.assertIn("Feedback Task", judgement_messages[0]["content"])
         self.assertIn(
             "Evaluation context type: SCENARIO_OPENING_INSTRUCTION",
             judgement_messages[0]["content"],
@@ -2896,6 +1239,71 @@ class MessageFeedbackApiTests(unittest.TestCase):
             )
 
         self.assertIsNone(benchmark_message)
+
+    def test_catalog_benchmark_requires_catalog_example_evidence(self):
+        catalog = {
+            "tense_aspect": {
+                "description": "시제·상",
+                "gamifiable": True,
+                "benchmarkMessage": "불규칙 과거형을 정확히 사용했어요.",
+                "exampleRight": "I ate dinner.",
+            },
+        }
+        detected_patterns = [
+            {
+                "errorType": "tense_aspect",
+                "status": "correct",
+                "evidence": "like",
+            },
+        ]
+
+        with patch.object(
+            next_message_service,
+            "_BENCHMARK_PATTERN_CATALOG",
+            catalog,
+            create=True,
+        ):
+            benchmark_message = (
+                next_message_service._benchmark_message_from_detected_patterns(
+                    detected_patterns,
+                    "I like to watch Formula One.",
+                )
+            )
+
+        self.assertIsNone(benchmark_message)
+
+    def test_message_feedback_rejects_unverified_catalog_copy(self):
+        feedback_data = good_message_feedback(1001)
+        feedback_data.pop("scoreEvidence")
+        feedback = conversation_models.MessageFeedbackData.model_validate(feedback_data)
+        catalog = {
+            "tense_aspect": {
+                "description": "시제·상",
+                "gamifiable": True,
+                "benchmarkMessage": "불규칙 과거형을 정확히 사용했어요.",
+                "exampleRight": "I ate dinner.",
+            },
+        }
+        feedback = feedback.model_copy(
+            update={"benchmarkMessage": "불규칙 과거형을 정확히 사용했어요."},
+        )
+
+        with patch.object(
+            next_message_service,
+            "_BENCHMARK_PATTERN_CATALOG",
+            catalog,
+            create=True,
+        ):
+            processed = next_message_service._postprocess_message_feedback_benchmark(
+                feedback,
+                [],
+                "I like to watch Formula One.",
+            )
+
+        self.assertEqual(
+            processed.benchmarkMessage,
+            "질문에 맞는 핵심을 자연스럽게 전달했어요.",
+        )
 
     def test_message_feedback_uses_default_for_unverified_quantitative_benchmark(self):
         ai_response = good_message_feedback()
