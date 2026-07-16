@@ -432,6 +432,7 @@ def _parse_message_feedback_judgement(
         judgement,
         request.userMessage,
     )
+    judgement = _with_stated_self_introduction(judgement)
     if (
         judgement.scoreEvidence.clarity == 2
         and any(
@@ -1174,6 +1175,56 @@ def _with_generic_evaluation_answers(
             ),
         },
     )
+
+
+def _with_stated_self_introduction(
+    judgement: MessageFeedbackJudgement,
+) -> MessageFeedbackJudgement:
+    unused_personal_facts = [
+        stated_fact
+        for stated_fact in judgement.statedFacts
+        if _is_self_introduction_fact(stated_fact)
+        and all(
+            core_ask.evidence is None
+            or _normalize_evidence(core_ask.evidence)
+            != _normalize_evidence(stated_fact)
+            for core_ask in judgement.coreAsks
+        )
+    ]
+    if not unused_personal_facts:
+        return judgement
+    normalized_core_asks = list(judgement.coreAsks)
+    for index, core_ask in enumerate(normalized_core_asks):
+        if not core_ask.addressed and "about yourself" in core_ask.ask.casefold():
+            normalized_core_asks[index] = core_ask.model_copy(
+                update={
+                    "addressed": True,
+                    "evidence": unused_personal_facts[0],
+                    "requiredPlaceholder": None,
+                },
+            )
+            break
+    if normalized_core_asks == judgement.coreAsks:
+        return judgement
+    addressed_count = sum(core_ask.addressed for core_ask in normalized_core_asks)
+    context_fit = 2 if addressed_count == len(normalized_core_asks) else 1
+    return judgement.model_copy(
+        update={
+            "coreAsks": normalized_core_asks,
+            "scoreEvidence": judgement.scoreEvidence.model_copy(
+                update={"contextFit": context_fit},
+            ),
+        },
+    )
+
+
+def _is_self_introduction_fact(value: str) -> bool:
+    return re.search(
+        r"\b(?:i(?:'m|\s+am|\s+like|\s+love|\s+enjoy|\s+live|\s+work|\s+study)"
+        r"|my\s+(?:hobby|favorite|job|age))\b",
+        value,
+        re.IGNORECASE,
+    ) is not None
 
 
 def _generic_evaluation_evidence(user_message: str) -> str | None:

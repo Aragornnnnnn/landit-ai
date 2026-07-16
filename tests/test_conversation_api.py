@@ -1455,6 +1455,43 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.contextFit, 2)
         self.assertEqual(judgement.scoreEvidence.clarity, 1)
 
+    def test_message_feedback_judgement_normalizes_missed_self_introduction(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What's your name? Tell me a little about yourself!"
+        )
+        payload["userMessage"] = "My name is junseo, I like pizza."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=1,
+            language_accuracy=2,
+            core_asks=[
+                {
+                    "ask": "name",
+                    "addressed": True,
+                    "evidence": "My name is junseo",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "tell me a little about yourself",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your hobby]",
+                },
+            ],
+            stated_facts=["My name is junseo", "I like pizza"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertTrue(judgement.coreAsks[1].addressed)
+        self.assertEqual(judgement.coreAsks[1].evidence, "I like pizza")
+        self.assertIsNone(judgement.coreAsks[1].requiredPlaceholder)
+        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
+
     def test_message_feedback_judgement_infers_cleaning_placeholders(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (
