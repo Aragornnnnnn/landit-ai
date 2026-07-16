@@ -115,6 +115,30 @@ def _evaluate_feedback_case(
     feedback_type = feedback.feedbackType.value
     expected_feedback_type = case["expectedFeedbackType"]
     expected_score_range = case.get("expectedMessageScoreRange")
+    required_placeholders = case.get("requiredCorrectionPlaceholders", [])
+    correction_expression = feedback.correctionExpression or ""
+    missing_placeholders = [
+        placeholder
+        for placeholder in required_placeholders
+        if placeholder not in correction_expression
+    ]
+    feedback_text = "\n".join(
+        value
+        for value in (
+            feedback.baseLocaleAnalogy,
+            feedback.positiveFeedback,
+            feedback.feedbackDetail,
+            feedback.correctionExpression,
+            feedback.correctionReason,
+        )
+        if value is not None
+    )
+    forbidden_terms = case.get("forbiddenFeedbackTerms", [])
+    found_forbidden_terms = [
+        term
+        for term in forbidden_terms
+        if term.casefold() in feedback_text.casefold()
+    ]
     return {
         "caseId": case["caseId"],
         "kind": "message-feedback",
@@ -129,6 +153,16 @@ def _evaluate_feedback_case(
             expected_score_range[0] <= message_score <= expected_score_range[1]
             if expected_score_range is not None
             else None
+        ),
+        "baseLocaleAnalogy": feedback.baseLocaleAnalogy,
+        "positiveFeedback": feedback.positiveFeedback,
+        "feedbackDetail": feedback.feedbackDetail,
+        "correctionExpression": feedback.correctionExpression,
+        "correctionReason": feedback.correctionReason,
+        "missingRequiredCorrectionPlaceholders": missing_placeholders,
+        "foundForbiddenFeedbackTerms": found_forbidden_terms,
+        "feedbackTextMatchesExpectation": (
+            not missing_placeholders and not found_forbidden_terms
         ),
     }
 

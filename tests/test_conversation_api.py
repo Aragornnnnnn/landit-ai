@@ -888,6 +888,27 @@ class MessageFeedbackApiTests(unittest.TestCase):
             messages[1]["content"],
         )
         self.assertIn("baseLocaleAnalogy", messages[0]["content"])
+        self.assertIn(
+            "Capitalization or punctuation alone is not an actionable issue",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "A meaning-neutral filler alone is not an actionable issue",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Never invent personal facts",
+            messages[0]["content"],
+        )
+        self.assertIn("[your hobby]", messages[0]["content"])
+        self.assertIn("[your bedtime]", messages[0]["content"])
+        self.assertIn("[your dealbreaker]", messages[0]["content"])
+        self.assertNotIn("go to bed around midnight", messages[0]["content"])
+        self.assertNotIn("loud noise at night", messages[0]["content"])
+        self.assertIn(
+            "Do not expose this internal no-invention rule",
+            messages[0]["content"],
+        )
         cached_feedback = get_cached_message_feedback(100, 1001)
         self.assertIsNotNone(cached_feedback)
         self.assertEqual(cached_feedback.feedbackType, "GOOD")
@@ -1237,6 +1258,41 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 },
             ),
         )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertIsNone(get_cached_message_feedback(100, 1001))
+
+    def test_message_feedback_rejects_internal_policy_in_correction_reason(self):
+        ai_response = {
+            "messageId": 1001,
+            "feedbackType": "NEEDS_IMPROVEMENT",
+            "scoreEvidence": {
+                "contextFit": 1,
+                "clarity": 2,
+                "languageAccuracy": 2,
+            },
+            "baseLocaleAnalogy": '"이름만 말하고 소개는 생략했어요"라고 답하는 것과 같아요.',
+            "positiveFeedback": "이름을 자연스럽게 소개한 점은 좋아요.",
+            "feedbackDetail": None,
+            "correctionExpression": "Hi, my name is Sangmin. I enjoy [your hobby].",
+            "correctionReason": "없는 사실을 만들지 않고 질문에 충분히 답할 수 있어요.",
+            "benchmarkMessage": None,
+            "detectedPatterns": [],
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",

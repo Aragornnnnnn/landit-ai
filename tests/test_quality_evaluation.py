@@ -113,6 +113,34 @@ class QualityEvaluationTests(unittest.TestCase):
                 expected_range,
             )
 
+    def test_lan_167_fixture_covers_feedback_quality_boundaries(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_167_feedback_quality_cases.json"
+        )
+
+        self.assertTrue(fixture_path.exists())
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        cases_by_id = {case["caseId"]: case for case in cases}
+
+        self.assertEqual(
+            set(cases_by_id),
+            {
+                "lan167-capitalization-and-period-only",
+                "lan167-meaning-neutral-filler",
+                "lan167-valid-like-to-watch",
+                "lan167-partial-self-introduction",
+                "lan167-off-topic-answer",
+            },
+        )
+        introduction_case = cases_by_id["lan167-partial-self-introduction"]
+        self.assertEqual(
+            introduction_case["requiredCorrectionPlaceholders"],
+            ["[your hobby]"],
+        )
+        self.assertIn("없는 사실", introduction_case["forbiddenFeedbackTerms"])
+
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             cases_path = Path(directory) / "cases.json"
@@ -251,3 +279,55 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["messageScore"], 100)
         self.assertEqual(results[0]["expectedMessageScoreRange"], [100, 100])
         self.assertTrue(results[0]["messageScoreWithinExpectation"])
+
+    def test_feedback_result_checks_required_placeholders_and_forbidden_terms(self):
+        case = feedback_case()
+        case["expectedFeedbackType"] = "NEEDS_IMPROVEMENT"
+        case["expectedMessageScoreRange"] = [80, 80]
+        case["requiredCorrectionPlaceholders"] = ["[your hobby]"]
+        case["forbiddenFeedbackTerms"] = ["Seoul", "없는 사실"]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy='"이름만 말하고 소개는 덧붙이지 않았어요"라고 답하는 것과 같아요.',
+            positiveFeedback="이름을 자연스럽게 소개한 점은 좋아요.",
+            correctionExpression="Hi, my name is Sangmin. I enjoy [your hobby].",
+            correctionReason="[your hobby]에 평소 좋아하는 활동을 넣어 소개를 완성해 보세요.",
+        )
+        response = MessageFeedbackResponse(
+            sessionId=200,
+            messageId=2001,
+            feedbackStatus=FeedbackStatus.PREPARING,
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=1,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=response,
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertIn("missingRequiredCorrectionPlaceholders", results[0])
+        self.assertEqual(results[0]["missingRequiredCorrectionPlaceholders"], [])
+        self.assertEqual(results[0]["foundForbiddenFeedbackTerms"], [])
+        self.assertTrue(results[0]["feedbackTextMatchesExpectation"])

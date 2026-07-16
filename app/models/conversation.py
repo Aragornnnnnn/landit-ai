@@ -312,6 +312,21 @@ class MessageFeedbackData(BaseModel):
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
         return _optional_not_blank(value)
 
+    @field_validator("correctionReason")
+    @classmethod
+    def correction_reason_must_not_expose_internal_policy(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is not None and any(
+            marker in value
+            for marker in ("없는 사실", "사실을 만들지", "임의로 추측")
+        ):
+            raise ValueError(
+                "correctionReason must not expose internal generation policy",
+            )
+        return value
+
     @model_validator(mode="after")
     def feedback_fields_must_match_type(self) -> Self:
         if self.feedbackType == FeedbackType.NEEDS_IMPROVEMENT:

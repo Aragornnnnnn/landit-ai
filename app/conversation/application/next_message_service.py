@@ -1086,12 +1086,20 @@ def _message_feedback_system_prompt(
             "The quoted Korean sentence must show what the English sounds like in Korean. "
             "For NEEDS_IMPROVEMENT, baseLocaleAnalogy should use one intentionally awkward Korean example as a quoted Korean sentence plus one short feeling explanation. "
             "feedbackDetail is required for GOOD and must be null for NEEDS_IMPROVEMENT. "
-            "For NEEDS_IMPROVEMENT, positiveFeedback is required and must praise the user's attempt or challenge before correction. "
+            "For NEEDS_IMPROVEMENT, positiveFeedback is required and must name one genuine strength grounded in the utterance. "
+            "Do not claim successful communication for profanity, threats, irrelevant content, or unintelligible text; if no specific strength exists, acknowledge the attempt neutrally. "
             "For NEEDS_IMPROVEMENT, correctionExpression is required and must be the improved English expression only. "
             "Generate at most one correctionExpression for one message. "
             "Do not return multiple alternatives, numbered options, slash-separated options, or extra explanation in correctionExpression. "
+            "Preserve the user's meaning, intent, tense, negation, and stated facts. "
+            "Never invent personal facts such as a name, place, hobby, feeling, habit, preference, or experience. "
+            "Use only facts stated in the user utterance, evaluation context, or scenario. "
+            "When a complete answer needs missing personal information, use one specific bracket placeholder such as [your hobby], [your hometown], [your bedtime], or [your dealbreaker]. "
+            "Keep known user facts as written instead of replacing them with placeholders. "
             "For NEEDS_IMPROVEMENT, correctionReason is required and must explain why correctionExpression is better in Korean. "
             "correctionReason must explain the original problem and the type of change made, not restate the improved expression. "
+            "When correctionExpression uses a placeholder, tell the learner what information to put there. "
+            "Do not expose this internal no-invention rule in correctionReason or mention that the AI avoided making up or guessing facts. "
             "Do not use arrow notation such as A -> B inside correctionReason. "
             "For GOOD, feedbackDetail must explain how well the user did and why in one natural Korean explanation. "
             "For GOOD, positiveFeedback must be null. "
@@ -1112,7 +1120,9 @@ def _message_feedback_system_prompt(
             "7. scoreEvidence contains contextFit, clarity, and languageAccuracy with integer values from 0 to 2. "
             "8. GOOD has three scores of 2, and NEEDS_IMPROVEMENT has at least one score below 2. "
             "9. detectedPatterns has only catalog errorType values and exact evidence copied from the user utterance. "
-            "10. No legacy fields are present."
+            "10. correctionExpression preserves known facts and uses a bracket placeholder for missing personal information. "
+            "11. correctionReason explains what the learner should add without exposing internal generation rules. "
+            "12. No legacy fields are present."
         ),
         _message_feedback_examples(evaluation_context_type),
         (
@@ -1152,6 +1162,9 @@ def _message_feedback_judgement_policy(
         "Actionable Issue Gate: first check whether grammar, word choice, word order, tense, preposition, nuance, or politeness creates a real correction point. "
         "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression aligned with the evaluation context. "
         "Preserve the user's apparent intent when the intent fits the evaluation context. "
+        "Capitalization or punctuation alone is not an actionable issue in this speaking service. "
+        "A meaning-neutral filler alone is not an actionable issue. "
+        "Do not replace one natural grammatical alternative with another based only on style preference, such as like to watch versus like watching. "
         "More detail alone is not an actionable issue; a short direct utterance can be GOOD. "
         "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
         "The directness exception does not apply to hostile or dismissive replies to the counterpart. "
@@ -1196,11 +1209,13 @@ def _message_feedback_examples(
             "GOOD JSON example after a friend asks about usual hobbies or something new to try: user utterance 'I want to learn pottery.': "
             '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"도예를 배워보고 싶어\\"라고 해보고 싶은 일을 바로 답하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"질문이 제시한 두 방향 중 해보고 싶은 일을 자연스럽게 골라 답했어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"해보고 싶은 일을 자연스럽게 답했어요."}\n'
             "NEEDS_IMPROVEMENT JSON example after a roommate asks how to split cleaning and what worked before: user utterance 'I don't know.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"청소는 어떻게 나눌지랑 전에 해본 방식은 아직 모르겠어\\"라고 질문의 한 부분만 답하는 것과 같아요.","positiveFeedback":"아직 정해진 기준이 없다는 뜻은 분명하게 말했어요.","feedbackDetail":null,"correctionExpression":"I have not really figured that out yet, but I would like to split cleaning fairly.","correctionReason":"청소 분담 방식과 이전 경험을 함께 물었으므로, 모른다는 답에 원하는 분담 방향을 덧붙이면 질문의 핵심을 더 잘 충족할 수 있어요.","benchmarkMessage":null}\n'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"청소는 어떻게 나눌지랑 전에 해본 방식은 아직 모르겠어\\"라고 질문의 한 부분만 답하는 것과 같아요.","positiveFeedback":"아직 정해진 기준이 없다는 뜻은 분명하게 말했어요.","feedbackDetail":null,"correctionExpression":"I do not know what worked before, but we could [your preferred cleaning plan].","correctionReason":"이전 방식에 대해서는 잘 답했지만 원하는 청소 분담 방식이 빠졌어요. [your preferred cleaning plan]에 선호하는 분담 방법을 넣어 보세요.","benchmarkMessage":null}\n'
             "NEEDS_IMPROVEMENT JSON example after a friend asks about daily routine, wake-up time, and bedtime: user utterance 'I usually wake up at 9.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"나는 보통 9시에 일어나. 근데 하루가 언제 끝나는지는 말 안 할게\\"라고 일부만 답하는 것과 같아요.","positiveFeedback":"평소에 일어나는 시간을 분명하게 말한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"I usually wake up at 9, and I go to bed around midnight.","correctionReason":"일어나는 시간과 자는 시간을 함께 물었으므로, 두 정보를 모두 답하면 질문의 핵심을 빠짐없이 전달할 수 있어요.","benchmarkMessage":null}\n'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"나는 보통 9시에 일어나. 근데 하루가 언제 끝나는지는 말 안 할게\\"라고 일부만 답하는 것과 같아요.","positiveFeedback":"평소에 일어나는 시간을 분명하게 말한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"I usually wake up at 9, and I go to bed around [your bedtime].","correctionReason":"일어나는 시간에는 잘 답했지만 자는 시간이 빠졌어요. [your bedtime]에 평소 잠드는 시간을 넣어 보세요.","benchmarkMessage":null}\n'
             "NEEDS_IMPROVEMENT JSON example after a roommate asks about bad roommate experiences and dealbreakers: user utterance 'um... no': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"그런 룸메이트는 없었어. 하지만 뭘 못 참는지는 말 안 할게\\"라고 일부만 답하는 것과 같아요.","positiveFeedback":"룸메이트 때문에 힘들었던 적이 없다는 뜻은 전달했어요.","feedbackDetail":null,"correctionExpression":"No, I have not, but I cannot deal with loud noise at night.","correctionReason":"이전 경험과 못 참는 생활 습관을 함께 물었으므로, no 뒤에 자신의 기준을 하나 덧붙이면 상대가 룸메이트 규칙을 맞추는 데 도움이 돼요.","benchmarkMessage":null}\n'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"그런 룸메이트는 없었어. 하지만 뭘 못 참는지는 말 안 할게\\"라고 일부만 답하는 것과 같아요.","positiveFeedback":"룸메이트 때문에 힘들었던 적이 없다는 뜻은 전달했어요.","feedbackDetail":null,"correctionExpression":"No, I have not, but I cannot deal with [your dealbreaker].","correctionReason":"이전 경험에는 잘 답했지만 못 참는 생활 습관이 빠졌어요. [your dealbreaker]에 자신이 불편하게 느끼는 행동을 넣어 보세요.","benchmarkMessage":null}\n'
+            "NEEDS_IMPROVEMENT JSON example after a new acquaintance asks for a name and self-introduction: user utterance 'Hi, my name is Sangmin.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"안녕하세요, 저는 상민이에요\\"라고 이름만 소개하는 것과 같아요.","positiveFeedback":"이름을 자연스럽게 소개한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"Hi, my name is Sangmin. I enjoy [your hobby].","correctionReason":"이름에는 잘 답했지만 자신에 대한 소개가 빠졌어요. [your hobby]에 평소 좋아하는 활동을 넣어 보세요.","benchmarkMessage":null}\n'
             "NEEDS_IMPROVEMENT JSON example for user utterance 'I like pizza because spicy.': "
             '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"피자를 좋아해요. 매워서\\"라고 이유를 끝맺지 못한 것과 같아요.","positiveFeedback":"좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I like pizza because it is spicy.","correctionReason":"because 뒤에는 이유를 설명하는 절이 필요해요. it is spicy를 붙이면 좋아하는 이유가 완전한 문장이 돼요.","benchmarkMessage":null}'
             "\nNEEDS_IMPROVEMENT JSON example after a roommate asks about guests: user utterance 'I hate having guests.': "
@@ -1213,7 +1228,7 @@ def _message_feedback_examples(
         "GOOD JSON example for user utterance 'Can I get an iced americano?': "
         '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"아이스 아메리카노 한 잔 주세요\\"라고 자연스럽게 주문하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"원하는 음료를 공손하게 주문했어요."}\n'
         "NEEDS_IMPROVEMENT JSON example for user utterance 'I like soccer.': "
-        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":0,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"저는 축구를 좋아해요\\"라고 음료 주문 안내에 다른 이야기를 꺼내는 것과 같아요.","positiveFeedback":"먼저 영어로 말을 시작하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"Can I get an iced americano?","correctionReason":"I like soccer.는 문법적으로 맞지만 음료를 주문하라는 시작 안내를 수행하지 못해요. 원하는 음료를 바로 요청하는 표현으로 바꾸면 상황에 맞아요.","benchmarkMessage":null}'
+        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":0,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"저는 축구를 좋아해요\\"라고 음료 주문 안내에 다른 이야기를 꺼내는 것과 같아요.","positiveFeedback":"영어로 먼저 말을 시작했어요.","feedbackDetail":null,"correctionExpression":"Can I get [your drink]?","correctionReason":"음료를 주문하는 상황이므로 [your drink]에 원하는 음료를 넣어 요청해 보세요.","benchmarkMessage":null}'
     )
 
 
