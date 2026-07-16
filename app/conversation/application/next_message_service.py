@@ -1037,18 +1037,20 @@ def _without_natural_preference_alternative_corrections(
 def _with_inferred_required_placeholders(
     judgement: MessageFeedbackJudgement,
 ) -> MessageFeedbackJudgement:
-    normalized_core_asks = [
-        core_ask.model_copy(
-            update={
-                "requiredPlaceholder": _required_placeholder_for_ask(
-                    core_ask.ask,
-                ),
-            },
+    normalized_core_asks: list[MessageFeedbackCoreAsk] = []
+    for core_ask in judgement.coreAsks:
+        inferred_placeholder = (
+            _required_placeholder_for_ask(core_ask.ask)
+            if not core_ask.addressed
+            else None
         )
-        if not core_ask.addressed and core_ask.requiredPlaceholder is None
-        else core_ask
-        for core_ask in judgement.coreAsks
-    ]
+        normalized_core_asks.append(
+            core_ask.model_copy(
+                update={"requiredPlaceholder": inferred_placeholder},
+            )
+            if inferred_placeholder is not None
+            else core_ask
+        )
     if normalized_core_asks == judgement.coreAsks:
         return judgement
     return judgement.model_copy(update={"coreAsks": normalized_core_asks})
@@ -1217,6 +1219,11 @@ def _unsupported_correction_content_words(
             if core_ask.evidence is not None
         ),
     ]
+    source_values.extend(
+        core_ask.requiredPlaceholder.removeprefix("[your ").removesuffix("]")
+        for core_ask in judgement.coreAsks
+        if core_ask.requiredPlaceholder is not None
+    )
     if addressed_core_asks:
         source_values.extend(judgement.statedFacts)
         source_values.extend(

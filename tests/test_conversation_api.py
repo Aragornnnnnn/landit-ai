@@ -1364,13 +1364,13 @@ class MessageFeedbackApiTests(unittest.TestCase):
                     "ask": "how do you usually split cleaning stuff",
                     "addressed": False,
                     "evidence": None,
-                    "requiredPlaceholder": None,
+                    "requiredPlaceholder": "[your cleaning split]",
                 },
                 {
                     "ask": "what worked for you before",
                     "addressed": False,
                     "evidence": None,
-                    "requiredPlaceholder": None,
+                    "requiredPlaceholder": "[your experience]",
                 },
             ],
             stated_facts=["I don't know"],
@@ -1384,6 +1384,44 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
             ["[your cleaning preference]", "[your previous cleaning routine]"],
+        )
+
+    def test_message_feedback_copy_allows_placeholder_label_as_scaffold(self):
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=1,
+                core_asks=[
+                    {
+                        "ask": "name",
+                        "addressed": True,
+                        "evidence": "My name is sandman",
+                        "requiredPlaceholder": None,
+                    },
+                    {
+                        "ask": "tell me a little about yourself",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your hobby]",
+                    },
+                ],
+                stated_facts=["My name is sandman", "I'm 25 years"],
+            ),
+        )
+        feedback = conversation_models.MessageFeedbackData(
+            messageId=1001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="이름과 나이만 말한 것과 같아요.",
+            positiveFeedback="이름과 나이를 말했어요.",
+            correctionExpression=(
+                "Hi, my name is sandman. I'm 25 years old, and my hobby is "
+                "[your hobby]."
+            ),
+            correctionReason="취미를 덧붙여 자기소개를 완성해 보세요.",
+        )
+
+        next_message_service._validate_message_feedback_copy(
+            judgement,
+            feedback,
         )
 
     def test_message_feedback_copy_uses_safe_recommendation_template(self):
