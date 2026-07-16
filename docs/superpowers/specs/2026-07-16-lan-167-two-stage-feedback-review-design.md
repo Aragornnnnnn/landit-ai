@@ -116,6 +116,8 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 `like to watch`와 `like watching`처럼 둘 다 자연스러운 선호 표현 간 교체만 제안된 경우는 교정 목록에서 제거한다. 다른 언어 문제가 남지 않으면 서버가 `languageAccuracy=2`로 정규화해 단순 선호 차이로 피드백하지 않는다.
 
+`aircon`과 `air conditioning`처럼 의미 전달에 문제가 없는 자연스러운 구어체·정식 표현 간 교체도 같은 방식으로 비필수 교정에서 제거한다.
+
 `What do you like about ...?`에 `This is so cool`처럼 지시 대상의 특징을 구체화하지 않은 평가로 답하면 질문에는 반응했으므로 `contextFit=2`를 유지하되 상대가 의미를 추측해야 하므로 `clarity=1`로 판정한다. 이 경계는 서버가 판정 근거에서 결정적으로 정규화한다. 이를 문법 오류로 취급하지 않으며 `languageAccuracy=2`와 `languageCorrections=[]`를 유지한다.
 
 모델이 같은 일반 평가를 미응답으로 분류하더라도 서버가 실제 사용자 발화에서 평가 구간을 추출해 해당 핵심 요청을 answered 상태로 정규화한다. 부정문에 포함된 일반 평가는 긍정 답변으로 추론하지 않는다.

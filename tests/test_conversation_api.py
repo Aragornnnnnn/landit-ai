@@ -1083,6 +1083,38 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
         self.assertEqual(judgement.languageCorrections, [])
 
+    def test_message_feedback_judgement_ignores_natural_aircon_alternative(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "Do you have proof of your travel plans?"
+        )
+        payload["userMessage"] = "My aircon bill is very high."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=0,
+            language_accuracy=1,
+            language_corrections=[
+                {"evidence": "aircon", "replacement": "air conditioning"},
+            ],
+            core_asks=[
+                {
+                    "ask": "proof of travel plans",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your travel proof]",
+                },
+            ],
+            stated_facts=["My aircon bill is very high"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
+        self.assertEqual(judgement.languageCorrections, [])
+
     def test_message_feedback_judgement_rejects_bare_evaluation_as_why_reason(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (

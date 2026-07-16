@@ -1015,7 +1015,7 @@ def _without_natural_preference_alternative_corrections(
     retained_corrections = [
         correction
         for correction in judgement.languageCorrections
-        if not _is_natural_preference_alternative(correction)
+        if not _is_non_actionable_language_alternative(correction)
     ]
     if len(retained_corrections) == len(judgement.languageCorrections):
         return judgement
@@ -1086,6 +1086,18 @@ def _is_natural_preference_alternative(
     return _matches_to_infinitive_and_gerund(evidence, replacement) or (
         _matches_to_infinitive_and_gerund(replacement, evidence)
     )
+
+
+def _is_non_actionable_language_alternative(
+    correction: MessageFeedbackLanguageCorrection,
+) -> bool:
+    if _is_natural_preference_alternative(correction):
+        return True
+    normalized_pair = {
+        _normalize_evidence(correction.evidence).strip(" .!?,'\""),
+        _normalize_evidence(correction.replacement).strip(" .!?,'\""),
+    }
+    return normalized_pair == {"aircon", "air conditioning"}
 
 
 def _matches_to_infinitive_and_gerund(

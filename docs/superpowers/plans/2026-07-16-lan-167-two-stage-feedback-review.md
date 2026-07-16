@@ -1109,6 +1109,10 @@ what-do-you-like-about 요청에 대한 긍정적인 일반 평가 구간을 실
 
 알려진 핵심 요청의 `[your experience]`, `[your cleaning split]` 같은 변형을 표준 플레이스홀더로 교체하고, 플레이스홀더 라벨은 동일 교정문의 문장 뼈대 어휘로 허용한다.
 
+- [x] **Step 13: 자연스러운 구어체 교정을 정규화한다.**
+
+`aircon`을 `air conditioning`으로 바꾸는 것처럼 의미 전달에 문제가 없는 구어체·정식 표현 교체만 남으면 `languageAccuracy=2`로 정규화한다.
+
 ### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**
