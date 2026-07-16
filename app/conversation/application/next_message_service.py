@@ -79,7 +79,6 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
         error_type = raw_pattern.get("error_type")
         description = raw_pattern.get("display_name")
         feedback_copy = raw_pattern.get("feedback_copy")
-        example_right = raw_pattern.get("example_right")
         source = raw_pattern.get("source")
         if (
             not isinstance(error_type, str)
@@ -97,9 +96,6 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
             "description": description,
             "gamifiable": raw_pattern["gamifiable"],
             "benchmarkMessage": _benchmark_message_from_feedback_copy(feedback_copy),
-            "exampleRight": example_right.strip()
-            if isinstance(example_right, str) and example_right.strip()
-            else None,
             "source": source,
         }
     return catalog
@@ -657,7 +653,6 @@ def _postprocess_message_feedback_benchmark(
     if (
         feedback.benchmarkMessage is not None
         and not _contains_unverified_quantitative_claim(feedback.benchmarkMessage)
-        and not _is_catalog_benchmark_message(feedback.benchmarkMessage)
     ):
         return feedback
     return _with_benchmark_message(feedback, _DEFAULT_GOOD_BENCHMARK_MESSAGE)
@@ -688,21 +683,10 @@ def _benchmark_message_from_detected_patterns(
         normalized_evidence = _normalize_evidence(evidence)
         if not normalized_evidence or normalized_evidence not in normalized_user_message:
             continue
-        example_right = catalog_pattern.get("exampleRight")
-        if isinstance(example_right, str) and example_right.strip():
-            if normalized_evidence not in _normalize_evidence(example_right):
-                continue
         benchmark_message = catalog_pattern.get("benchmarkMessage")
         if isinstance(benchmark_message, str) and benchmark_message.strip():
             return benchmark_message
     return None
-
-
-def _is_catalog_benchmark_message(value: str) -> bool:
-    return any(
-        value == catalog_pattern.get("benchmarkMessage")
-        for catalog_pattern in _BENCHMARK_PATTERN_CATALOG.values()
-    )
 
 
 def _with_benchmark_message(
@@ -729,11 +713,9 @@ def _detected_pattern_catalog_for_prompt() -> list[dict[str, str]]:
     for error_type, catalog_pattern in _BENCHMARK_PATTERN_CATALOG.items():
         description = catalog_pattern.get("description")
         if catalog_pattern.get("gamifiable") is True and isinstance(description, str):
-            pattern = {"errorType": error_type, "description": description}
-            example_right = catalog_pattern.get("exampleRight")
-            if isinstance(example_right, str) and example_right.strip():
-                pattern["exampleRight"] = example_right
-            catalog_patterns.append(pattern)
+            catalog_patterns.append(
+                {"errorType": error_type, "description": description},
+            )
     return catalog_patterns
 
 

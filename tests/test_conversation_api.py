@@ -1240,7 +1240,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertIsNone(benchmark_message)
 
-    def test_catalog_benchmark_requires_catalog_example_evidence(self):
+    def test_catalog_benchmark_uses_catalog_pattern_with_user_evidence(self):
         catalog = {
             "tense_aspect": {
                 "description": "시제·상",
@@ -1270,9 +1270,12 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 )
             )
 
-        self.assertIsNone(benchmark_message)
+        self.assertEqual(
+            benchmark_message,
+            "불규칙 과거형을 정확히 사용했어요.",
+        )
 
-    def test_message_feedback_rejects_unverified_catalog_copy(self):
+    def test_message_feedback_keeps_nonquantitative_catalog_copy_without_pattern(self):
         feedback_data = good_message_feedback(1001)
         feedback_data.pop("scoreEvidence")
         feedback = conversation_models.MessageFeedbackData.model_validate(feedback_data)
@@ -1300,10 +1303,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 "I like to watch Formula One.",
             )
 
-        self.assertEqual(
-            processed.benchmarkMessage,
-            "질문에 맞는 핵심을 자연스럽게 전달했어요.",
-        )
+        self.assertEqual(processed.benchmarkMessage, "불규칙 과거형을 정확히 사용했어요.")
 
     def test_message_feedback_uses_default_for_unverified_quantitative_benchmark(self):
         ai_response = good_message_feedback()

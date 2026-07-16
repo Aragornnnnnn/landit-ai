@@ -359,3 +359,8 @@
 - SayNow catalog의 정량 benchmark는 사용자 발화 evidence뿐 아니라 catalog의 `example_right`와도 일치해야 적용한다. 검증되지 않은 catalog 문구는 기본 비정량 문구로 대체한다.
 - `.venv/bin/python -m unittest discover -s tests`는 99개 테스트가 통과했고, compileall, pip check, diff check도 통과했다. 실제 모델 대표 7개를 분할 실행해 짧은 GOOD, 자연스러운 문법 대안, 부분 답변, 무관 답변, 이유 보존을 확인했다.
 - 실제 모델은 일부 경우 `[your information]`, `[your proof of travel plans]`처럼 형식은 맞지만 기대 fixture보다 덜 구체적인 placeholder를 낸다. 이는 서버의 의미 검증으로 502를 만들지 않고, 다음 전체 실데이터 평가에서 별도 품질 지표로 추적한다.
+
+## 2026-07-17 benchmarkMessage 정량 문구 완화
+
+- `benchmarkMessage`는 학습 평가가 아니라 긍정적 사용자 경험을 위한 장치이므로, catalog의 단일 `example_right`와 evidence가 일치해야 한다는 추가 조건은 제거했다.
+- `GOOD`, `status=correct`, `gamifiable=true`, catalog 등록, 실제 사용자 발화에 evidence가 존재한다는 기존 조건은 유지한다. 정량 문구 자체는 catalog에서만 가져오므로 LLM이 퍼센트나 통계를 새로 만들 수는 없다.
