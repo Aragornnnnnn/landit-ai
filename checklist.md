@@ -300,4 +300,5 @@
 - [x] 검증되지 않은 정량·출처 주장을 기본 비정량 문구로 대체.
 - [x] 빈 Landit catalog와 API 문서, 작업 결정 사항 반영.
 - [x] 전체 unittest, compileall, diff check 실행.
+- [x] OpenRouter 모델로 기존 경계와 세션 113 회귀 사례 재평가.
 - [x] 최종 diff 검토와 논리 단위 커밋 생성.

@@ -687,6 +687,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("I don't know.", prompt)
         self.assertIn("I usually wake up at 9.", prompt)
         self.assertIn("um... no", prompt)
+        self.assertIn(
+            "An incomplete clause such as yes I like has languageAccuracy=1.",
+            prompt,
+        )
         self.assertIn('"scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2}', prompt)
 
     def test_feedback_prompt_exposes_verified_catalog_patterns_only(self):

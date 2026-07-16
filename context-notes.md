@@ -278,3 +278,4 @@
 - 출처가 확인된 Landit 정량 패턴이 아직 없어 `app/data/benchmark_patterns.json`은 빈 catalog로 시작한다. SayNow의 퍼센트와 출처는 복사하지 않는다.
 - 여러 핵심 질문이 한 평가 컨텍스트에 있으면 모두 충족한 경우에만 `contextFit=2`로 평가한다. 하나만 답하면 `contextFit=1`이며, 짧다는 이유만으로 감점하지 않는다.
 - 실제 세션 113의 `I don't know.`, `um... I usually wake up at 9.`, `um... no`는 `openai/gpt-5.4-mini` 재평가에서 모두 `NEEDS_IMPROVEMENT`, `contextFit=1`, 80점으로 나왔다. 3발화 세션의 GOOD 비율은 0이므로 기존 별점 상한 규칙에 따라 세션 별점은 최대 2.0이다.
+- 같은 모델로 LAN-166 회귀 사례 9개를 1회 재평가했을 때 피드백 유형과 점수 범위가 모두 일치했다. 기존 `yes I like` 부분 답변은 `contextFit=1`, `languageAccuracy=1`로 65점을 유지했다.

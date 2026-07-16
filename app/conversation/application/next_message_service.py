@@ -1049,6 +1049,7 @@ def _message_feedback_system_prompt(
             "For multiple explicit core asks, contextFit=2 only when the utterance fulfills all of them. "
             "Answering only one core ask has contextFit=1. "
             "A bare no or I don't know can answer only the explicit ask it addresses. "
+            "An incomplete clause such as yes I like has languageAccuracy=1. "
             "Do not lower contextFit or clarity solely because of an actionable grammar, word-choice, nuance, or politeness issue. "
             "A hostile or dismissive reply to the counterpart has languageAccuracy=1 even when the meaning is clear. "
             "GOOD requires contextFit=2, clarity=2, and languageAccuracy=2. "
