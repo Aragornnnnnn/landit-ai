@@ -1705,6 +1705,22 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertEqual(judgement.scoreEvidence.contextFit, 0)
 
+        copy_data = message_feedback_copy()
+        feedback, _, _ = (
+            next_message_service._parse_and_assemble_message_feedback_copy(
+                copy_data,
+                judgement,
+                request,
+            )
+        )
+        self.assertEqual(
+            feedback.correctionExpression,
+            (
+                "I usually split the cleaning by [your cleaning preference], "
+                "and [your previous cleaning routine] worked for me before."
+            ),
+        )
+
     def test_message_feedback_copy_allows_placeholder_label_as_scaffold(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(
             message_feedback_judgement(

@@ -1134,7 +1134,7 @@ def _with_explicit_non_answer(
     ):
         core_asks = [
             MessageFeedbackCoreAsk(
-                ask="how to split cleaning",
+                ask="how to usually split cleaning",
                 addressed=False,
                 evidence=None,
                 requiredPlaceholder="[your cleaning preference]",
