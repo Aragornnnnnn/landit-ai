@@ -1277,7 +1277,43 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["nativeScore"], 82)
-        self.assertEqual(response.json()["data"]["starRating"], 2.5)
+        self.assertEqual(response.json()["data"]["starRating"], 2.0)
+
+    def test_session_feedback_caps_star_when_three_messages_need_improvement(self):
+        app = self._app()
+        self._cache_feedback(app, needs_improvement_message_feedback(1001))
+        self._cache_feedback(app, needs_improvement_message_feedback(1003))
+        self._cache_feedback(app, needs_improvement_message_feedback(1005))
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 85)
+        self.assertEqual(response.json()["data"]["starRating"], 2.0)
+
+    def test_session_feedback_caps_star_when_good_is_one_third(self):
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        self._cache_feedback(app, needs_improvement_message_feedback(1003))
+        self._cache_feedback(app, needs_improvement_message_feedback(1005))
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 90)
+        self.assertEqual(response.json()["data"]["starRating"], 2.0)
+
+    def test_session_feedback_keeps_star_when_good_exceeds_one_third(self):
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        self._cache_feedback(app, good_message_feedback(1003))
+        self._cache_feedback(app, needs_improvement_message_feedback(1005))
+
+        response = self._request_session_feedback(app, [1001, 1003, 1005])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["nativeScore"], 95)
+        self.assertEqual(response.json()["data"]["starRating"], 3.0)
 
     def test_session_feedback_returns_summary_score_star_and_cached_feedbacks(self):
         app = self._app()

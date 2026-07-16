@@ -197,7 +197,7 @@ def generate_session_feedback(
     response = SessionFeedbackResponse(
         sessionId=request.sessionId,
         nativeScore=native_score,
-        starRating=_star_rating_from_native_score(native_score),
+        starRating=_star_rating_from_native_score(native_score, feedback_entries),
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
@@ -446,16 +446,28 @@ def _message_score_from_evidence(evidence: MessageFeedbackScoreEvidence) -> int:
     return max(50, weighted_score)
 
 
-def _star_rating_from_native_score(native_score: int) -> float:
+def _star_rating_from_native_score(
+    native_score: int,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> float:
     if native_score <= 54:
-        return 1.0
-    if native_score <= 64:
-        return 1.5
-    if native_score <= 74:
-        return 2.0
-    if native_score <= 89:
-        return 2.5
-    return 3.0
+        star_rating = 1.0
+    elif native_score <= 64:
+        star_rating = 1.5
+    elif native_score <= 74:
+        star_rating = 2.0
+    elif native_score <= 89:
+        star_rating = 2.5
+    else:
+        star_rating = 3.0
+
+    good_count = sum(
+        entry.feedback.feedbackType == FeedbackType.GOOD
+        for entry in feedback_entries
+    )
+    if len(feedback_entries) >= 3 and good_count * 3 <= len(feedback_entries):
+        return min(star_rating, 2.0)
+    return star_rating
 
 
 def _next_message_system_prompt() -> str:
