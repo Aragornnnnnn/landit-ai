@@ -1672,6 +1672,39 @@ class MessageFeedbackApiTests(unittest.TestCase):
             ["[your cleaning preference]", "[your previous cleaning routine]"],
         )
 
+    def test_message_feedback_judgement_restores_cleaning_asks_for_non_answer(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "How do you split cleaning, and what worked before?"
+        )
+        payload["userMessage"] = "I don't know."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=1,
+            language_accuracy=2,
+            core_asks=[
+                {
+                    "ask": "preferred household arrangement",
+                    "addressed": True,
+                    "evidence": "I don't know",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["I don't know"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(len(judgement.coreAsks), 2)
+        self.assertEqual(
+            [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
+            ["[your cleaning preference]", "[your previous cleaning routine]"],
+        )
+        self.assertEqual(judgement.scoreEvidence.contextFit, 0)
+
     def test_message_feedback_copy_allows_placeholder_label_as_scaffold(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(
             message_feedback_judgement(

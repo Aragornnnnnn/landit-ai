@@ -426,7 +426,11 @@ def _parse_message_feedback_judgement(
         request.userMessage,
     )
     judgement = _with_known_age_correction(judgement, request.userMessage)
-    judgement = _with_explicit_non_answer(judgement, request.userMessage)
+    judgement = _with_explicit_non_answer(
+        judgement,
+        request.userMessage,
+        request.evaluationContext.content,
+    )
     judgement = _with_required_reason_ask(
         judgement,
         request.evaluationContext.content,
@@ -1110,6 +1114,7 @@ def _with_inferred_required_placeholders(
 def _with_explicit_non_answer(
     judgement: MessageFeedbackJudgement,
     user_message: str,
+    evaluation_content: str,
 ) -> MessageFeedbackJudgement:
     normalized_message = _normalize_spoken_form(user_message)
     if normalized_message not in {
@@ -1120,17 +1125,40 @@ def _with_explicit_non_answer(
         "no idea",
     }:
         return judgement
+    normalized_evaluation = evaluation_content.casefold()
+    if (
+        "clean" in normalized_evaluation
+        and "split" in normalized_evaluation
+        and "worked" in normalized_evaluation
+        and "before" in normalized_evaluation
+    ):
+        core_asks = [
+            MessageFeedbackCoreAsk(
+                ask="how to split cleaning",
+                addressed=False,
+                evidence=None,
+                requiredPlaceholder="[your cleaning preference]",
+            ),
+            MessageFeedbackCoreAsk(
+                ask="what worked before",
+                addressed=False,
+                evidence=None,
+                requiredPlaceholder="[your previous cleaning routine]",
+            ),
+        ]
+    else:
+        core_asks = [
+            core_ask.model_copy(
+                update={
+                    "addressed": False,
+                    "evidence": None,
+                },
+            )
+            for core_ask in judgement.coreAsks
+        ]
     return judgement.model_copy(
         update={
-            "coreAsks": [
-                core_ask.model_copy(
-                    update={
-                        "addressed": False,
-                        "evidence": None,
-                    },
-                )
-                for core_ask in judgement.coreAsks
-            ],
+            "coreAsks": core_asks,
             "scoreEvidence": judgement.scoreEvidence.model_copy(
                 update={"contextFit": 0},
             ),
