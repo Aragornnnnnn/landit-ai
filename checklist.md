@@ -297,6 +297,7 @@
 - [x] catalog 기반 benchmarkMessage 덮어쓰기와 정량·출처 문구 fallback 실패 테스트 작성 및 RED 확인.
 - [x] 다중 핵심 질문의 부분 답변을 `contextFit=1`로 안내하는 프롬프트 회귀 테스트 추가.
 - [x] 내부 `detectedPatterns`와 사용자 발화 evidence를 검증하는 catalog 보정 구현.
+- [x] SayNow `error_patterns.json` 원본 12개 항목을 Landit catalog에 복사하고 `feedback_copy` 기반 benchmark 문구 변환 테스트 추가.
 - [x] 검증되지 않은 정량·출처 주장을 기본 비정량 문구로 대체.
 - [x] 빈 Landit catalog와 API 문서, 작업 결정 사항 반영.
 - [x] 전체 unittest, compileall, diff check 실행.

@@ -88,9 +88,9 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 - 한 메시지에서 개선 표현은 최대 1개만 생성합니다.
 - 이 API에서는 속마음을 반환하지 않습니다.
 
-`benchmarkMessage`는 GOOD 피드백의 짧은 학습 성취 문구입니다. LLM이 `detectedPatterns`로 반환한 내부 근거가 catalog 항목, `status=correct`, `gamifiable=true`, `sourceVerified=true`, 실제 사용자 발화의 `evidence` 조건을 모두 만족하면 catalog의 검증된 문구로 대체합니다. 검증된 catalog 근거가 없으면 LLM 문구를 유지하되, 퍼센트·비율·횟수 통계·출처 주장은 기본 비정량 문구로 대체합니다. `NEEDS_IMPROVEMENT`의 `benchmarkMessage`는 항상 `null`입니다.
+`benchmarkMessage`는 GOOD 피드백의 짧은 학습 성취 문구입니다. LLM이 `detectedPatterns`로 반환한 내부 근거가 catalog 항목, `status=correct`, `gamifiable=true`, 실제 사용자 발화의 `evidence` 조건을 모두 만족하면 catalog의 `feedback_copy`를 문장형으로 바꾼 문구로 대체합니다. catalog는 SayNow의 `error_patterns.json` 원본을 그대로 사용합니다. catalog 근거가 없으면 LLM 문구를 유지하되, 퍼센트·비율·횟수 통계·출처 주장은 기본 비정량 문구로 대체합니다. `NEEDS_IMPROVEMENT`의 `benchmarkMessage`는 항상 `null`입니다.
 
-`detectedPatterns`는 AI 서버 내부의 benchmark 검증에만 사용하며, message-feedback과 session-feedback 응답 및 OpenAPI 스키마에는 노출하지 않습니다. 현재 catalog는 출처 확인 전이라 비어 있으므로, 운영에서는 정량 문구가 생성되지 않습니다.
+`detectedPatterns`는 AI 서버 내부의 benchmark 검증에만 사용하며, message-feedback과 session-feedback 응답 및 OpenAPI 스키마에는 노출하지 않습니다. 현재 catalog에는 SayNow 원본 12개 패턴이 있으며, 출처 표기는 원본 값을 그대로 유지합니다.
 
 메시지별 피드백 cache는 추후 최종 피드백 생성을 위한 단기 in-memory cache이며, 장기 저장소가 아닙니다. 여러 서버 인스턴스가 같은 cache 결과를 공유해야 하거나 SQS 기반 비동기 처리가 들어오면 외부 저장소로 옮깁니다.
 

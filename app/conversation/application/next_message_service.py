@@ -42,6 +42,25 @@ _BENCHMARK_PATTERN_CATALOG_PATH = (
 )
 
 
+def _benchmark_message_from_feedback_copy(feedback_copy: str) -> str:
+    cleaned = re.sub(r"[.!。]+$", "", feedback_copy).strip()
+    replacements = (
+        ("정확히 쓴 사람", "정확히 썼어요"),
+        ("놓치지 않은 사람", "놓치지 않았어요"),
+        ("쓴 사람", "썼어요"),
+        ("맞춘 사람", "맞췄어요"),
+        ("챙긴 사람", "챙겼어요"),
+        ("잡은 사람", "잡았어요"),
+        ("해낸 사람", "해냈어요"),
+    )
+    for source, replacement in replacements:
+        if cleaned.endswith(source):
+            return f"{cleaned[:-len(source)]}{replacement}"
+    if cleaned.endswith("한 사람"):
+        return f"{cleaned[:-len('한 사람')]}했어요"
+    return cleaned
+
+
 def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
     try:
         raw_catalog = json.loads(
@@ -56,24 +75,28 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
     for raw_pattern in raw_catalog:
         if not isinstance(raw_pattern, dict):
             continue
-        error_type = raw_pattern.get("errorType")
-        description = raw_pattern.get("description")
-        benchmark_message = raw_pattern.get("benchmarkMessage")
+        error_type = raw_pattern.get("error_type")
+        description = raw_pattern.get("display_name")
+        feedback_copy = raw_pattern.get("feedback_copy")
         source = raw_pattern.get("source")
         if (
             not isinstance(error_type, str)
             or not error_type.strip()
             or not isinstance(description, str)
             or not description.strip()
-            or raw_pattern.get("gamifiable") is not True
-            or not isinstance(benchmark_message, str)
-            or not benchmark_message.strip()
+            or not isinstance(raw_pattern.get("gamifiable"), bool)
+            or not isinstance(feedback_copy, str)
+            or not feedback_copy.strip()
             or not isinstance(source, str)
             or not source.strip()
-            or raw_pattern.get("sourceVerified") is not True
         ):
             continue
-        catalog[error_type] = raw_pattern
+        catalog[error_type] = {
+            "description": description,
+            "gamifiable": raw_pattern["gamifiable"],
+            "benchmarkMessage": _benchmark_message_from_feedback_copy(feedback_copy),
+            "source": source,
+        }
     return catalog
 
 

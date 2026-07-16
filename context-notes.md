@@ -273,9 +273,9 @@
 ## 2026-07-16 LAN-166 benchmarkMessage 근거 검증과 다중 질문 보정
 
 - `detectedPatterns`는 LLM 응답에서 읽되 메시지 피드백 cache와 외부 API 응답에는 저장하거나 노출하지 않는다.
-- GOOD의 `benchmarkMessage`는 `status=correct`, catalog 등록, `gamifiable=true`, `sourceVerified=true`, 실제 사용자 발화에 포함된 `evidence`를 모두 만족하는 경우에만 catalog 문구로 덮어쓴다.
+- GOOD의 `benchmarkMessage`는 `status=correct`, catalog 등록, `gamifiable=true`, 실제 사용자 발화에 포함된 `evidence`를 모두 만족하는 경우에만 catalog 문구로 덮어쓴다.
 - 검증된 catalog 근거가 없을 때는 LLM의 비정량 문구를 유지한다. 퍼센트, 비율, 횟수 통계, 출처 주장이 포함된 문구나 빈 문구는 기본 문구로 대체한다.
-- 출처가 확인된 Landit 정량 패턴이 아직 없어 `app/data/benchmark_patterns.json`은 빈 catalog로 시작한다. SayNow의 퍼센트와 출처는 복사하지 않는다.
+- 사용자 요청에 따라 `app/data/benchmark_patterns.json`에 SayNow `error_patterns.json` 원본 12개 항목을 그대로 복사한다. 원본의 `feedback_copy`는 SayNow와 같은 규칙으로 문장형 `benchmarkMessage`로 변환하며, `SayNow 기획 가설`을 포함한 출처 표기도 원본 값을 유지한다.
 - 여러 핵심 질문이 한 평가 컨텍스트에 있으면 모두 충족한 경우에만 `contextFit=2`로 평가한다. 하나만 답하면 `contextFit=1`이며, 짧다는 이유만으로 감점하지 않는다.
 - 실제 세션 113의 `I don't know.`, `um... I usually wake up at 9.`, `um... no`는 `openai/gpt-5.4-mini` 재평가에서 모두 `NEEDS_IMPROVEMENT`, `contextFit=1`, 80점으로 나왔다. 3발화 세션의 GOOD 비율은 0이므로 기존 별점 상한 규칙에 따라 세션 별점은 최대 2.0이다.
 - 같은 모델로 LAN-166 회귀 사례 9개를 1회 재평가했을 때 피드백 유형과 점수 범위가 모두 일치했다. 기존 `yes I like` 부분 답변은 `contextFit=1`, `languageAccuracy=1`로 65점을 유지했다.

@@ -1102,6 +1102,40 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "검증된 정량 benchmark 문구예요.",
         )
 
+    def test_message_feedback_uses_saynow_article_catalog_benchmark(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "관사를 자연스럽게 사용했어요."
+        ai_response["detectedPatterns"] = [
+            {
+                "errorType": "article_a_omission",
+                "status": "correct",
+                "evidence": "an apple",
+            },
+        ]
+        payload = valid_message_feedback_payload()
+        payload["userMessage"] = "I ate an apple because I was hungry."
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "한국인의 79%가 틀리는 a/an을 정확히 썼어요",
+        )
+
     def test_catalog_benchmark_requires_evidence_from_user_utterance(self):
         catalog = {
             "informal_question": {
