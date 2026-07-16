@@ -978,6 +978,10 @@ def _normalize_evidence(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _normalize_spoken_form(value: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", value.casefold()).split())
+
+
 def _meaningful_evidence_words(value: str) -> set[str]:
     return {
         word
@@ -1091,6 +1095,10 @@ def _is_natural_preference_alternative(
 def _is_non_actionable_language_alternative(
     correction: MessageFeedbackLanguageCorrection,
 ) -> bool:
+    if _normalize_spoken_form(correction.evidence) == _normalize_spoken_form(
+        correction.replacement,
+    ):
+        return True
     if _is_natural_preference_alternative(correction):
         return True
     normalized_pair = {

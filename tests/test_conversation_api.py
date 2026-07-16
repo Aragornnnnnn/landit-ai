@@ -1115,6 +1115,79 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
         self.assertEqual(judgement.languageCorrections, [])
 
+    def test_message_feedback_judgement_ignores_capitalization_only_correction(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What's your name? Tell me a little about yourself!"
+        )
+        payload["userMessage"] = "My name is junseo, I like pizza."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            language_accuracy=1,
+            language_corrections=[
+                {"evidence": "junseo", "replacement": "Junseo"},
+                {"evidence": "I like pizza", "replacement": "I like pizza."},
+            ],
+            core_asks=[
+                {
+                    "ask": "name and information about the user",
+                    "addressed": True,
+                    "evidence": "My name is junseo, I like pizza",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["My name is junseo", "I like pizza"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
+        self.assertEqual(judgement.languageCorrections, [])
+
+    def test_message_feedback_judgement_keeps_meaningful_language_correction(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What's your name? Tell me a little about yourself!"
+        )
+        payload["userMessage"] = "Hi, My name is sandman. I'm 25 years."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            language_accuracy=1,
+            language_corrections=[
+                {
+                    "evidence": "Hi, My name is",
+                    "replacement": "Hi, my name is",
+                },
+                {
+                    "evidence": "I'm 25 years",
+                    "replacement": "I'm 25 years old",
+                },
+            ],
+            core_asks=[
+                {
+                    "ask": "name and information about the user",
+                    "addressed": True,
+                    "evidence": "My name is sandman. I'm 25 years",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["My name is sandman", "I'm 25 years"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 1)
+        self.assertEqual(
+            [correction.evidence for correction in judgement.languageCorrections],
+            ["I'm 25 years"],
+        )
+
     def test_message_feedback_judgement_rejects_bare_evaluation_as_why_reason(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (
