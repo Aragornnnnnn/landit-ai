@@ -114,6 +114,8 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 내부 판정에 `languageCorrections`를 추가한다. 각 항목은 실제 사용자 발화의 가장 작은 문제 구간인 `evidence`와 그 구간만 고친 `replacement`를 가진다. `languageAccuracy`가 0 또는 1이면 한 개 이상을 요구하고, 2면 빈 배열만 허용한다. 서버는 evidence가 실제 사용자 발화에 포함되는지 검증하며, 2단계 교정 표현은 replacement의 새 내용어만 사용할 수 있다. 이 필드는 AI 서버 내부 데이터이며 외부 API와 OpenAPI에는 노출하지 않는다.
 
+`like to watch`와 `like watching`처럼 둘 다 자연스러운 선호 표현 간 교체만 제안된 경우는 교정 목록에서 제거한다. 다른 언어 문제가 남지 않으면 서버가 `languageAccuracy=2`로 정규화해 단순 선호 차이로 피드백하지 않는다.
+
 `What do you like about ...?`에 `This is so cool`처럼 지시 대상의 특징을 구체화하지 않은 평가로 답하면 질문에는 반응했으므로 `contextFit=2`를 유지하되 상대가 의미를 추측해야 하므로 `clarity=1`로 판정한다. 이 경계는 서버가 판정 근거에서 결정적으로 정규화한다. 이를 문법 오류로 취급하지 않으며 `languageAccuracy=2`와 `languageCorrections=[]`를 유지한다.
 
 ### 교정 표현의 허용 어휘

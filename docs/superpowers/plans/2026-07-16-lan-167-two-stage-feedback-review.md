@@ -1093,6 +1093,10 @@ Expected: PASS while the public response and normal two-call path remain unchang
 
 전역 허용 어휘에 교정 단어를 계속 추가하지 않고, 1단계 판정에서 승인한 replacement의 내용어만 2단계 교정 표현에서 새로 사용할 수 있게 한다.
 
+- [x] **Step 9: 자연스러운 선호 표현 간 교체를 정규화한다.**
+
+`like to watch`와 `like watching` 사이의 교체만 언어 문제로 제시되면 해당 correction을 제거하고 다른 문제가 없을 때 `languageAccuracy=2`로 정규화한다.
+
 ### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**

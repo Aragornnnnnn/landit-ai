@@ -1051,6 +1051,38 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 request,
             )
 
+    def test_message_feedback_judgement_ignores_natural_preference_alternative(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = "What sport do you like?"
+        payload["userMessage"] = "I like to watch Formula One."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            language_accuracy=1,
+            language_corrections=[
+                {
+                    "evidence": "like to watch Formula One",
+                    "replacement": "like watching Formula One",
+                },
+            ],
+            core_asks=[
+                {
+                    "ask": "sport the user likes",
+                    "addressed": True,
+                    "evidence": "Formula One",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["I like to watch Formula One"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
+        self.assertEqual(judgement.languageCorrections, [])
+
     def test_message_feedback_judgement_rejects_bare_evaluation_as_why_reason(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (

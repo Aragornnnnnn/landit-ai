@@ -24,6 +24,7 @@ from app.models.conversation import (
     InnerThoughtRequest,
     InnerThoughtResponse,
     MessageFeedbackData,
+    MessageFeedbackLanguageCorrection,
     MessageFeedbackCopy,
     MessageFeedbackCoreAsk,
     MessageFeedbackJudgement,
@@ -420,6 +421,7 @@ def _parse_message_feedback_judgement(
             raise AiResponseInvalidError(
                 "message_feedback_judgement_language_correction_evidence",
             )
+    judgement = _without_natural_preference_alternative_corrections(judgement)
     if any(
         _is_bare_evaluation_reason(core_ask)
         for core_ask in judgement.coreAsks
@@ -950,6 +952,67 @@ def _is_bare_evaluation_reason(core_ask: MessageFeedbackCoreAsk) -> bool:
         return False
     evidence_words = _meaningful_evidence_words(core_ask.evidence)
     return bool(evidence_words) and evidence_words <= _GENERIC_EVALUATION_WORDS
+
+
+def _without_natural_preference_alternative_corrections(
+    judgement: MessageFeedbackJudgement,
+) -> MessageFeedbackJudgement:
+    retained_corrections = [
+        correction
+        for correction in judgement.languageCorrections
+        if not _is_natural_preference_alternative(correction)
+    ]
+    if len(retained_corrections) == len(judgement.languageCorrections):
+        return judgement
+    language_accuracy = (
+        judgement.scoreEvidence.languageAccuracy
+        if retained_corrections
+        else 2
+    )
+    return judgement.model_copy(
+        update={
+            "languageCorrections": retained_corrections,
+            "scoreEvidence": judgement.scoreEvidence.model_copy(
+                update={"languageAccuracy": language_accuracy},
+            ),
+        },
+    )
+
+
+def _is_natural_preference_alternative(
+    correction: MessageFeedbackLanguageCorrection,
+) -> bool:
+    evidence = correction.evidence.casefold().strip(" .!?,'\"")
+    replacement = correction.replacement.casefold().strip(" .!?,'\"")
+    return _matches_to_infinitive_and_gerund(evidence, replacement) or (
+        _matches_to_infinitive_and_gerund(replacement, evidence)
+    )
+
+
+def _matches_to_infinitive_and_gerund(
+    to_infinitive: str,
+    gerund: str,
+) -> bool:
+    to_match = re.fullmatch(r"(.*\blike)\s+to\s+([a-z]+)(.*)", to_infinitive)
+    gerund_match = re.fullmatch(r"(.*\blike)\s+([a-z]+ing)(.*)", gerund)
+    if to_match is None or gerund_match is None:
+        return False
+    prefix, verb, suffix = to_match.groups()
+    gerund_prefix, gerund_verb, gerund_suffix = gerund_match.groups()
+    return (
+        prefix == gerund_prefix
+        and suffix == gerund_suffix
+        and _gerund_matches_verb(verb, gerund_verb)
+    )
+
+
+def _gerund_matches_verb(verb: str, gerund: str) -> bool:
+    candidates = {f"{verb}ing"}
+    if verb.endswith("e"):
+        candidates.add(f"{verb[:-1]}ing")
+    if len(verb) >= 3:
+        candidates.add(f"{verb}{verb[-1]}ing")
+    return gerund in candidates
 
 
 def _is_missed_evaluation_answer(
