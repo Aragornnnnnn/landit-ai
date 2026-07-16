@@ -125,7 +125,7 @@ def _evaluate_feedback_case(
     generated_copy = feedback_entry.generated_copy
     message_score = _message_score_from_evidence(score_evidence)
     feedback_type = feedback.feedbackType.value
-    expected_feedback_type = case["expectedFeedbackType"]
+    expected_feedback_type = case.get("expectedFeedbackType")
     expected_context_fit = case.get("expectedContextFit")
     expected_score_range = case.get("expectedMessageScoreRange")
     required_placeholders = case.get("requiredCorrectionPlaceholders", [])
@@ -158,7 +158,11 @@ def _evaluate_feedback_case(
         "run": run,
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
-        "feedbackTypeMatchesExpectation": feedback_type == expected_feedback_type,
+        "feedbackTypeMatchesExpectation": (
+            feedback_type == expected_feedback_type
+            if expected_feedback_type is not None
+            else None
+        ),
         "judgement": (
             judgement.model_dump(mode="json") if judgement is not None else None
         ),
@@ -190,7 +194,11 @@ def _evaluate_feedback_case(
         "copyValidationPassed": generated_copy is not None,
         "copyWasRepaired": feedback_entry.copy_was_repaired,
         "finalFeedback": feedback.model_dump(mode="json"),
-        "expectedFeedbackTypeMatched": feedback_type == expected_feedback_type,
+        "expectedFeedbackTypeMatched": (
+            feedback_type == expected_feedback_type
+            if expected_feedback_type is not None
+            else None
+        ),
         "expectedScoreRangeMatched": (
             expected_score_range[0] <= message_score <= expected_score_range[1]
             if expected_score_range is not None
@@ -214,7 +222,7 @@ def _feedback_evaluation_error_result(
         "caseId": case["caseId"],
         "kind": "message-feedback",
         "run": run,
-        "expectedFeedbackType": case["expectedFeedbackType"],
+        "expectedFeedbackType": case.get("expectedFeedbackType"),
         "feedbackType": None,
         "feedbackTypeMatchesExpectation": False,
         "judgement": None,

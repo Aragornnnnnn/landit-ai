@@ -433,6 +433,54 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["foundForbiddenFeedbackTerms"], [])
         self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
 
+    def test_feedback_result_allows_actual_data_without_expected_type(self):
+        case = feedback_case()
+        del case["expectedFeedbackType"]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="GOOD",
+            baseLocaleAnalogy='"그래, 좋아"라고 자연스럽게 동의하는 것과 같아요.',
+            feedbackDetail="친구의 제안에 자연스럽게 동의했어요.",
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=2,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=MessageFeedbackResponse(
+                    sessionId=200,
+                    messageId=2001,
+                    feedbackStatus=FeedbackStatus.PREPARING,
+                ),
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                        judgement=None,
+                        generated_copy=None,
+                        copy_was_repaired=False,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertIsNone(results[0]["expectedFeedbackType"])
+        self.assertIsNone(results[0]["feedbackTypeMatchesExpectation"])
+        self.assertIsNone(results[0]["expectedFeedbackTypeMatched"])
+
     def test_feedback_result_records_invalid_judgement_without_aborting_batch(self):
         with patch(
             "scripts.evaluate_conversation_quality.generate_message_feedback",
