@@ -1,0 +1,152 @@
+[
+  {
+    "caseId": "lan166-partial-multi-question-duration",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [50, 50],
+    "payload": {
+      "sessionId": 94,
+      "messageId": 242,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 6,
+        "title": "인터내셔널 파티 — 처음 만난 Hailey",
+        "briefing": "기숙사에서 열린 인터내셔널 파티. 처음 보는 Hailey가 먼저 다가와 말을 건다.",
+        "conversationGoal": "처음 만난 Hailey와 자연스럽게 스몰토크하고 다음 모임 초대에 응답하기",
+        "counterpartRole": "Hailey — 기숙사 파티에서 처음 만난 다른 유학생, 밝고 사교적인 성격"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Hey, hi! Nice to meet you! I don't think we've met — how long have you been here? Have you made a lot of friends yet?",
+        "translatedContent": "안녕, 반가워! 우리 처음 보는 것 같은데 — 여기 온 지 얼마나 됐어? 친구는 많이 사귀었어?"
+      },
+      "userMessage": "hi. 2years ago"
+    }
+  },
+  {
+    "caseId": "lan166-partial-multi-question-party",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [65, 65],
+    "payload": {
+      "sessionId": 94,
+      "messageId": 244,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 6,
+        "title": "인터내셔널 파티 — 처음 만난 Hailey",
+        "briefing": "기숙사에서 열린 인터내셔널 파티. 처음 보는 Hailey가 먼저 다가와 말을 건다.",
+        "conversationGoal": "처음 만난 Hailey와 자연스럽게 스몰토크하고 다음 모임 초대에 응답하기",
+        "counterpartRole": "Hailey — 기숙사 파티에서 처음 만난 다른 유학생, 밝고 사교적인 성격"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Nice, you've had some time to settle in. Are you into parties and stuff usually? Do people back in Korea throw parties like this too?",
+        "translatedContent": "좋네, 여기서 꽤 적응했겠다. 넌 평소에 파티 같은 거 좋아해? 한국에서도 이런 파티 많이 해?"
+      },
+      "userMessage": "yes I like"
+    }
+  },
+  {
+    "caseId": "lan166-short-context-complete-food",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedMessageScoreRange": [100, 100],
+    "payload": {
+      "sessionId": 94,
+      "messageId": 246,
+      "turnNumber": 3,
+      "messageSequence": 6,
+      "scenario": {
+        "scenarioId": 6,
+        "title": "인터내셔널 파티 — 처음 만난 Hailey",
+        "briefing": "기숙사에서 열린 인터내셔널 파티. 처음 보는 Hailey가 먼저 다가와 말을 건다.",
+        "conversationGoal": "처음 만난 Hailey와 자연스럽게 스몰토크하고 다음 모임 초대에 응답하기",
+        "counterpartRole": "Hailey — 기숙사 파티에서 처음 만난 다른 유학생, 밝고 사교적인 성격"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Nice, that sounds fun. Oh, my friend's having a going-away party soon — you should come! It's potluck though, so everyone brings a dish. If you come, what would you make?",
+        "translatedContent": "좋네, 재밌겠다. 아, 내 친구 곧 송별 파티 하는데 — 너도 와! 근데 포틀럭이라 각자 음식 하나씩 해와야 돼. 오면 넌 뭐 만들어 올 거야?"
+      },
+      "userMessage": "um..... kimchi"
+    }
+  },
+  {
+    "caseId": "lan166-harsh-roommate-boundary",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [85, 85],
+    "payload": {
+      "sessionId": 97,
+      "messageId": 264,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "소음, 손님, 경계 정하기",
+        "briefing": "같이 지낸 지 좀 됐지만, Charlie가 손님 초대·소음·물건 공유에 대한 경계를 확실히 정해두고 싶어한다.",
+        "conversationGoal": "손님, 소음, 물건 공유에 대한 서로의 기준을 명확히 정하기",
+        "counterpartRole": "Charlie — 룸메이트, 친구를 자주 초대하고 음악을 틀고 공부하는 편이라 경계를 미리 정하고 싶어함"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Sometimes I like having a friend or two over — how do you feel about guests in the room? I wanna get on the same page early.",
+        "translatedContent": "나 가끔 친구 한두 명 부르는 거 좋아하는데 — 넌 방에 손님 오는 거 어떻게 생각해? 미리 맞춰두고 싶어서."
+      },
+      "userMessage": "I hate it"
+    }
+  },
+  {
+    "caseId": "lan166-unnatural-word-choice-boundary",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [85, 85],
+    "payload": {
+      "sessionId": 97,
+      "messageId": 266,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "소음, 손님, 경계 정하기",
+        "briefing": "같이 지낸 지 좀 됐지만, Charlie가 손님 초대·소음·물건 공유에 대한 경계를 확실히 정해두고 싶어한다.",
+        "conversationGoal": "손님, 소음, 물건 공유에 대한 서로의 기준을 명확히 정하기",
+        "counterpartRole": "Charlie — 룸메이트, 친구를 자주 초대하고 음악을 틀고 공부하는 편이라 경계를 미리 정하고 싶어함"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "That’s fair. I always study with music on — what kind of setup helps you focus? Dead silence, some background noise, music?",
+        "translatedContent": "그럴 수 있지. 난 항상 음악 틀고 공부하는데 — 넌 뭐가 있어야 집중돼? 완전 조용, 약간의 소음, 음악?"
+      },
+      "userMessage": "Totally quiet condition"
+    }
+  },
+  {
+    "caseId": "lan166-valid-alternative-question-answer",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedMessageScoreRange": [100, 100],
+    "payload": {
+      "sessionId": 60,
+      "messageId": 160,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 3,
+        "title": "카페 수다 — 주말 약속 잡기",
+        "briefing": "카페에서 Charlie와 커피를 마시다가 자연스럽게 주말 계획 얘기가 나온다.",
+        "conversationGoal": "Charlie와 주말 약속(요일, 할 일)을 정하고 서로의 취향 알아가기",
+        "counterpartRole": "Charlie — 룸메이트, 주말에 같이 놀고 싶어하는 밝은 성격"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Nice, Sunday works great. So what do you usually do for fun? Or is there anything you've been dying to try ever since you got here?",
+        "translatedContent": "좋다, 일요일 괜찮네. 넌 보통 뭐하고 놀아? 아님 여기 와서 꼭 해보고 싶었던 거 있어?"
+      },
+      "userMessage": "I want to play soccer with my friend."
+    }
+  }
+]
