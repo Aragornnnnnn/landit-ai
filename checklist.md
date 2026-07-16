@@ -370,3 +370,12 @@
 - [x] 전체 unittest, compileall, pip check, diff check 실행.
 - [x] 대표 7개 실제 모델 사례를 유형·점수·사실 보존 관점에서 재평가.
 - [ ] 전체 실제 사용자 발화로 구조 실패율과 플레이스홀더 구체성을 운영 기준으로 재측정.
+
+## 2026-07-17 LAN-167 검수 실패 fallback
+
+- [x] 검수 또는 검수 복구가 실패해도 계약 검증을 통과한 1차 후보를 사용하는 RED 테스트 추가.
+- [x] 검수 provider 실패와 검수 구조 복구 재실패에서 202와 후보 cache 저장 구현.
+- [x] 내부 품질 평가 결과에 `reviewWasFallback` 기록.
+- [x] 고정 품질 사례 7건 실제 모델 평가로 검수 fallback 발생 수 확인.
+- [x] 전체 unittest, compileall, pip check 실행.
+- [x] 변경사항 검토와 논리 단위 커밋 생성.

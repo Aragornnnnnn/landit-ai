@@ -109,6 +109,7 @@ class _MessageFeedbackCacheEntry:
     feedback: MessageFeedbackData
     score_evidence: MessageFeedbackScoreEvidence
     user_message: str
+    review_was_fallback: bool
     expires_at: float
 
 
@@ -212,12 +213,25 @@ def generate_message_feedback(
         request,
         resolved_settings,
     )
-    reviewed, detected_patterns = _review_message_feedback_candidate(
-        request,
-        candidate,
-        detected_patterns,
-        resolved_settings,
-    )
+    review_was_fallback = False
+    try:
+        reviewed, detected_patterns = _review_message_feedback_candidate(
+            request,
+            candidate,
+            detected_patterns,
+            resolved_settings,
+        )
+    except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+        logger.warning(
+            "AI 메시지별 피드백 검수에 실패해 생성 후보를 사용합니다. "
+            "workflow=message_feedback_review_fallback reason=%s "
+            "sessionId=%s messageId=%s",
+            getattr(exc, "reason", type(exc).__name__),
+            request.sessionId,
+            request.messageId,
+        )
+        reviewed = candidate
+        review_was_fallback = True
     feedback = MessageFeedbackData.model_validate(
         reviewed.model_dump(exclude={"scoreEvidence"}),
     )
@@ -232,6 +246,7 @@ def generate_message_feedback(
         feedback,
         score_evidence=reviewed.scoreEvidence,
         user_message=request.userMessage,
+        review_was_fallback=review_was_fallback,
     )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
@@ -563,6 +578,7 @@ def _store_message_feedback(
     *,
     score_evidence: MessageFeedbackScoreEvidence,
     user_message: str,
+    review_was_fallback: bool,
     now: float | None = None,
 ) -> None:
     current_time = _cache_now() if now is None else now
@@ -573,6 +589,7 @@ def _store_message_feedback(
             feedback=feedback,
             score_evidence=score_evidence,
             user_message=user_message,
+            review_was_fallback=review_was_fallback,
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
         )
 

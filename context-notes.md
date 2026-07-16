@@ -364,3 +364,10 @@
 
 - `benchmarkMessage`는 학습 평가가 아니라 긍정적 사용자 경험을 위한 장치이므로, catalog의 단일 `example_right`와 evidence가 일치해야 한다는 추가 조건은 제거했다.
 - `GOOD`, `status=correct`, `gamifiable=true`, catalog 등록, 실제 사용자 발화에 evidence가 존재한다는 기존 조건은 유지한다. 정량 문구 자체는 catalog에서만 가져오므로 LLM이 퍼센트나 통계를 새로 만들 수는 없다.
+
+## 2026-07-17 LAN-167 검수 실패 fallback
+
+- `MessageFeedbackEvaluation` 1차 후보는 이미 Pydantic 구조, `feedbackType`과 `scoreEvidence` 관계, placeholder 형식을 통과한 값이다. 검수 호출, 검수 구조 복구 호출이 `AiResponseInvalidError` 또는 `AiGenerationFailedError`로 끝나면 이 후보를 최종 결과로 사용한다.
+- 1차 후보 생성 단계의 실패는 fallback하지 않는다. 유효한 후보가 없으므로 기존 502 또는 503 계약을 유지한다.
+- fallback 여부는 AI 서버 내부 cache와 품질 평가 도구의 `reviewWasFallback`에서만 기록하며 외부 API, OpenAPI, backend DTO에는 노출하지 않는다.
+- 고정 피드백 품질 사례 7건을 실제 OpenRouter 모델로 각 1회 실행한 결과 검수 fallback은 0건이었다. 1차 후보 구조 복구는 4건에서 발생했지만 모두 복구 후 검수를 통과했다.

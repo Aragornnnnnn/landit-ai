@@ -156,6 +156,7 @@ def _evaluate_feedback_case(
         "run": run,
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
+        "reviewWasFallback": feedback_entry.review_was_fallback,
         "feedbackTypeMatchesExpectation": (
             feedback_type == expected_feedback_type
             if expected_feedback_type is not None
@@ -212,6 +213,7 @@ def _feedback_evaluation_error_result(
         "run": run,
         "expectedFeedbackType": case.get("expectedFeedbackType"),
         "feedbackType": None,
+        "reviewWasFallback": None,
         "feedbackTypeMatchesExpectation": False,
         "scoreEvidence": None,
         "expectedContextFit": case.get("expectedContextFit"),

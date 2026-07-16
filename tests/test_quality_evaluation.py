@@ -281,6 +281,7 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
+                        review_was_fallback=True,
                     ),
                 ],
             ),
@@ -309,6 +310,7 @@ class QualityEvaluationTests(unittest.TestCase):
             {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
         )
         self.assertEqual(results[0]["messageScore"], 100)
+        self.assertTrue(results[0]["reviewWasFallback"])
         self.assertEqual(results[0]["expectedMessageScoreRange"], [100, 100])
         self.assertTrue(results[0]["messageScoreWithinExpectation"])
 
@@ -347,6 +349,7 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
+                        review_was_fallback=False,
                     ),
                 ],
             ),
@@ -397,6 +400,7 @@ class QualityEvaluationTests(unittest.TestCase):
                         generated_copy=None,
                         judgement_was_repaired=False,
                         copy_was_repaired=False,
+                        review_was_fallback=False,
                     ),
                 ],
             ),

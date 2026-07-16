@@ -767,7 +767,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "NEEDS_IMPROVEMENT",
         )
 
-    def test_message_feedback_does_not_cache_after_review_repair_fails(self):
+    def test_message_feedback_uses_candidate_after_review_repair_fails(self):
         candidate = good_message_feedback(1001)
         invalid_review = good_message_feedback(1001)
         invalid_review.pop("scoreEvidence")
@@ -791,9 +791,50 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.status_code, 202)
         self.assertEqual(len(fake_openai.completions.calls), 3)
-        self.assertIsNone(get_cached_message_feedback(100, 1001))
+        self.assertEqual(
+            get_cached_message_feedback(100, 1001).feedbackType.value,
+            "GOOD",
+        )
+        self.assertTrue(
+            next_message_service._get_expected_message_feedback_entries(
+                100,
+                [1001],
+            )[0].review_was_fallback,
+        )
+
+    def test_message_feedback_uses_candidate_after_review_generation_fails(self):
+        candidate = good_message_feedback(1001)
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate)],
+            errors=[None, RuntimeError("review unavailable")],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertEqual(
+            get_cached_message_feedback(100, 1001).feedbackType.value,
+            "GOOD",
+        )
+        self.assertTrue(
+            next_message_service._get_expected_message_feedback_entries(
+                100,
+                [1001],
+            )[0].review_was_fallback,
+        )
 
     def test_review_prompt_requests_complete_final_json_and_preserves_user_facts(self):
         prompt = next_message_service._message_feedback_review_system_prompt(
