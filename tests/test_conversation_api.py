@@ -938,6 +938,44 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(feedback.messageId, request.messageId)
 
+    def test_message_feedback_copy_reports_missing_placeholder_reason(self):
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=1,
+                core_asks=[
+                    {
+                        "ask": "say what activity you like",
+                        "addressed": True,
+                        "evidence": "jogging",
+                        "requiredPlaceholder": None,
+                    },
+                    {
+                        "ask": "say why you like it",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your reason]",
+                    },
+                ],
+            ),
+        )
+        feedback = conversation_models.MessageFeedbackData(
+            messageId=1001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="좋아하는 활동만 말한 것과 같아요.",
+            positiveFeedback="좋아하는 활동을 말했어요.",
+            correctionExpression="I like jogging.",
+            correctionReason="좋아하는 이유도 덧붙여 보세요.",
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_copy_missing_placeholder",
+        ):
+            next_message_service._validate_message_feedback_copy(
+                judgement,
+                feedback,
+            )
+
     def test_message_feedback_locks_judgement_while_generating_copy(self):
         judgement = message_feedback_judgement(
             context_fit=1,

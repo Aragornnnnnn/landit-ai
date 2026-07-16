@@ -211,6 +211,7 @@ def _evaluate_feedback_case(
             not missing_placeholders and not found_forbidden_terms
         ),
         "validationError": None,
+        "validationReason": None,
     }
 
 
@@ -250,6 +251,7 @@ def _feedback_evaluation_error_result(
         "foundForbiddenFeedbackTerms": [],
         "feedbackTextMatchesExpectation": False,
         "validationError": type(error).__name__,
+        "validationReason": getattr(error, "reason", type(error).__name__),
     }
 
 

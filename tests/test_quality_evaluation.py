@@ -488,7 +488,7 @@ class QualityEvaluationTests(unittest.TestCase):
     def test_feedback_result_records_invalid_judgement_without_aborting_batch(self):
         with patch(
             "scripts.evaluate_conversation_quality.generate_message_feedback",
-            side_effect=AiResponseInvalidError,
+            side_effect=AiResponseInvalidError("test_validation_reason"),
         ):
             results = evaluate_cases(
                 [feedback_case()],
@@ -498,6 +498,7 @@ class QualityEvaluationTests(unittest.TestCase):
             )
 
         self.assertEqual(results[0]["validationError"], "AiResponseInvalidError")
+        self.assertEqual(results[0]["validationReason"], "test_validation_reason")
         self.assertFalse(results[0]["judgementWasRepaired"])
         self.assertFalse(results[0]["copyValidationPassed"])
         self.assertIsNone(results[0]["finalFeedback"])

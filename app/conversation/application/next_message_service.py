@@ -126,6 +126,10 @@ _message_feedback_cache_lock = RLock()
 class AiResponseInvalidError(Exception):
     """AI 응답이 API 계약과 다를 때 발생한다."""
 
+    def __init__(self, reason: str = "ai_response_invalid") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
 
 class AiGenerationFailedError(Exception):
     """AI 호출 자체가 실패했을 때 발생한다."""
@@ -376,9 +380,9 @@ def _parse_and_assemble_message_feedback_copy(
     try:
         copy = MessageFeedbackCopy.model_validate(copy_data)
     except ValidationError as exc:
-        raise AiResponseInvalidError from exc
+        raise AiResponseInvalidError("message_feedback_copy_schema") from exc
     if copy.messageId not in (None, request.messageId):
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("message_feedback_copy_message_id")
 
     feedback_type = _feedback_type_from_score_evidence(judgement.scoreEvidence)
     copy_fields = copy.model_dump()
@@ -400,7 +404,7 @@ def _parse_and_assemble_message_feedback_copy(
             "feedbackType": feedback_type,
         })
     except ValidationError as exc:
-        raise AiResponseInvalidError from exc
+        raise AiResponseInvalidError("message_feedback_copy_field_contract") from exc
     _validate_message_feedback_copy(judgement, feedback)
     return feedback, copy, detected_patterns
 
@@ -420,19 +424,19 @@ def _validate_message_feedback_copy(
     correction_expression = feedback.correctionExpression
     correction_reason = feedback.correctionReason
     if correction_expression is None or correction_reason is None:
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("message_feedback_copy_required_fields")
     if any(
         placeholder not in correction_expression
         for placeholder in required_placeholders
     ):
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("message_feedback_copy_missing_placeholder")
     if any(
         re.fullmatch(r"\[your [a-z][a-z ]*\]", placeholder) is None
         for placeholder in re.findall(r"\[[^\]]+\]", correction_expression)
     ):
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("message_feedback_copy_placeholder_format")
     if re.search(r"[가-힣]", correction_reason) is None:
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("message_feedback_copy_reason_locale")
 
 
 def generate_session_feedback(
@@ -563,10 +567,10 @@ def _extract_message_content(completion: Any) -> str:
     try:
         content = completion.choices[0].message.content
     except (AttributeError, IndexError) as exc:
-        raise AiResponseInvalidError from exc
+        raise AiResponseInvalidError("completion_content_missing") from exc
 
     if not isinstance(content, str) or not content.strip():
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("completion_content_blank")
     return content.strip()
 
 
@@ -577,14 +581,14 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
         start = raw.find("{")
         end = raw.rfind("}")
         if start < 0 or end < start:
-            raise AiResponseInvalidError
+            raise AiResponseInvalidError("json_object_missing")
         try:
             data = json.loads(raw[start : end + 1])
         except JSONDecodeError as exc:
-            raise AiResponseInvalidError from exc
+            raise AiResponseInvalidError("json_object_invalid") from exc
 
     if not isinstance(data, dict):
-        raise AiResponseInvalidError
+        raise AiResponseInvalidError("json_object_required")
     return data
 
 
