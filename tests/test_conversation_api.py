@@ -1154,6 +1154,76 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "A hostile or dismissive reply can have languageAccuracy=1",
             prompt,
         )
+        self.assertIn(
+            "The current evaluation context is the only source of core asks.",
+            prompt,
+        )
+        self.assertIn(
+            "Do not infer additional asks from the scenario title, briefing, or conversation goal.",
+            prompt,
+        )
+        self.assertIn(
+            "must-visit place -> [your recommended place]",
+            prompt,
+        )
+        self.assertIn(
+            "dealbreaker -> [your dealbreaker]",
+            prompt,
+        )
+        self.assertIn(
+            "wake-up time -> [your wake up time]",
+            prompt,
+        )
+        self.assertIn(
+            "An incomplete stem such as 'My name is' does not answer a name core ask.",
+            prompt,
+        )
+
+    def test_copy_prompt_preserves_facts_and_answers_current_question(self):
+        prompt = next_message_service._message_feedback_copy_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "Do not replace a stated fact with a placeholder.",
+            prompt,
+        )
+        self.assertIn(
+            "For contextFit=0, correctionExpression must answer the current evaluation context directly.",
+            prompt,
+        )
+        self.assertIn(
+            "Do not turn correctionExpression into a question for the counterpart.",
+            prompt,
+        )
+        self.assertIn(
+            "For contextFit=0, do not reuse a stated fact unless it directly answers a core ask.",
+            prompt,
+        )
+        self.assertIn(
+            "Do not attach a placeholder directly to an uncertain or incomplete utterance.",
+            prompt,
+        )
+        self.assertIn(
+            "Use [your reason] with a grammatically compatible reason clause.",
+            prompt,
+        )
+        self.assertIn(
+            "correctionExpression must be a complete English sentence.",
+            prompt,
+        )
+        self.assertIn(
+            "When a fresh answer begins with a placeholder, add a complete sentence scaffold.",
+            prompt,
+        )
+        self.assertIn(
+            "For a must-visit place and reason, use 'I recommend [your recommended place] because [your reason].'",
+            prompt,
+        )
+        self.assertIn(
+            "For a negative answer followed by a missing dealbreaker, use 'No, but I can't stand [your dealbreaker].'",
+            prompt,
+        )
 
     def test_copy_prompt_exposes_verified_catalog_patterns_only(self):
         catalog = {
@@ -1306,7 +1376,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         copy_messages = fake_openai.completions.calls[1]["messages"]
         self.assertIn("Judgement Task", judgement_messages[0]["content"])
         self.assertIn(
-            "scenario title, briefing, and conversation goal provide context",
+            "Do not infer additional asks from the scenario title, briefing, or conversation goal.",
             judgement_messages[0]["content"],
         )
         self.assertIn(

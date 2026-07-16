@@ -321,3 +321,13 @@
 - 다중 질문에서 빠진 내용은 언어 오류와 중복 감점하지 않는다. 문맥과 무관하지만 문법적으로 자연스러운 발화는 `contextFit=0`, `languageAccuracy=2`로 분리한다.
 - 고정 품질 사례 7개를 `openai/gpt-5.4-mini`로 각 3회 실행한 21건에서 기대 `feedbackType`, `contextFit`, 점수 범위, 문구 계약이 모두 일치했다. 필수 플레이스홀더 누락과 `relax` 같은 근거 없는 이유 추가도 0건이었다.
 - 이전에 제공된 전체 115개 원본 CSV는 현재 실행 환경에서 읽기 권한이 없어 재평가 입력으로 다시 구성하지 못했다. 파일을 다시 첨부하거나 저장소 내부의 비식별 fixture로 제공되면 같은 평가 도구로 바로 실행한다.
+
+## 2026-07-16 LAN-167 실제 115개 발화 재평가와 문구 보정
+
+- 다시 첨부된 CSV에서 115개 사용자 발화와 직전 평가 질문, 시나리오를 추출해 실제 요청 DTO 검증을 통과시켰다. 이전 `GOOD`·`NEEDS_IMPROVEMENT`·`benchmarkMessage`는 정답으로 사용하지 않았다.
+- 수정 전 전체 115건의 실제 모델 평가에서는 정상 결과 111건, `AiResponseInvalidError` 4건, `GOOD` 18건, `NEEDS_IMPROVEMENT` 93건이 나왔다. 문구 복구 호출은 1건이었다.
+- 실데이터에서 판단 단계가 시나리오 전체를 현재 질문보다 우선해 핵심 질문을 부풀리고, 문구 단계가 `My aircon bill is [your travel proof].`, `I don't know [your recommended place]`처럼 의미에 맞지 않는 플레이스홀더를 붙이는 문제가 확인됐다.
+- 판단 단계는 현재 `evaluationContext`만 핵심 질문의 원천으로 쓰고, 불완전한 `My name is`는 이름 답변으로 인정하지 않도록 보강했다. 추천 장소, 증빙, 생활 기준 등 자리표시자 의미도 명시했다.
+- 문구 단계는 문맥 적합도 0점에서 불완전 발화를 재활용하지 않고 현재 질문에 직접 답하는 완결 문장을 만들도록 했다. 장소 추천과 이유, 부정 답변 뒤 생활 기준은 각각 검증된 문장 뼈대를 제공한다.
+- 실제 모델 재평가에서 `No, but I can't stand [your dealbreaker].`, `I recommend [your recommended place] because [your reason].`가 생성됨을 확인했다. 전체 115건의 최종 프롬프트 재평가는 후속 품질 확인 항목으로 남긴다.
+- 재평가 중 `[your wake-up time]`의 하이픈이 내부 플레이스홀더 형식 검증과 충돌해 판단 결과가 거부되는 원인을 확인했다. `[your wake up time]`으로 바꾸고 실제 `Go away` 사례를 3회 재평가해 2회 정상 생성, 1회 문구 형식 실패를 확인했다.
