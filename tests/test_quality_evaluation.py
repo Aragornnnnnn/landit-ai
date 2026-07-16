@@ -61,6 +61,7 @@ def feedback_case():
         "caseId": "feedback-natural-colloquial",
         "kind": "message-feedback",
         "expectedFeedbackType": "GOOD",
+        "expectedContextFit": 2,
         "expectedMessageScoreRange": [100, 100],
         "payload": {
             "sessionId": 200,
@@ -112,6 +113,76 @@ class QualityEvaluationTests(unittest.TestCase):
                 cases_by_id[case_id]["expectedMessageScoreRange"],
                 expected_range,
             )
+
+    def test_lan_167_fixture_covers_feedback_quality_boundaries(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_167_feedback_quality_cases.json"
+        )
+
+        self.assertTrue(fixture_path.exists())
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        cases_by_id = {case["caseId"]: case for case in cases}
+
+        self.assertEqual(
+            set(cases_by_id),
+            {
+                "lan167-capitalization-and-period-only",
+                "lan167-meaning-neutral-filler",
+                "lan167-valid-like-to-watch",
+                "lan167-partial-self-introduction",
+                "lan167-off-topic-answer",
+                "lan167-partial-hobby-reason",
+                "lan167-preserve-unknown-reason",
+            },
+        )
+        written_form_case = cases_by_id["lan167-capitalization-and-period-only"]
+        self.assertEqual(
+            written_form_case["forbiddenFeedbackTerms"],
+            [
+                "대문자",
+                "소문자",
+                "쉼표",
+                "마침표",
+                "문장부호",
+                "capitalization",
+                "uppercase",
+                "lowercase",
+                "comma",
+                "period",
+                "punctuation",
+                "full stop",
+            ],
+        )
+        introduction_case = cases_by_id["lan167-partial-self-introduction"]
+        self.assertEqual(
+            introduction_case["requiredCorrectionPlaceholders"],
+            ["[your hobby]"],
+        )
+        self.assertIn("없는 사실", introduction_case["forbiddenFeedbackTerms"])
+        hobby_case = cases_by_id["lan167-partial-hobby-reason"]
+        self.assertEqual(
+            hobby_case["requiredCorrectionPlaceholders"],
+            ["[your reason]"],
+        )
+        reading_case = cases_by_id["lan167-preserve-unknown-reason"]
+        self.assertIn("relax", reading_case["forbiddenFeedbackTerms"])
+        self.assertEqual(
+            {
+                case_id: case["expectedContextFit"]
+                for case_id, case in cases_by_id.items()
+            },
+            {
+                "lan167-capitalization-and-period-only": 2,
+                "lan167-meaning-neutral-filler": 2,
+                "lan167-valid-like-to-watch": 2,
+                "lan167-partial-self-introduction": 1,
+                "lan167-off-topic-answer": 0,
+                "lan167-partial-hobby-reason": 1,
+                "lan167-preserve-unknown-reason": 2,
+            },
+        )
 
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -217,7 +288,6 @@ class QualityEvaluationTests(unittest.TestCase):
             clarity=2,
             languageAccuracy=2,
         )
-
         with (
             patch(
                 "scripts.evaluate_conversation_quality.generate_message_feedback",
@@ -229,6 +299,9 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
+                        candidate_was_repaired=True,
+                        copy_was_repaired=False,
+                        copy_was_fallback=True,
                     ),
                 ],
             ),
@@ -243,11 +316,195 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["feedbackType"], "GOOD")
         self.assertEqual(results[0]["expectedFeedbackType"], "GOOD")
         self.assertTrue(results[0]["feedbackTypeMatchesExpectation"])
+        self.assertEqual(results[0]["expectedContextFit"], 2)
+        self.assertTrue(results[0]["contextFitMatchesExpectation"])
+        self.assertEqual(
+            results[0]["finalFeedback"]["feedbackType"],
+            "GOOD",
+        )
+        self.assertTrue(results[0]["expectedFeedbackTypeMatched"])
+        self.assertTrue(results[0]["expectedScoreRangeMatched"])
         self.assertIn("scoreEvidence", results[0])
         self.assertEqual(
             results[0]["scoreEvidence"],
             {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
         )
         self.assertEqual(results[0]["messageScore"], 100)
+        self.assertTrue(results[0]["candidateWasRepaired"])
+        self.assertFalse(results[0]["copyWasRepaired"])
+        self.assertTrue(results[0]["copyWasFallback"])
+        self.assertNotIn("reviewWasFallback", results[0])
         self.assertEqual(results[0]["expectedMessageScoreRange"], [100, 100])
         self.assertTrue(results[0]["messageScoreWithinExpectation"])
+
+    def test_feedback_result_checks_required_placeholders_and_forbidden_terms(self):
+        case = feedback_case()
+        case["expectedFeedbackType"] = "NEEDS_IMPROVEMENT"
+        case["expectedMessageScoreRange"] = [80, 80]
+        case["requiredCorrectionPlaceholders"] = ["[your hobby]"]
+        case["forbiddenFeedbackTerms"] = ["Seoul", "없는 사실"]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy='"이름만 말하고 소개는 덧붙이지 않았어요"라고 답하는 것과 같아요.',
+            positiveFeedback="이름을 자연스럽게 소개한 점은 좋아요.",
+            correctionExpression="Hi, my name is Sangmin. I enjoy [your hobby].",
+            correctionReason="[your hobby]에 평소 좋아하는 활동을 넣어 소개를 완성해 보세요.",
+        )
+        response = MessageFeedbackResponse(
+            sessionId=200,
+            messageId=2001,
+            feedbackStatus=FeedbackStatus.PREPARING,
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=1,
+            clarity=2,
+            languageAccuracy=2,
+        )
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=response,
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                        candidate_was_repaired=False,
+                        copy_was_repaired=False,
+                        copy_was_fallback=False,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertIn("missingRequiredCorrectionPlaceholders", results[0])
+        self.assertEqual(results[0]["missingRequiredCorrectionPlaceholders"], [])
+        self.assertEqual(results[0]["foundForbiddenFeedbackTerms"], [])
+        self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
+
+    def test_feedback_result_checks_required_placeholder_prefixes(self):
+        case = feedback_case()
+        case["expectedFeedbackType"] = "NEEDS_IMPROVEMENT"
+        case["expectedMessageScoreRange"] = [60, 60]
+        case["requiredCorrectionPlaceholderPrefixes"] = ["[your travel "]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="질문에 맞는 증빙을 말해야 하는 상황이에요.",
+            positiveFeedback="문장을 끝까지 말한 점은 좋아요.",
+            correctionExpression="I have [your travel document].",
+            correctionReason="여행 계획을 보여 줄 수 있는 자료를 넣어 답해 보세요.",
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=0,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=MessageFeedbackResponse(
+                    sessionId=200,
+                    messageId=2001,
+                    feedbackStatus=FeedbackStatus.PREPARING,
+                ),
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                        candidate_was_repaired=False,
+                        copy_was_repaired=False,
+                        copy_was_fallback=False,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(
+            results[0]["missingRequiredCorrectionPlaceholderPrefixes"],
+            [],
+        )
+        self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
+
+    def test_feedback_result_allows_actual_data_without_expected_type(self):
+        case = feedback_case()
+        del case["expectedFeedbackType"]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="GOOD",
+            baseLocaleAnalogy='"그래, 좋아"라고 자연스럽게 동의하는 것과 같아요.',
+            feedbackDetail="친구의 제안에 자연스럽게 동의했어요.",
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=2,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=MessageFeedbackResponse(
+                    sessionId=200,
+                    messageId=2001,
+                    feedbackStatus=FeedbackStatus.PREPARING,
+                ),
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                        candidate_was_repaired=False,
+                        copy_was_repaired=False,
+                        copy_was_fallback=False,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertIsNone(results[0]["expectedFeedbackType"])
+        self.assertIsNone(results[0]["feedbackTypeMatchesExpectation"])
+        self.assertIsNone(results[0]["expectedFeedbackTypeMatched"])
+
+    def test_feedback_result_records_invalid_judgement_without_aborting_batch(self):
+        with patch(
+            "scripts.evaluate_conversation_quality.generate_message_feedback",
+            side_effect=AiResponseInvalidError("test_validation_reason"),
+        ):
+            results = evaluate_cases(
+                [feedback_case()],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(results[0]["validationError"], "AiResponseInvalidError")
+        self.assertEqual(results[0]["validationReason"], "test_validation_reason")
+        self.assertIsNone(results[0]["finalFeedback"])

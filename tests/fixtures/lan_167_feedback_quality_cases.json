@@ -1,0 +1,211 @@
+[
+  {
+    "caseId": "lan167-capitalization-and-period-only",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1671,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 1,
+        "title": "처음 만난 사람에게 자기소개하기",
+        "briefing": "처음 만난 사람에게 이름을 소개합니다.",
+        "conversationGoal": "이름을 자연스럽게 말합니다.",
+        "counterpartRole": "new acquaintance"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What's your name?",
+        "translatedContent": "이름이 뭐야?"
+      },
+      "userMessage": "hi my name is sangmin"
+    },
+    "forbiddenFeedbackTerms": [
+      "대문자",
+      "소문자",
+      "쉼표",
+      "마침표",
+      "문장부호",
+      "capitalization",
+      "uppercase",
+      "lowercase",
+      "comma",
+      "period",
+      "punctuation",
+      "full stop"
+    ]
+  },
+  {
+    "caseId": "lan167-meaning-neutral-filler",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1672,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 1,
+        "title": "포틀럭 음식 정하기",
+        "briefing": "친구와 포틀럭에 가져갈 음식을 이야기합니다.",
+        "conversationGoal": "가져갈 음식을 자연스럽게 답합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What would you bring to the potluck?",
+        "translatedContent": "포틀럭에 무엇을 가져올 거야?"
+      },
+      "userMessage": "um... kimchi"
+    }
+  },
+  {
+    "caseId": "lan167-valid-like-to-watch",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1673,
+      "turnNumber": 3,
+      "messageSequence": 6,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "취미 이야기하기",
+        "briefing": "친구와 여가 활동에 관해 이야기합니다.",
+        "conversationGoal": "좋아하는 활동을 자연스럽게 말합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What do you enjoy doing in your free time?",
+        "translatedContent": "여가 시간에는 무엇을 하는 걸 좋아해?"
+      },
+      "userMessage": "I like to watch Formula One."
+    }
+  },
+  {
+    "caseId": "lan167-partial-self-introduction",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
+    "expectedMessageScoreRange": [80, 80],
+    "requiredCorrectionPlaceholders": ["[your hobby]"],
+    "forbiddenFeedbackTerms": [
+      "Seoul",
+      "new roommate",
+      "looking forward",
+      "없는 사실",
+      "사실을 만들지",
+      "임의로 추측"
+    ],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1674,
+      "turnNumber": 4,
+      "messageSequence": 8,
+      "scenario": {
+        "scenarioId": 3,
+        "title": "처음 만난 사람에게 자기소개하기",
+        "briefing": "처음 만난 사람과 서로를 소개합니다.",
+        "conversationGoal": "이름과 자신에 관한 정보를 자연스럽게 소개합니다.",
+        "counterpartRole": "new acquaintance"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What's your name? And can you tell me a little about yourself?",
+        "translatedContent": "이름이 뭐야? 그리고 너에 대해 간단히 소개해 줄래?"
+      },
+      "userMessage": "Hi, my name is Sangmin."
+    }
+  },
+  {
+    "caseId": "lan167-off-topic-answer",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 0,
+    "expectedMessageScoreRange": [60, 60],
+    "requiredCorrectionPlaceholderPrefixes": ["[your travel "],
+    "forbiddenFeedbackTerms": ["passport", "plane ticket", "hotel reservation"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1675,
+      "turnNumber": 5,
+      "messageSequence": 10,
+      "scenario": {
+        "scenarioId": 4,
+        "title": "여행 준비 확인하기",
+        "briefing": "여행에 필요한 준비물을 확인합니다.",
+        "conversationGoal": "여행 계획을 증명할 수 있는 준비물을 설명합니다.",
+        "counterpartRole": "airport staff"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Do you have anything that proves your travel plans?",
+        "translatedContent": "여행 계획을 증명할 수 있는 것이 있나요?"
+      },
+      "userMessage": "My aircon bill is very high."
+    }
+  },
+  {
+    "caseId": "lan167-partial-hobby-reason",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
+    "expectedMessageScoreRange": [80, 80],
+    "requiredCorrectionPlaceholders": ["[your reason]"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1676,
+      "turnNumber": 6,
+      "messageSequence": 12,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "취미 이야기하기",
+        "briefing": "친구와 여가 활동에 관해 이야기합니다.",
+        "conversationGoal": "좋아하는 활동과 이유를 자연스럽게 말합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What are you into? What do you love about it?",
+        "translatedContent": "무엇을 좋아해? 그것의 어떤 점이 좋아?"
+      },
+      "userMessage": "I like jogging."
+    }
+  },
+  {
+    "caseId": "lan167-preserve-unknown-reason",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "forbiddenFeedbackTerms": ["relax", "relaxing"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1677,
+      "turnNumber": 7,
+      "messageSequence": 14,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "취미 이야기하기",
+        "briefing": "친구와 여가 활동에 관해 이야기합니다.",
+        "conversationGoal": "좋아하는 활동과 이유를 자연스럽게 말합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What do you like about reading?",
+        "translatedContent": "독서의 어떤 점이 좋아?"
+      },
+      "userMessage": "I like reading a book. This is so cool."
+    }
+  }
+]

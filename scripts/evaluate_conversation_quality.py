@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.conversation.application.next_message_service import (
+    AiGenerationFailedError,
+    AiResponseInvalidError,
     _get_expected_message_feedback_entries,
     _generate_closing_message_candidate,
     _looks_like_meta_closing,
@@ -106,6 +110,12 @@ def _evaluate_feedback_case(
             request.sessionId,
             [request.messageId],
         )[0]
+    except (
+        AiGenerationFailedError,
+        AiResponseInvalidError,
+        ValidationError,
+    ) as exc:
+        return _feedback_evaluation_error_result(case, run, exc)
     finally:
         clear_message_feedback_cache()
 
@@ -113,16 +123,63 @@ def _evaluate_feedback_case(
     score_evidence = feedback_entry.score_evidence
     message_score = _message_score_from_evidence(score_evidence)
     feedback_type = feedback.feedbackType.value
-    expected_feedback_type = case["expectedFeedbackType"]
+    expected_feedback_type = case.get("expectedFeedbackType")
+    expected_context_fit = case.get("expectedContextFit")
     expected_score_range = case.get("expectedMessageScoreRange")
+    required_placeholders = case.get("requiredCorrectionPlaceholders", [])
+    required_placeholder_prefixes = case.get(
+        "requiredCorrectionPlaceholderPrefixes",
+        [],
+    )
+    correction_expression = feedback.correctionExpression or ""
+    missing_placeholders = [
+        placeholder
+        for placeholder in required_placeholders
+        if placeholder not in correction_expression
+    ]
+    missing_placeholder_prefixes = [
+        prefix
+        for prefix in required_placeholder_prefixes
+        if prefix not in correction_expression
+    ]
+    feedback_text = "\n".join(
+        value
+        for value in (
+            feedback.baseLocaleAnalogy,
+            feedback.positiveFeedback,
+            feedback.feedbackDetail,
+            feedback.correctionExpression,
+            feedback.correctionReason,
+        )
+        if value is not None
+    )
+    forbidden_terms = case.get("forbiddenFeedbackTerms", [])
+    found_forbidden_terms = [
+        term
+        for term in forbidden_terms
+        if term.casefold() in feedback_text.casefold()
+    ]
     return {
         "caseId": case["caseId"],
         "kind": "message-feedback",
         "run": run,
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
-        "feedbackTypeMatchesExpectation": feedback_type == expected_feedback_type,
+        "candidateWasRepaired": feedback_entry.candidate_was_repaired,
+        "copyWasRepaired": feedback_entry.copy_was_repaired,
+        "copyWasFallback": feedback_entry.copy_was_fallback,
+        "feedbackTypeMatchesExpectation": (
+            feedback_type == expected_feedback_type
+            if expected_feedback_type is not None
+            else None
+        ),
         "scoreEvidence": score_evidence.model_dump(),
+        "expectedContextFit": expected_context_fit,
+        "contextFitMatchesExpectation": (
+            score_evidence.contextFit == expected_context_fit
+            if expected_context_fit is not None
+            else None
+        ),
         "messageScore": message_score,
         "expectedMessageScoreRange": expected_score_range,
         "messageScoreWithinExpectation": (
@@ -130,6 +187,70 @@ def _evaluate_feedback_case(
             if expected_score_range is not None
             else None
         ),
+        "baseLocaleAnalogy": feedback.baseLocaleAnalogy,
+        "positiveFeedback": feedback.positiveFeedback,
+        "feedbackDetail": feedback.feedbackDetail,
+        "correctionExpression": feedback.correctionExpression,
+        "correctionReason": feedback.correctionReason,
+        "finalFeedback": feedback.model_dump(mode="json"),
+        "expectedFeedbackTypeMatched": (
+            feedback_type == expected_feedback_type
+            if expected_feedback_type is not None
+            else None
+        ),
+        "expectedScoreRangeMatched": (
+            expected_score_range[0] <= message_score <= expected_score_range[1]
+            if expected_score_range is not None
+            else None
+        ),
+        "missingRequiredCorrectionPlaceholders": missing_placeholders,
+        "missingRequiredCorrectionPlaceholderPrefixes": missing_placeholder_prefixes,
+        "foundForbiddenFeedbackTerms": found_forbidden_terms,
+        "feedbackTextMatchesExpectation": (
+            not missing_placeholders
+            and not missing_placeholder_prefixes
+            and not found_forbidden_terms
+        ),
+        "validationError": None,
+        "validationReason": None,
+    }
+
+
+def _feedback_evaluation_error_result(
+    case: dict[str, Any],
+    run: int,
+    error: Exception,
+) -> dict[str, Any]:
+    return {
+        "caseId": case["caseId"],
+        "kind": "message-feedback",
+        "run": run,
+        "expectedFeedbackType": case.get("expectedFeedbackType"),
+        "feedbackType": None,
+        "candidateWasRepaired": None,
+        "copyWasRepaired": None,
+        "copyWasFallback": None,
+        "feedbackTypeMatchesExpectation": False,
+        "scoreEvidence": None,
+        "expectedContextFit": case.get("expectedContextFit"),
+        "contextFitMatchesExpectation": False,
+        "messageScore": None,
+        "expectedMessageScoreRange": case.get("expectedMessageScoreRange"),
+        "messageScoreWithinExpectation": False,
+        "baseLocaleAnalogy": None,
+        "positiveFeedback": None,
+        "feedbackDetail": None,
+        "correctionExpression": None,
+        "correctionReason": None,
+        "finalFeedback": None,
+        "expectedFeedbackTypeMatched": False,
+        "expectedScoreRangeMatched": False,
+        "missingRequiredCorrectionPlaceholders": [],
+        "missingRequiredCorrectionPlaceholderPrefixes": [],
+        "foundForbiddenFeedbackTerms": [],
+        "feedbackTextMatchesExpectation": False,
+        "validationError": type(error).__name__,
+        "validationReason": getattr(error, "reason", type(error).__name__),
     }
 
 

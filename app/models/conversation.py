@@ -1,4 +1,5 @@
 # 대화 생성 API 요청과 응답 DTO를 정의하는 모듈
+import re
 from enum import StrEnum
 from typing import Literal, Self
 
@@ -284,11 +285,9 @@ class MessageFeedbackResponse(BaseModel):
     feedbackStatus: FeedbackStatus
 
 
-class MessageFeedbackData(BaseModel):
+class MessageFeedbackContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    messageId: int = Field(gt=0)
-    feedbackType: FeedbackType
     baseLocaleAnalogy: str
     positiveFeedback: str | None = None
     feedbackDetail: str | None = None
@@ -311,6 +310,42 @@ class MessageFeedbackData(BaseModel):
     @classmethod
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
         return _optional_not_blank(value)
+
+    @field_validator("correctionExpression")
+    @classmethod
+    def correction_expression_placeholders_must_use_supported_format(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        placeholders = re.findall(r"\[[^\]]+\]", value)
+        if any(
+            re.fullmatch(r"\[your [a-z][a-z ]*\]", placeholder) is None
+            for placeholder in placeholders
+        ):
+            raise ValueError("correctionExpression placeholders must use [your ...] format")
+        return value
+
+    @field_validator("correctionReason")
+    @classmethod
+    def correction_reason_must_not_expose_internal_policy(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is not None and any(
+            marker in value
+            for marker in ("없는 사실", "사실을 만들지", "임의로 추측")
+        ):
+            raise ValueError(
+                "correctionReason must not expose internal generation policy",
+            )
+        return value
+
+
+class MessageFeedbackData(MessageFeedbackContent):
+    messageId: int = Field(gt=0)
+    feedbackType: FeedbackType
 
     @model_validator(mode="after")
     def feedback_fields_must_match_type(self) -> Self:
@@ -346,22 +381,8 @@ class MessageFeedbackScoreEvidence(BaseModel):
     languageAccuracy: int = Field(strict=True, ge=0, le=2)
 
 
-class MessageFeedbackEvaluation(MessageFeedbackData):
+class MessageFeedbackCandidate(MessageFeedbackContent):
     scoreEvidence: MessageFeedbackScoreEvidence
-
-    @model_validator(mode="after")
-    def score_evidence_must_match_feedback_type(self) -> Self:
-        all_scores_are_max = all(
-            score == 2
-            for score in (
-                self.scoreEvidence.contextFit,
-                self.scoreEvidence.clarity,
-                self.scoreEvidence.languageAccuracy,
-            )
-        )
-        if (self.feedbackType == FeedbackType.GOOD) != all_scores_are_max:
-            raise ValueError("scoreEvidence must match feedbackType")
-        return self
 
 
 class SessionFeedbackRequest(BaseModel):
