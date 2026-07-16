@@ -386,6 +386,14 @@ def _parse_message_feedback_judgement(
     for stated_fact in judgement.statedFacts:
         if _normalize_evidence(stated_fact) not in normalized_user_message:
             raise AiResponseInvalidError
+    if (
+        judgement.languageIssueEvidence is not None
+        and _normalize_evidence(judgement.languageIssueEvidence)
+        not in normalized_user_message
+    ):
+        raise AiResponseInvalidError(
+            "message_feedback_judgement_language_issue_evidence",
+        )
     if any(
         _is_bare_evaluation_reason(core_ask)
         for core_ask in judgement.coreAsks
@@ -1390,6 +1398,8 @@ def _message_feedback_judgement_system_prompt(
             "clarity is 2 when the meaning is understandable without guesswork, 1 when some inference is needed, and 0 when the meaning is hard to understand. "
             "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
             "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question. "
+            "When languageAccuracy is 0 or 1, languageIssueEvidence must copy the smallest exact user substring that contains the actionable language or politeness issue. "
+            "When languageAccuracy is 2, languageIssueEvidence must be null. "
             "Do not lower any score for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative alone. "
             "A short noun phrase can fully answer a what-question. "
             "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
@@ -1403,9 +1413,9 @@ def _message_feedback_judgement_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"coreAsks":[{"ask":"short core ask","addressed":true,"evidence":"exact user substring","requiredPlaceholder":null}],"statedFacts":["exact user substring"],"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}}. '
+            '{"coreAsks":[{"ask":"short core ask","addressed":true,"evidence":"exact user substring","requiredPlaceholder":null}],"statedFacts":["exact user substring"],"languageIssueEvidence":"exact user substring or null","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}}. '
             "Do not include messageId. "
-            "Use null, not an empty string, for missing evidence or requiredPlaceholder."
+            "Use null, not an empty string, for missing evidence, requiredPlaceholder, or languageIssueEvidence."
         ),
         f"Evaluation context type: {evaluation_context_type}",
     ])

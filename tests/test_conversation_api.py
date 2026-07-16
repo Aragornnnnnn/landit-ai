@@ -239,7 +239,16 @@ def message_feedback_judgement(
     language_accuracy=2,
     core_asks=None,
     stated_facts=None,
+    language_issue_evidence=...,
 ):
+    resolved_stated_facts = ["jogging"] if stated_facts is None else stated_facts
+    resolved_language_issue_evidence = language_issue_evidence
+    if language_issue_evidence is ...:
+        resolved_language_issue_evidence = (
+            resolved_stated_facts[0]
+            if language_accuracy < 2 and resolved_stated_facts
+            else None
+        )
     return {
         "messageId": message_id,
         "coreAsks": (
@@ -254,7 +263,8 @@ def message_feedback_judgement(
             if core_asks is None
             else core_asks
         ),
-        "statedFacts": ["jogging"] if stated_facts is None else stated_facts,
+        "statedFacts": resolved_stated_facts,
+        "languageIssueEvidence": resolved_language_issue_evidence,
         "scoreEvidence": {
             "contextFit": context_fit,
             "clarity": clarity,
@@ -319,6 +329,11 @@ def message_feedback_responses(feedback, user_message):
         "messageId": feedback["messageId"],
         "coreAsks": core_asks,
         "statedFacts": [user_message],
+        "languageIssueEvidence": (
+            user_message
+            if score_evidence["languageAccuracy"] < 2
+            else None
+        ),
         "scoreEvidence": score_evidence,
     }
     copy = {
@@ -976,6 +991,57 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 feedback,
             )
 
+    def test_message_feedback_judgement_requires_language_issue_evidence(self):
+        judgement_data = message_feedback_judgement(language_accuracy=1)
+        judgement_data.pop("languageIssueEvidence")
+
+        with self.assertRaises(ValueError):
+            conversation_models.MessageFeedbackJudgement.model_validate(
+                judgement_data,
+            )
+
+    def test_message_feedback_judgement_rejects_issue_evidence_for_perfect_accuracy(self):
+        judgement_data = message_feedback_judgement(language_accuracy=2)
+        judgement_data["languageIssueEvidence"] = "jogging"
+
+        with self.assertRaises(ValueError):
+            conversation_models.MessageFeedbackJudgement.model_validate(
+                judgement_data,
+            )
+
+    def test_message_feedback_judgement_rejects_ungrounded_language_issue_evidence(self):
+        request = MessageFeedbackRequest.model_validate(
+            multiple_hobby_questions_payload(),
+        )
+        judgement_data = message_feedback_judgement(
+            context_fit=1,
+            language_accuracy=1,
+            language_issue_evidence="swimming",
+            core_asks=[
+                {
+                    "ask": "say what activity you like",
+                    "addressed": True,
+                    "evidence": "jogging",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "say why you like it",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your reason]",
+                },
+            ],
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_judgement_language_issue_evidence",
+        ):
+            next_message_service._parse_message_feedback_judgement(
+                judgement_data,
+                request,
+            )
+
     def test_message_feedback_judgement_rejects_bare_evaluation_as_why_reason(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (
@@ -1468,6 +1534,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertIn(
             "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question.",
+            prompt,
+        )
+        self.assertIn(
+            '"languageIssueEvidence":"exact user substring or null"',
             prompt,
         )
         self.assertIn(

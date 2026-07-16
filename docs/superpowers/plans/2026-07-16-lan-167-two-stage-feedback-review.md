@@ -1051,7 +1051,33 @@ git add app/conversation/application/next_message_service.py tests/test_conversa
 git commit -m "fix: 사용자 근거 밖의 교정 내용을 문구 복구로 제한"
 ```
 
-### Task 13: 운영 배포 gate를 다시 검증한다
+### Task 13: 언어 정확도 점수에 사용자 발화 근거를 요구한다
+
+**Files**
+
+- Modify: `app/models/conversation.py`.
+- Modify: `app/conversation/application/next_message_service.py`.
+- Modify: `tests/test_conversation_api.py`.
+
+- [x] **Step 1: 점수와 근거 조합의 RED 테스트를 작성한다.**
+
+`languageAccuracy<2`인데 근거가 없거나, 2인데 근거가 있으면 거부한다. 근거가 사용자 발화에 없으면 `message_feedback_judgement_language_issue_evidence`로 거부한다.
+
+- [x] **Step 2: 판정 모델과 근거 검증을 구현한다.**
+
+내부 `MessageFeedbackJudgement.languageIssueEvidence`를 추가하고 점수 조합과 사용자 발화 포함 여부를 검증한다.
+
+- [x] **Step 3: 판정 프롬프트와 내부 출력 스키마를 갱신한다.**
+
+0 또는 1이면 교정 가능한 문제를 포함한 가장 작은 사용자 발화 부분 문자열을 요구하고, 2면 `null`을 요구한다.
+
+- [x] **Step 4: 메시지 피드백 회귀 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests tests.test_quality_evaluation`
+
+Expected: PASS while the public response and normal two-call path remain unchanged.
+
+### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**
 

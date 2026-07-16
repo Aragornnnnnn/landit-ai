@@ -405,6 +405,7 @@ class MessageFeedbackJudgement(BaseModel):
     messageId: int | None = Field(default=None, gt=0)
     coreAsks: list[MessageFeedbackCoreAsk] = Field(min_length=1)
     statedFacts: list[str]
+    languageIssueEvidence: str | None = None
     scoreEvidence: MessageFeedbackScoreEvidence
 
     @field_validator("statedFacts")
@@ -413,6 +414,28 @@ class MessageFeedbackJudgement(BaseModel):
         for fact in value:
             _validate_not_blank(fact)
         return value
+
+    @field_validator("languageIssueEvidence")
+    @classmethod
+    def language_issue_evidence_must_not_be_blank(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        return _optional_not_blank(value)
+
+    @model_validator(mode="after")
+    def language_issue_evidence_must_match_accuracy(self) -> Self:
+        if self.scoreEvidence.languageAccuracy == 2:
+            if self.languageIssueEvidence is not None:
+                raise ValueError(
+                    "perfect languageAccuracy must not include languageIssueEvidence",
+                )
+            return self
+        if self.languageIssueEvidence is None:
+            raise ValueError(
+                "lower languageAccuracy requires languageIssueEvidence",
+            )
+        return self
 
 
 class MessageFeedbackCopy(BaseModel):

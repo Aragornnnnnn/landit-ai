@@ -110,6 +110,10 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 명시적인 why 또는 reason 핵심 요청에서 `best`, `good`, `great`, `cool`처럼 추천이나 선호를 반복하는 평가만 말한 경우는 이유를 답한 것으로 인정하지 않는다. 서버가 이런 판정을 거부하면 기존 판정 복구가 `[your reason]`을 포함한 미응답 요청으로 다시 생성한다. 반면 what-do-you-like-about 질문의 `This is so cool` 같은 평가는 표현이 모호하더라도 해당 질문에는 답한 것으로 보고, 표현 문제는 `languageAccuracy`에 반영한다.
 
+### 언어 정확도 근거
+
+내부 판정에 `languageIssueEvidence`를 추가한다. `languageAccuracy`가 0 또는 1이면 실제 사용자 발화에서 교정 가능한 문제를 포함한 가장 작은 부분 문자열을 요구하고, 2면 `null`만 허용한다. 서버는 근거가 실제 사용자 발화에 포함되는지 검증한다. 이 필드는 판정과 문구 생성을 위한 AI 서버 내부 데이터이며 외부 API와 OpenAPI에는 노출하지 않는다.
+
 ### 교정 표현의 허용 어휘
 
 NEEDS_IMPROVEMENT 교정 표현은 답했다고 판정한 각 핵심 요청의 evidence에서 기능어를 제외한 핵심 단어를 하나 이상 유지해야 한다. `This is so cool`을 `it helps me relax`로 바꾸는 것처럼 근거의 핵심 단어가 전부 사라지면 `message_feedback_copy_unsupported_content`로 문구 후보를 거부하고 기존 문구 복구를 한 번 수행한다.
