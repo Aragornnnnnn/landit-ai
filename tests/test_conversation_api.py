@@ -1350,6 +1350,130 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.contextFit, 2)
         self.assertEqual(judgement.scoreEvidence.clarity, 1)
 
+    def test_message_feedback_judgement_infers_cleaning_placeholders(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "How do you split cleaning, and what worked before?"
+        )
+        payload["userMessage"] = "I don't know."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=0,
+            core_asks=[
+                {
+                    "ask": "how do you usually split cleaning stuff",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "what worked for you before",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["I don't know"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(
+            [core_ask.requiredPlaceholder for core_ask in judgement.coreAsks],
+            ["[your cleaning preference]", "[your previous cleaning routine]"],
+        )
+
+    def test_message_feedback_copy_uses_safe_recommendation_template(self):
+        request_payload = valid_message_feedback_payload()
+        request_payload["evaluationContext"]["content"] = (
+            "Tell me your must-visit spots and why I should go."
+        )
+        request_payload["userMessage"] = "I don't know."
+        request = MessageFeedbackRequest.model_validate(request_payload)
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=0,
+                core_asks=[
+                    {
+                        "ask": "must-visit spots",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your recommended place]",
+                    },
+                    {
+                        "ask": "why I should go",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your reason]",
+                    },
+                ],
+                stated_facts=["I don't know"],
+            ),
+        )
+        copy_data = message_feedback_copy()
+        copy_data["correctionExpression"] = (
+            "I don't know [your recommended place] because [your reason]."
+        )
+
+        feedback, _, _ = (
+            next_message_service._parse_and_assemble_message_feedback_copy(
+                copy_data,
+                judgement,
+                request,
+            )
+        )
+
+        self.assertEqual(
+            feedback.correctionExpression,
+            "I recommend [your recommended place] because [your reason].",
+        )
+
+    def test_message_feedback_copy_uses_safe_travel_proof_template(self):
+        request_payload = valid_message_feedback_payload()
+        request_payload["evaluationContext"]["content"] = (
+            "Do you have proof of your travel plans?"
+        )
+        request_payload["userMessage"] = "My aircon bill is boom."
+        request = MessageFeedbackRequest.model_validate(request_payload)
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=0,
+                language_accuracy=1,
+                language_corrections=[
+                    {"evidence": "boom", "replacement": "high"},
+                ],
+                core_asks=[
+                    {
+                        "ask": "proof of travel plans",
+                        "addressed": False,
+                        "evidence": None,
+                        "requiredPlaceholder": "[your travel proof]",
+                    },
+                ],
+                stated_facts=["My aircon bill is boom"],
+            ),
+        )
+        copy_data = message_feedback_copy()
+        copy_data["correctionExpression"] = (
+            "My aircon bill is high, but I have [your travel proof]."
+        )
+
+        feedback, _, _ = (
+            next_message_service._parse_and_assemble_message_feedback_copy(
+                copy_data,
+                judgement,
+                request,
+            )
+        )
+
+        self.assertEqual(
+            feedback.correctionExpression,
+            "I have [your travel proof].",
+        )
+
     def test_message_feedback_copy_preserves_addressed_evidence_words(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(
             message_feedback_judgement(

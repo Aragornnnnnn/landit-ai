@@ -422,6 +422,7 @@ def _parse_message_feedback_judgement(
                 "message_feedback_judgement_language_correction_evidence",
             )
     judgement = _without_natural_preference_alternative_corrections(judgement)
+    judgement = _with_inferred_required_placeholders(judgement)
     if any(
         _is_bare_evaluation_reason(core_ask)
         for core_ask in judgement.coreAsks
@@ -509,8 +510,65 @@ def _parse_and_assemble_message_feedback_copy(
         })
     except ValidationError as exc:
         raise AiResponseInvalidError("message_feedback_copy_field_contract") from exc
+    feedback = _with_safe_correction_template(judgement, feedback)
     _validate_message_feedback_copy(judgement, feedback)
     return feedback, copy, detected_patterns
+
+
+def _with_safe_correction_template(
+    judgement: MessageFeedbackJudgement,
+    feedback: MessageFeedbackData,
+) -> MessageFeedbackData:
+    if feedback.feedbackType != FeedbackType.NEEDS_IMPROVEMENT:
+        return feedback
+    required_placeholders = {
+        core_ask.requiredPlaceholder
+        for core_ask in judgement.coreAsks
+        if core_ask.requiredPlaceholder is not None
+    }
+    correction_expression = _safe_correction_expression(
+        judgement,
+        required_placeholders,
+    )
+    if correction_expression is None:
+        return feedback
+    return feedback.model_copy(
+        update={"correctionExpression": correction_expression},
+    )
+
+
+def _safe_correction_expression(
+    judgement: MessageFeedbackJudgement,
+    required_placeholders: set[str],
+) -> str | None:
+    recommended_place = "[your recommended place]"
+    reason = "[your reason]"
+    if recommended_place in required_placeholders and reason in required_placeholders:
+        return f"I recommend {recommended_place} because {reason}."
+    if reason in required_placeholders:
+        place_evidence = next((
+            core_ask.evidence
+            for core_ask in judgement.coreAsks
+            if core_ask.addressed
+            and core_ask.evidence is not None
+            and any(
+                keyword in core_ask.ask.casefold()
+                for keyword in ("place", "spot", "recommend")
+            )
+        ), None)
+        if place_evidence is not None:
+            return f"I recommend {place_evidence} because {reason}."
+    if "[your travel proof]" in required_placeholders:
+        return "I have [your travel proof]."
+    if {
+        "[your cleaning preference]",
+        "[your previous cleaning routine]",
+    }.issubset(required_placeholders):
+        return (
+            "I usually split the cleaning by [your cleaning preference], "
+            "and [your previous cleaning routine] worked for me before."
+        )
+    return None
 
 
 def _validate_message_feedback_copy(
@@ -974,6 +1032,48 @@ def _without_natural_preference_alternative_corrections(
             ),
         },
     )
+
+
+def _with_inferred_required_placeholders(
+    judgement: MessageFeedbackJudgement,
+) -> MessageFeedbackJudgement:
+    normalized_core_asks = [
+        core_ask.model_copy(
+            update={
+                "requiredPlaceholder": _required_placeholder_for_ask(
+                    core_ask.ask,
+                ),
+            },
+        )
+        if not core_ask.addressed and core_ask.requiredPlaceholder is None
+        else core_ask
+        for core_ask in judgement.coreAsks
+    ]
+    if normalized_core_asks == judgement.coreAsks:
+        return judgement
+    return judgement.model_copy(update={"coreAsks": normalized_core_asks})
+
+
+def _required_placeholder_for_ask(ask: str) -> str | None:
+    normalized_ask = ask.casefold()
+    if "clean" in normalized_ask and "split" in normalized_ask:
+        return "[your cleaning preference]"
+    if "worked" in normalized_ask and "before" in normalized_ask:
+        return "[your previous cleaning routine]"
+    if "why" in normalized_ask or "reason" in normalized_ask:
+        return "[your reason]"
+    if "travel" in normalized_ask and "proof" in normalized_ask:
+        return "[your travel proof]"
+    if any(
+        keyword in normalized_ask
+        for keyword in ("must-visit", "recommended place", "recommended spot")
+    ):
+        return "[your recommended place]"
+    if "name" in normalized_ask:
+        return "[your name]"
+    if "hobby" in normalized_ask or "about yourself" in normalized_ask:
+        return "[your hobby]"
+    return None
 
 
 def _is_natural_preference_alternative(

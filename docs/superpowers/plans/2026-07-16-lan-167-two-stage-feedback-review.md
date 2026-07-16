@@ -1101,6 +1101,10 @@ Expected: PASS while the public response and normal two-call path remain unchang
 
 what-do-you-like-about 요청에 대한 긍정적인 일반 평가 구간을 실제 발화에서 추출해 addressed evidence로 사용하고 `contextFit`과 `clarity`를 서버에서 다시 계산한다.
 
+- [x] **Step 11: 미응답 플레이스홀더와 안전한 교정 템플릿을 보완한다.**
+
+알려진 핵심 요청의 누락된 플레이스홀더를 서버가 보완하고, 추천 장소·이유, 여행 증빙, 청소 분담 조합은 근거 없는 사실을 추가하지 않는 문장 템플릿으로 정규화한다.
+
 ### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**
