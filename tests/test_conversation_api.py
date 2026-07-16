@@ -1163,7 +1163,9 @@ class MessageFeedbackApiTests(unittest.TestCase):
             feedbackType="NEEDS_IMPROVEMENT",
             baseLocaleAnalogy="좋아하는 이유를 바꿔 말한 것과 같아요.",
             positiveFeedback="독서를 좋아한다고 말했어요.",
-            correctionExpression="I like reading because it helps me relax.",
+            correctionExpression=(
+                "I like reading because it is so cool and helps me relax."
+            ),
             correctionReason="표현을 자연스럽게 연결해 보세요.",
         )
 
@@ -1221,6 +1223,24 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertIn("Required correction placeholders:\n[your reason]", prompt)
         self.assertIn("message_feedback_copy_missing_placeholder", prompt)
+
+    def test_message_feedback_judgement_repair_prompt_includes_validation_reason(self):
+        request = MessageFeedbackRequest.model_validate(
+            multiple_hobby_questions_payload(),
+        )
+
+        prompt = next_message_service._message_feedback_judgement_repair_user_prompt(
+            request,
+            None,
+            next_message_service.AiResponseInvalidError(
+                "message_feedback_judgement_missed_evaluation_answer",
+            ),
+        )
+
+        self.assertIn(
+            "message_feedback_judgement_missed_evaluation_answer",
+            prompt,
+        )
 
     def test_message_feedback_locks_judgement_while_generating_copy(self):
         judgement = message_feedback_judgement(

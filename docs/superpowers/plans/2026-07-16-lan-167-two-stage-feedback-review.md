@@ -1077,6 +1077,10 @@ Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackAp
 
 Expected: PASS while the public response and normal two-call path remain unchanged.
 
+- [x] **Step 5: 근거 단어를 남긴 채 새 사실을 추가하는 우회를 막는다.**
+
+교정 표현의 내용어가 내부 판정 근거와 제한된 문장 뼈대 어휘 안에 있는지 검증한다. 판정·문구 복구 프롬프트에는 내부 실패 원인을 전달한다.
+
 ### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**

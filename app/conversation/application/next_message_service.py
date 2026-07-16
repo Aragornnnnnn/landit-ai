@@ -114,6 +114,29 @@ _GENERIC_EVALUATION_WORDS = {
     "great",
     "nice",
 }
+_CORRECTION_SCAFFOLD_WORDS = {
+    "answer",
+    "ask",
+    "asked",
+    "can",
+    "can't",
+    "cannot",
+    "could",
+    "enjoy",
+    "like",
+    "live",
+    "need",
+    "please",
+    "prefer",
+    "reach",
+    "recommend",
+    "say",
+    "stand",
+    "tell",
+    "think",
+    "want",
+    "would",
+}
 _EVIDENCE_FUNCTION_WORDS = {
     "and",
     "are",
@@ -515,6 +538,10 @@ def _validate_message_feedback_copy(
             raise AiResponseInvalidError(
                 "message_feedback_copy_unsupported_content",
             )
+    if _unsupported_correction_content_words(judgement, correction_expression):
+        raise AiResponseInvalidError(
+            "message_feedback_copy_unsupported_content",
+        )
 
 
 def generate_session_feedback(
@@ -922,6 +949,38 @@ def _is_missed_evaluation_answer(
         return False
     user_words = _meaningful_evidence_words(user_message)
     return bool(user_words & _GENERIC_EVALUATION_WORDS)
+
+
+def _unsupported_correction_content_words(
+    judgement: MessageFeedbackJudgement,
+    correction_expression: str,
+) -> set[str]:
+    correction_without_placeholders = re.sub(
+        r"\[[^\]]+\]",
+        "",
+        correction_expression,
+    )
+    correction_words = _meaningful_evidence_words(
+        correction_without_placeholders,
+    )
+    source_values = [
+        *(core_ask.ask for core_ask in judgement.coreAsks),
+        *(
+            core_ask.evidence
+            for core_ask in judgement.coreAsks
+            if core_ask.evidence is not None
+        ),
+        *judgement.statedFacts,
+    ]
+    if judgement.languageIssueEvidence is not None:
+        source_values.append(judgement.languageIssueEvidence)
+    source_words = _meaningful_evidence_words(" ".join(source_values))
+    return {
+        word
+        for word in correction_words
+        if word not in _CORRECTION_SCAFFOLD_WORDS
+        and not _words_overlap({word}, source_words)
+    }
 
 
 def _contains_unverified_quantitative_claim(value: str) -> bool:
@@ -1453,12 +1512,13 @@ def _message_feedback_judgement_repair_user_prompt(
         if invalid_judgement is not None
         else "null"
     )
+    validation_reason = getattr(error, "reason", type(error).__name__)
     return (
         f"{_message_feedback_judgement_user_prompt(request)}\n\n"
         "Invalid judgement JSON:\n"
         f"{invalid_judgement_json}\n\n"
         "Validation failure:\n"
-        f"{type(error).__name__}"
+        f"{validation_reason}"
     )
 
 
@@ -1481,6 +1541,7 @@ def _message_feedback_copy_system_prompt(
             "Do not replace a stated fact with a placeholder. "
             "Include every required [your ...] placeholder from the judgement in correctionExpression. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
+            "Do not add concrete content words that are absent from the authoritative core asks, evidence, stated facts, or language issue evidence. "
             "Never fill an unanswered personal fact with a concrete example; use a concrete [your ...] placeholder instead. "
             "Never use a placeholder in a grammatically or semantically incompatible position, such as a bill being a travel proof. "
             "For contextFit=0, correctionExpression must answer the current evaluation context directly. "
@@ -1561,6 +1622,7 @@ def _message_feedback_copy_repair_system_prompt(
             "Copy Repair Task:\n"
             "The previous copy is invalid. Return a replacement that follows the authoritative judgement and output schema exactly. "
             "Retain at least one meaningful content word from every answered core ask's evidence and include every required placeholder listed in the repair request. "
+            "Remove concrete content words that are not grounded in the authoritative judgement. "
             "Do not change the judgement or add feedbackType or scoreEvidence."
         ),
     ])

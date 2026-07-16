@@ -118,6 +118,8 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 NEEDS_IMPROVEMENT 교정 표현은 답했다고 판정한 각 핵심 요청의 evidence에서 기능어를 제외한 핵심 단어를 하나 이상 유지해야 한다. `This is so cool`을 `it helps me relax`로 바꾸는 것처럼 근거의 핵심 단어가 전부 사라지면 `message_feedback_copy_unsupported_content`로 문구 후보를 거부하고 기존 문구 복구를 한 번 수행한다.
 
+근거 단어를 일부 남긴 채 새로운 이유나 경험을 덧붙이는 우회도 허용하지 않는다. 교정 표현의 내용어는 내부 판정의 핵심 요청, evidence, stated facts, language issue evidence 또는 문장 구성에 필요한 제한된 뼈대 어휘에서만 가져온다.
+
 복구 프롬프트에는 검증 원인 코드와 필수 `[your ...]` 플레이스홀더 목록을 별도 항목으로 전달한다. 복구 결과도 같은 검증을 통과하지 못하면 502로 종료한다.
 
 ### 운영 완료 기준
