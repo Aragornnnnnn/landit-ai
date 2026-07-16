@@ -1,439 +1,563 @@
-# LAN-167 메시지 피드백 2단계 검수 Implementation Plan
+# LAN-167 피드백 판정·문구 분리와 세션 점수 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Goal:** 메시지 피드백의 의미 판정을 사용자용 문구 생성과 분리하고, 세 발화 이상 세션의 점수에 GOOD 비율을 반영해 피드백 유형·점수·별점이 일관되게 보이도록 한다.
 
-**Goal:** 메시지별 피드백을 생성 단계와 검수 단계로 나누고 검수 실패 시 유효한 생성 후보를 저장한다.
-
-**Architecture:** 첫 호출의 JSON을 `MessageFeedbackEvaluation`으로 검증해 생성 후보와 내부 `detectedPatterns`를 보관한다. 두 번째 호출은 원본 요청과 후보를 검수해 완성된 JSON을 반환하며, 유효한 검수 후보만 최종값으로 사용한다. 검수 호출·파싱·DTO·메시지 ID 검증 실패는 생성 후보 fallback으로 처리하고, 최종 후보에만 기존 benchmark 후처리를 적용한다.
+**Architecture:** 첫 번째 LLM 호출은 `evaluationContext`의 핵심 요청과 사용자 발화 근거, 세 평가 항목만 반환한다. 서버가 근거와 점수의 불변식을 검증한 뒤 `feedbackType`을 확정한다. 두 번째 호출은 확정된 판정을 입력받아 사용자용 문구만 생성하며, 서버가 판정을 결합하고 플레이스홀더·한국어 이유·기존 GOOD/NEEDS 필드 계약을 검증한다. 문구 검증 실패 때만 한 번 복구 호출하고, 검증되지 않은 전체 피드백으로 fallback하지 않는다. 메시지 점수는 유지하되 3개 이상 세션은 원시 평균 70%와 GOOD 비율 30%를 정수 반올림해 `nativeScore`를 만들고 별점은 최종 점수에서만 계산한다.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, OpenAI Python SDK, unittest.
 
-## Global Constraints
+## 작업 원칙
 
-- 외부 메시지 피드백 API, backend DTO, DB 스키마를 변경하지 않는다.
-- `detectedPatterns`는 AI 서버 내부에서만 사용하고 API 응답·캐시에 저장하지 않는다.
-- 생성 단계 실패는 기존처럼 요청 실패로 처리하고, 검수 단계 실패만 생성 후보로 fallback한다.
-- 검수 단계는 최대 한 번만 호출한다. 추가 재시도를 하지 않는다.
-- 대문자·문장부호·의미 중립 필러만의 차이는 NEEDS_IMPROVEMENT 사유가 아니다.
-- 교정 표현은 사용자 발화의 의도, 시제, 부정, 알려진 사실을 보존하고, 누락된 개인 정보는 구체적인 대괄호 플레이스홀더를 사용한다.
+- 현재 작업 브랜치 `fix/LAN-167`에서 진행한다.
+- 외부 API, backend DTO, DB 스키마를 변경하지 않는다.
+- `openai/gpt-5.4-mini`를 판정과 문구 생성에 우선 사용한다. 모델 분리는 전체 품질 재평가 결과가 나온 뒤 별도 결정한다.
+- 판정 프롬프트는 `evaluationContext`만 핵심 요청으로 분해한다. 시나리오 목표를 추가 질문으로 취급하지 않는다.
+- 기존 전체 피드백 생성·검수 프롬프트와 첫 후보 fallback은 제거한다.
+- `detectedPatterns`와 benchmark catalog 후처리는 문구 생성 뒤 내부 단계로 유지한다.
+- 현재 작업 트리의 미커밋 소스·테스트 변경은 폐기하지 않는다. 아래 테스트와 새 구조에 필요한 줄만 교체하고 문서 커밋과 섞지 않는다.
 
 ---
 
-### Task 1: 검수 결과가 생성 후보를 교체하는 회귀 테스트
+### Task 1: 판정 전용 내부 모델과 불변식 검증 추가
 
-**Files:**
-- Modify: `tests/test_conversation_api.py:214-240`
-- Modify: `tests/test_conversation_api.py:600-940`
+**Files**
 
-**Interfaces:**
-- Consumes: `POST /api/v1/conversation/message-feedback`, `FakeOpenAI`.
-- Produces: 두 JSON 응답을 순서대로 반환하는 `FakeCompletions`와 검수 결과 저장을 보장하는 API 테스트.
+- Modify: `app/models/conversation.py:287-380`.
+- Modify: `tests/test_conversation_api.py:606-1020`.
 
-- [ ] **Step 1: Write the failing test**
+**Interfaces**
 
-`FakeCompletions`가 `contents: list[str]`와 `errors: list[Exception | None]`를 받아 호출 순서대로 처리하도록 확장한다. 기존 단일 `content`, `error`, `kwargs` 사용 테스트를 유지하려면 첫 번째 호출 인자를 해당 속성에 그대로 남긴다.
+- Add internal `MessageFeedbackCoreAsk`.
+- Add internal `MessageFeedbackJudgement`.
+- Keep public `MessageFeedbackData`, `MessageFeedbackResponse`, `SessionFeedbackResponse` unchanged.
 
-```python
-class FakeCompletions:
-    def __init__(self, content=None, error=None, *, contents=None, errors=None):
-        self.contents = list(contents) if contents is not None else [content]
-        self.errors = list(errors) if errors is not None else [error]
-        self.kwargs = None
-        self.calls = []
+- [ ] **Step 1: 판정 DTO의 RED 테스트를 작성한다.**
 
-    def create(self, **kwargs):
-        self.kwargs = kwargs
-        self.calls.append(kwargs)
-        index = len(self.calls) - 1
-        error = self.errors[index] if index < len(self.errors) else None
-        if error is not None:
-            raise error
-        content = self.contents[index]
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-        )
-
-
-class FakeOpenAI:
-    def __init__(self, content=None, error=None, *, contents=None, errors=None):
-        self.completions = FakeCompletions(
-            content=content,
-            error=error,
-            contents=contents,
-            errors=errors,
-        )
-        self.chat = SimpleNamespace(completions=self.completions)
-```
-
-테스트 모듈에 아래 두 helper도 추가한다.
+`tests/test_conversation_api.py`에 판정 JSON helper를 추가한다.
 
 ```python
-def good_message_feedback_response(message_id=1001):
+def message_feedback_judgement(
+    message_id=1001,
+    *,
+    context_fit=2,
+    clarity=2,
+    language_accuracy=2,
+    core_asks=None,
+    stated_facts=None,
+):
     return {
         "messageId": message_id,
-        "feedbackType": "GOOD",
+        "coreAsks": core_asks or [
+            {
+                "ask": "say what activity you like",
+                "addressed": True,
+                "evidence": "jogging",
+                "requiredPlaceholder": None,
+            },
+        ],
+        "statedFacts": stated_facts or ["jogging"],
         "scoreEvidence": {
-            "contextFit": 2,
-            "clarity": 2,
-            "languageAccuracy": 2,
+            "contextFit": context_fit,
+            "clarity": clarity,
+            "languageAccuracy": language_accuracy,
         },
-        "baseLocaleAnalogy": '"조깅을 좋아해"라고 자연스럽게 답하는 것과 같아요.',
-        "positiveFeedback": None,
-        "feedbackDetail": "좋아하는 활동을 자연스럽게 말했어요.",
-        "correctionExpression": None,
-        "correctionReason": None,
-        "benchmarkMessage": "좋아하는 활동을 자연스럽게 답했어요.",
-    }
-
-
-def partial_hobby_feedback_response(message_id=1001):
-    return {
-        "messageId": message_id,
-        "feedbackType": "NEEDS_IMPROVEMENT",
-        "scoreEvidence": {
-            "contextFit": 1,
-            "clarity": 2,
-            "languageAccuracy": 2,
-        },
-        "baseLocaleAnalogy": '"조깅은 좋아하지만 왜 좋은지는 말 안 할게"라고 일부만 답하는 것과 같아요.',
-        "positiveFeedback": "좋아하는 활동을 분명히 말했어요.",
-        "feedbackDetail": None,
-        "correctionExpression": "I like jogging because [your reason].",
-        "correctionReason": "좋아하는 활동에는 답했지만 이유가 빠졌어요. [your reason]에 조깅을 좋아하는 이유를 넣어 보세요.",
-        "benchmarkMessage": None,
     }
 ```
 
-`multi_ask_feedback_payload`은 `valid_message_feedback_payload()`의 `evaluationContext`와 `userMessage`만 바꿔 만든다.
+다음 모델 검증 사례를 추가한다.
 
-```python
-def multi_ask_feedback_payload(user_message):
-    payload = valid_message_feedback_payload()
-    payload["evaluationContext"] = {
-        "type": "AI_MESSAGE",
-        "content": "What are you into? What do you love about it?",
-        "translatedContent": "무엇을 좋아해? 그것의 어떤 점이 좋아?",
-    }
-    payload["userMessage"] = user_message
-    return payload
-```
+- `coreAsks=[]`는 거부한다.
+- 0, 1, 2가 아닌 점수와 문자열·불리언 점수를 거부한다.
+- `addressed=true`인데 `evidence=null`이면 거부한다.
+- `addressed=false`인데 `evidence`가 있으면 거부한다.
+- 답하지 않은 요청의 `requiredPlaceholder`는 `[your hobby]` 같은 형식만 허용한다.
+- 답한 요청에는 `requiredPlaceholder`를 허용하지 않는다.
 
-아래처럼 첫 번째 GOOD 후보가 두 번째 NEEDS_IMPROVEMENT 후보로 교체되는 테스트를 추가한다.
-
-```python
-def test_message_feedback_stores_valid_reviewed_candidate(self):
-    generated = good_message_feedback_response()
-    reviewed = partial_hobby_feedback_response()
-    fake_openai = FakeOpenAI(contents=[json.dumps(generated), json.dumps(reviewed)])
-    app = create_app(make_settings(
-        openrouter_api_key="test-openrouter-key",
-        openrouter_model="openrouter-test-model",
-    ))
-
-    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-        response = make_client(app).post(
-            "/api/v1/conversation/message-feedback",
-            json=multi_ask_feedback_payload("I like jogging."),
-        )
-
-    self.assertEqual(response.status_code, 202)
-    cached = get_cached_message_feedback(100, 1001)
-    self.assertEqual(cached.feedbackType, "NEEDS_IMPROVEMENT")
-    self.assertEqual(cached.correctionExpression, "I like jogging because [your reason].")
-    self.assertIn("Review Task", fake_openai.completions.calls[1]["messages"][0]["content"])
-    self.assertIn("Generated candidate", fake_openai.completions.calls[1]["messages"][1]["content"])
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_stores_valid_reviewed_candidate`
-
-Expected: FAIL because the current implementation makes one model call and stores the generated GOOD candidate.
-
-- [ ] **Step 3: Do not change production code yet**
-
-Keep the failure as the RED baseline. The test must fail due to the one-call implementation, not due to malformed test JSON or missing helper data.
-
-- [ ] **Step 4: Commit after Task 2 becomes green**
-
-Do not commit this test alone. It is part of the same public message-feedback behavior as Task 2.
-
-### Task 2: 검수 단계 실패 fallback 회귀 테스트
-
-**Files:**
-- Modify: `tests/test_conversation_api.py:214-240`
-- Modify: `tests/test_conversation_api.py:600-940`
-
-**Interfaces:**
-- Consumes: 생성 단계의 유효한 `MessageFeedbackEvaluation` JSON, 검수 단계의 `AiGenerationFailedError` 또는 메시지 ID 불일치 JSON.
-- Produces: 검수 실패에도 생성 후보를 저장하는 API 테스트.
-
-- [ ] **Step 1: Write the failing tests**
-
-검수 호출이 실패해도 첫 번째 후보를 저장하는 테스트와, 검수 후보의 `messageId`가 다른 경우 첫 번째 후보로 fallback하는 테스트를 추가한다.
-
-```python
-def test_message_feedback_falls_back_when_review_call_fails(self):
-    generated = good_message_feedback_response()
-    fake_openai = FakeOpenAI(
-        contents=[json.dumps(generated)],
-        errors=[None, RuntimeError("review unavailable")],
-    )
-
-    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-        response = make_client(app).post(
-            "/api/v1/conversation/message-feedback",
-            json=valid_message_feedback_payload(),
-        )
-
-    self.assertEqual(response.status_code, 202)
-    cached = get_cached_message_feedback(100, 1001)
-    self.assertEqual(cached.feedbackType, "GOOD")
-
-def test_message_feedback_falls_back_when_review_message_id_differs(self):
-    generated = good_message_feedback_response()
-    invalid_review = good_message_feedback_response(message_id=9999)
-    fake_openai = FakeOpenAI(contents=[json.dumps(generated), json.dumps(invalid_review)])
-
-    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-        response = make_client(app).post(
-            "/api/v1/conversation/message-feedback",
-            json=valid_message_feedback_payload(),
-        )
-
-    self.assertEqual(response.status_code, 202)
-    self.assertEqual(get_cached_message_feedback(100, 1001).feedbackType, "GOOD")
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_falls_back_when_review_call_fails tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_falls_back_when_review_message_id_differs`
-
-Expected: FAIL because the current implementation does not make a second call and cannot distinguish a review failure from a generation failure.
-
-- [ ] **Step 3: Do not change production code yet**
-
-Confirm the expected failure before starting Task 3.
-
-### Task 3: 생성·검수 후보 파싱과 fallback 구현
-
-**Files:**
-- Modify: `app/conversation/application/next_message_service.py:1-240`
-- Modify: `app/conversation/application/next_message_service.py:1030-1245`
-- Test: `tests/test_conversation_api.py:214-240,600-940`
-
-**Interfaces:**
-- Consumes: `MessageFeedbackRequest`, raw completion JSON, `MessageFeedbackEvaluation`.
-- Produces: `_parse_message_feedback_candidate(data, expected_message_id) -> tuple[MessageFeedbackEvaluation, Any]`, `_review_message_feedback_candidate(request, evaluation) -> tuple[MessageFeedbackEvaluation, Any]`, and `_message_feedback_review_system_prompt(evaluation_context_type) -> str`.
-
-- [ ] **Step 1: Add the shared candidate parser**
-
-Add a helper that removes `detectedPatterns`, validates `MessageFeedbackEvaluation`, and verifies the candidate message ID before returning the evaluation and raw detected patterns.
-
-```python
-def _parse_message_feedback_candidate(
-    data: dict[str, Any],
-    expected_message_id: int,
-) -> tuple[MessageFeedbackEvaluation, Any]:
-    detected_patterns = data.pop("detectedPatterns", None)
-    try:
-        evaluation = MessageFeedbackEvaluation.model_validate(data)
-    except ValidationError as exc:
-        raise AiResponseInvalidError from exc
-    if evaluation.messageId != expected_message_id:
-        raise AiResponseInvalidError
-    return evaluation, detected_patterns
-```
-
-- [ ] **Step 2: Add the review prompt and request**
-
-Reuse the existing message-feedback policy as the baseline and append a review instruction that receives the original request and full candidate JSON. The prompt must require a complete final JSON, not an approval flag.
-
-```python
-def _message_feedback_review_system_prompt(
-    evaluation_context_type: EvaluationContextType,
-) -> str:
-    return "\n\n".join([
-        _message_feedback_system_prompt(evaluation_context_type),
-        (
-            "Review Task:\n"
-            "Review the generated candidate against the original evaluation context and user utterance. "
-            "Return a complete final JSON object. Correct a candidate that misses any explicit core ask, "
-            "answers a different question, invents a personal fact or reason, changes known facts or intent, "
-            "or treats capitalization, punctuation, a neutral filler, or a natural grammatical alternative as an actionable issue."
-        ),
-    ])
-
-def _message_feedback_review_user_prompt(
-    request: MessageFeedbackRequest,
-    evaluation: MessageFeedbackEvaluation,
-    detected_patterns: Any,
-) -> str:
-    candidate = evaluation.model_dump(mode="json")
-    candidate["detectedPatterns"] = detected_patterns
-    return (
-        f"{_message_feedback_user_prompt(request)}\n\n"
-        "Generated candidate:\n"
-        f"{json.dumps(candidate, ensure_ascii=False, separators=(\",\", \":\"))}"
-    )
-```
-
-- [ ] **Step 3: Add the review call and fallback boundary**
-
-Keep generation failures outside the fallback boundary. Wrap only the second call, raw response parsing, and reviewer candidate validation. On any `AiGenerationFailedError` or `AiResponseInvalidError`, keep the generation candidate and emit a non-sensitive warning.
-
-```python
-generated_data = _request_json_completion(...)
-evaluation, detected_patterns = _parse_message_feedback_candidate(
-    generated_data,
-    request.messageId,
-)
-try:
-    reviewed_data = _request_json_completion(
-        settings,
-        system_prompt=_message_feedback_review_system_prompt(request.evaluationContext.type),
-        user_prompt=_message_feedback_review_user_prompt(
-            request,
-            evaluation,
-            detected_patterns,
-        ),
-        max_tokens=768,
-    )
-    evaluation, detected_patterns = _parse_message_feedback_candidate(
-        reviewed_data,
-        request.messageId,
-    )
-except (AiGenerationFailedError, AiResponseInvalidError):
-    logger.warning(
-        "AI 메시지별 피드백 검수에 실패해 생성 후보를 사용합니다. workflow=message_feedback_review sessionId=%s messageId=%s",
-        request.sessionId,
-        request.messageId,
-    )
-```
-
-Convert the selected evaluation to `MessageFeedbackData`, run the existing benchmark postprocess once, and store the selected score evidence.
-
-- [ ] **Step 4: Run focused tests to verify they pass**
-
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_stores_valid_reviewed_candidate tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_falls_back_when_review_call_fails tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_falls_back_when_review_message_id_differs`
-
-Expected: PASS. The valid reviewer replaces the candidate; review transport and ID failures retain it.
-
-- [ ] **Step 5: Run adjacent message-feedback tests**
+- [ ] **Step 2: RED를 확인한다.**
 
 Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
 
-Expected: PASS. Existing GOOD/NEEDS contract, benchmark catalog behavior, and prompt tests remain valid after the extra call.
+Expected: FAIL because the judgement models do not exist.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: 내부 Pydantic 모델을 최소 구현한다.**
 
-```bash
-git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
-git commit -m "fix: 메시지 피드백 2단계 검수와 fallback 추가"
-```
-
-### Task 4: 실제 품질 경계 fixture와 문서 기록
-
-**Files:**
-- Modify: `tests/fixtures/lan_167_feedback_quality_cases.json`
-- Modify: `tests/test_quality_evaluation.py:120-160`
-- Modify: `context-notes.md`
-- Modify: `checklist.md`
-
-**Interfaces:**
-- Consumes: `scripts/evaluate_conversation_quality.py`의 message-feedback fixture 형식.
-- Produces: 복합 질문, 무관한 답변, 근거 없는 이유, 표기만 다른 답변을 포함하는 LAN-167 회귀 사례.
-
-- [ ] **Step 1: Add the failing fixture assertions**
-
-기존 fixture 집합 검증 테스트에 다음 case ID를 추가한다.
+`app/models/conversation.py`에 다음 구조를 추가한다.
 
 ```python
-self.assertEqual(
-    set(cases_by_id),
-    {
-        "lan167-capitalization-and-period-only",
-        "lan167-meaning-neutral-filler",
-        "lan167-valid-like-to-watch",
-        "lan167-partial-self-introduction",
-        "lan167-off-topic-answer",
-        "lan167-partial-hobby-reason",
-        "lan167-preserve-unknown-reason",
-    },
+class MessageFeedbackCoreAsk(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ask: str
+    addressed: bool
+    evidence: str | None = None
+    requiredPlaceholder: str | None = None
+
+
+class MessageFeedbackJudgement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messageId: int = Field(gt=0)
+    coreAsks: list[MessageFeedbackCoreAsk] = Field(min_length=1)
+    statedFacts: list[str]
+    scoreEvidence: MessageFeedbackScoreEvidence
+```
+
+필드 validator로 공백을 거부하고, model validator로 `addressed`, `evidence`, `requiredPlaceholder`의 조합과 정규식 `^\[your [a-z][a-z ]*\]$`을 확인한다. 사용자 발화 부분 문자열 검증과 `contextFit` 계산은 요청 문맥이 필요한 서비스 계층에 둔다.
+
+- [ ] **Step 4: 모델 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: PASS for the new model-validation cases; existing API cases may still fail until Task 3.
+
+---
+
+### Task 2: 사용자 발화 근거와 contextFit을 서버에서 검증
+
+**Files**
+
+- Modify: `app/conversation/application/next_message_service.py:200-285`.
+- Modify: `tests/test_conversation_api.py:735-1020`.
+
+**Interfaces**
+
+- Add `_parse_message_feedback_judgement(data, request)`.
+- Add `_feedback_type_from_score_evidence(score_evidence)`.
+- Reuse `_normalize_evidence(value)`.
+
+- [ ] **Step 1: 요청 문맥 불변식의 RED 테스트를 작성한다.**
+
+다음 API 또는 helper 테스트를 추가한다.
+
+- `addressed=true`의 evidence가 정규화된 `userMessage`에 없으면 `AiResponseInvalidError`다.
+- `statedFacts` 값이 사용자 발화에 없으면 `AiResponseInvalidError`다.
+- 모든 핵심 요청을 답했는데 `contextFit`이 2가 아니면 거부한다.
+- 일부만 답했는데 `contextFit`이 1이 아니면 거부한다.
+- 하나도 답하지 않았는데 `contextFit`이 0이 아니면 거부한다.
+- 세 점수가 모두 2이면 서버 판정은 GOOD이다.
+- 하나라도 2보다 낮으면 서버 판정은 NEEDS_IMPROVEMENT다.
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: FAIL because judgement parsing and server-side feedback-type calculation are missing.
+
+- [ ] **Step 3: 판정 파서와 검증 함수를 구현한다.**
+
+```python
+def _feedback_type_from_score_evidence(
+    score_evidence: MessageFeedbackScoreEvidence,
+) -> FeedbackType:
+    scores = (
+        score_evidence.contextFit,
+        score_evidence.clarity,
+        score_evidence.languageAccuracy,
+    )
+    return (
+        FeedbackType.GOOD
+        if all(score == 2 for score in scores)
+        else FeedbackType.NEEDS_IMPROVEMENT
+    )
+```
+
+`_parse_message_feedback_judgement`는 DTO 검증 뒤 다음 순서로 확인한다.
+
+1. `messageId`가 요청값과 같은지 확인한다.
+2. answered 개수로 기대 `contextFit`을 0, 1, 2 중 하나로 계산한다.
+3. evidence와 stated fact를 `_normalize_evidence(request.userMessage)`에 포함되는지 확인한다.
+4. 불일치하면 `AiResponseInvalidError`를 발생시킨다.
+
+- [ ] **Step 4: 판정 검증 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: PASS for judgement invariants.
+
+---
+
+### Task 3: 판정 전용 첫 호출과 판정이 잠긴 문구 생성 구현
+
+**Files**
+
+- Modify: `app/models/conversation.py:287-390`.
+- Modify: `app/conversation/application/next_message_service.py:200-285`.
+- Modify: `app/conversation/application/next_message_service.py:1080-1320`.
+- Modify: `tests/test_conversation_api.py:606-1450`.
+
+**Interfaces**
+
+- Replace `_message_feedback_system_prompt` with `_message_feedback_judgement_system_prompt`.
+- Replace `_message_feedback_user_prompt` with `_message_feedback_judgement_user_prompt`.
+- Replace `_message_feedback_review_*` with `_message_feedback_copy_*`.
+- Add internal `MessageFeedbackCopy` without `feedbackType` or `scoreEvidence`.
+- Add `_assemble_message_feedback(judgement, copy, request)`.
+
+- [ ] **Step 1: 두 호출의 역할 분리 RED 테스트를 작성한다.**
+
+`FakeOpenAI`에 첫 호출의 판정 JSON과 두 번째 호출의 문구 JSON을 순서대로 반환하게 하고 다음을 확인한다.
+
+- 첫 system prompt는 `Judgement Task`를 포함하고 사용자용 피드백 필드를 요구하지 않는다.
+- 첫 user prompt는 `evaluationContext`와 `userMessage`를 포함한다.
+- 첫 prompt는 scenario goal을 핵심 요청으로 분해하지 말라고 명시한다.
+- 두 번째 system prompt는 `Copy Task`와 `authoritative judgement`를 포함한다.
+- 두 번째 문구 JSON에는 `feedbackType`과 `scoreEvidence`가 없다.
+- 서버가 판정 결과로 GOOD 또는 NEEDS_IMPROVEMENT를 조립한다.
+- 문구 모델이 추가 필드로 `feedbackType`을 반환하면 `extra="forbid"`로 거부한다.
+
+대표 부분 답변 테스트는 다음 데이터를 사용한다.
+
+```python
+judgement = message_feedback_judgement(
+    context_fit=1,
+    core_asks=[
+        {
+            "ask": "say what activity you like",
+            "addressed": True,
+            "evidence": "jogging",
+            "requiredPlaceholder": None,
+        },
+        {
+            "ask": "say why you like it",
+            "addressed": False,
+            "evidence": None,
+            "requiredPlaceholder": "[your reason]",
+        },
+    ],
+)
+copy = {
+    "messageId": 1001,
+    "baseLocaleAnalogy": "좋아하는 활동만 말하고 이유는 덧붙이지 않은 것과 같아요.",
+    "positiveFeedback": "좋아하는 활동을 분명히 말했어요.",
+    "feedbackDetail": None,
+    "correctionExpression": "I like jogging because [your reason].",
+    "correctionReason": "좋아하는 이유가 빠졌어요. [your reason]에 이유를 넣어 보세요.",
+    "benchmarkMessage": None,
+    "detectedPatterns": [],
+}
+```
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: FAIL because production still generates and reviews two complete feedback objects.
+
+- [ ] **Step 3: 내부 문구 DTO와 조립 함수를 구현한다.**
+
+`MessageFeedbackCopy`는 외부 문구 필드만 가지며 `detectedPatterns`는 기존처럼 파싱 전에 분리한다. `_assemble_message_feedback`는 서버가 계산한 `feedbackType`을 넣고 `MessageFeedbackData.model_validate`로 GOOD/NEEDS 필드 계약을 재검증한다.
+
+NEEDS_IMPROVEMENT에서는 다음도 검사한다.
+
+- 모든 `requiredPlaceholder`가 `correctionExpression`에 포함된다.
+- 교정 표현에서 찾은 모든 대괄호 표현이 `^\[your [a-z][a-z ]*\]$`에 맞는다.
+- `correctionReason`에 `re.search(r"[가-힣]", value)`가 성공한다.
+- 기존 내부 정책 금지 문구 validator를 그대로 적용한다.
+
+- [ ] **Step 4: `generate_message_feedback`의 정상 경로를 교체한다.**
+
+```python
+judgement_data = _request_json_completion(...max_tokens=512)
+judgement = _parse_message_feedback_judgement(judgement_data, request)
+copy_data = _request_json_completion(...max_tokens=768)
+feedback, detected_patterns = _parse_and_assemble_message_feedback_copy(
+    copy_data,
+    judgement,
+    request,
+)
+feedback = _postprocess_message_feedback_benchmark(
+    feedback,
+    detected_patterns,
+    request.userMessage,
 )
 ```
 
-`lan167-partial-hobby-reason`은 `What are you into? What do you love about it?`와 `I like jogging.`을 사용해 NEEDS_IMPROVEMENT, 80점, `[your reason]`을 요구한다. `lan167-preserve-unknown-reason`은 `I like reading a book. This is so cool.`을 사용해 NEEDS_IMPROVEMENT, `[your reason]`을 요구하고 `relax`를 금지한다.
+기존 전체 후보의 `MessageFeedbackEvaluation` 파싱과 `_message_feedback_review_*` 호출, 첫 후보 fallback을 제거한다. 캐시에는 최종 `MessageFeedbackData`와 판정 단계의 `scoreEvidence`만 저장한다.
 
-- [ ] **Step 2: Run fixture test to verify it fails**
+- [ ] **Step 5: 판정 잠금과 외부 계약 테스트를 통과시킨다.**
 
-Run: `.venv/bin/python -m unittest tests.test_quality_evaluation.QualityEvaluationTests.test_lan_167_fixture_covers_feedback_quality_boundaries`
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
 
-Expected: FAIL because the two cases are absent.
+Expected: PASS. Response and cached feedback must not expose judgement internals.
 
-- [ ] **Step 3: Add the fixture cases and make the test pass**
+- [ ] **Step 6: 첫 논리 커밋을 만든다.**
 
-Add exact payloads that mirror the user-data findings. Use `requiredCorrectionPlaceholders` and `forbiddenFeedbackTerms` to make fact-preservation requirements observable in the evaluator output.
+```bash
+git add app/models/conversation.py app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 메시지 피드백 판정과 문구 생성을 분리"
+```
 
-- [ ] **Step 4: Run quality-evaluation tests**
+---
+
+### Task 4: 문구 검증 실패 시 한 번만 복구하고 잘못된 fallback 제거
+
+**Files**
+
+- Modify: `app/conversation/application/next_message_service.py:200-285`.
+- Modify: `app/conversation/application/next_message_service.py:1190-1320`.
+- Modify: `tests/test_conversation_api.py:800-1100`.
+
+**Interfaces**
+
+- Add `_message_feedback_copy_repair_system_prompt()`.
+- Add `_message_feedback_copy_repair_user_prompt(request, judgement, invalid_data, validation_error)`.
+- Normal path has 2 LLM calls; repair path has 3.
+
+- [ ] **Step 1: 복구 정책의 RED 테스트를 작성한다.**
+
+다음 호출 순서를 검증한다.
+
+- 유효한 판정과 유효한 문구는 정확히 2회 호출한다.
+- `[A little about yourself]`처럼 잘못된 플레이스홀더는 세 번째 복구 호출을 수행한다.
+- 영어로만 작성된 `correctionReason`도 세 번째 복구 호출을 수행한다.
+- 복구 문구가 유효하면 확정 판정과 함께 저장한다.
+- 복구 문구도 유효하지 않으면 API가 `AI_RESPONSE_INVALID` 502를 반환하고 캐시에 저장하지 않는다.
+- 판정 호출 자체가 실패하거나 판정 근거가 유효하지 않으면 문구 호출 없이 실패한다.
+- 기존 첫 전체 피드백 fallback 로그와 동작이 남아 있지 않다.
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: FAIL because copy repair does not exist and current code falls back to the first complete candidate.
+
+- [ ] **Step 3: 복구 호출을 최소 구현한다.**
+
+문구 파싱·조립에서 `AiResponseInvalidError`가 발생한 경우에만 원본 요청, 잠긴 판정, 유효하지 않은 문구 JSON, 검증 오류의 비민감 요약을 복구 prompt에 전달한다. LLM 또는 파싱 실패도 같은 한 번의 복구 기회를 사용한다. 복구 뒤에는 같은 parser와 조립 검증을 다시 사용하고 두 번째 실패는 그대로 전파한다.
+
+- [ ] **Step 4: benchmark 후처리 회귀를 확인한다.**
+
+다음 기존 테스트를 유지하거나 새 흐름에 맞게 fixture만 분리한다.
+
+- 검증된 catalog pattern이 있는 GOOD은 catalog 문구로 덮어쓴다.
+- 검증된 pattern이 없는 GOOD은 안전한 비정량 LLM 문구를 유지한다.
+- 정량·출처 주장이 검증되지 않았으면 기본 문구를 사용한다.
+- NEEDS_IMPROVEMENT는 `benchmarkMessage=null`이다.
+- `detectedPatterns`는 외부 응답과 cache에 노출되지 않는다.
+
+- [ ] **Step 5: 관련 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: PASS.
+
+- [ ] **Step 6: 두 번째 논리 커밋을 만든다.**
+
+```bash
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 유효한 피드백 문구만 저장하도록 검증"
+```
+
+---
+
+### Task 5: 세션 점수에 GOOD 비율을 반영하고 별점을 최종 점수에만 연결
+
+**Files**
+
+- Modify: `app/conversation/application/next_message_service.py:300-310`.
+- Modify: `app/conversation/application/next_message_service.py:533-555`.
+- Modify: `app/conversation/application/next_message_service.py:640-665`.
+- Modify: `tests/test_conversation_api.py:1600-1760`.
+
+**Interfaces**
+
+- Change `_native_score_from_message_feedback_entries(entries)` behavior for 3+ entries.
+- Change `_star_rating_from_native_score(native_score, feedback_entries)` to `_star_rating_from_native_score(native_score)`.
+- Keep response fields and enum values unchanged.
+
+- [ ] **Step 1: 새 점수 경계의 RED 테스트를 작성한다.**
+
+기존 별점 상한 테스트를 다음 점수 테스트로 교체한다.
+
+- 메시지 1개 85점 NEEDS_IMPROVEMENT는 기존처럼 85점, 별 2.5개다.
+- 메시지 2개의 원시 평균은 GOOD 비율 가중치 없이 기존 반올림을 유지한다.
+- 원시 평균 82점, GOOD 0/3은 57점, 별 1.5개다.
+- 원시 평균 90점, GOOD 1/3은 73점, 별 2.0개다.
+- 원시 평균 95점, GOOD 2/3은 87점, 별 2.5개다.
+- 원시 평균 100점, GOOD 3/3은 100점, 별 3.0개다.
+- 원시 점수가 낮아 결합 점수가 50 미만이면 50점, 별 1.0개다.
+- 별점 helper는 feedback entries를 받지 않고 같은 nativeScore에 항상 같은 별점을 반환한다.
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.SessionFeedbackApiTests`
+
+Expected: FAIL because nativeScore is still a raw average and starRating has a separate GOOD-ratio cap.
+
+- [ ] **Step 3: 이중 반올림 없는 정수 계산을 구현한다.**
+
+```python
+def _native_score_from_message_feedback_entries(
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> int:
+    if not feedback_entries:
+        return 0
+
+    message_scores = [
+        _message_score_from_evidence(entry.score_evidence)
+        for entry in feedback_entries
+    ]
+    message_count = len(message_scores)
+    total_score = sum(message_scores)
+    if message_count < 3:
+        return (total_score * 2 + message_count) // (message_count * 2)
+
+    good_count = sum(
+        entry.feedback.feedbackType == FeedbackType.GOOD
+        for entry in feedback_entries
+    )
+    numerator = total_score * 7 + good_count * 300
+    denominator = message_count * 10
+    rounded_score = (numerator * 2 + denominator) // (denominator * 2)
+    return max(50, rounded_score)
+```
+
+`_star_rating_from_native_score`에서는 GOOD 개수와 별점 상한 코드를 제거한다. 호출부도 `native_score`만 전달한다.
+
+- [ ] **Step 4: 점수와 별점 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.SessionFeedbackApiTests`
+
+Expected: PASS with the exact boundary values above.
+
+- [ ] **Step 5: 세 번째 논리 커밋을 만든다.**
+
+```bash
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 세션 점수에 원어민 발화 비율을 반영"
+```
+
+---
+
+### Task 6: 실제 데이터 품질 평가 도구와 회귀 fixture를 새 단계에 맞게 수정
+
+**Files**
+
+- Modify: `scripts/evaluate_conversation_quality.py`.
+- Modify: `tests/fixtures/lan_167_feedback_quality_cases.json`.
+- Modify: `tests/test_quality_evaluation.py`.
+
+**Interfaces**
+
+- Quality result records judgement, locked feedback type, message score, generated copy, copy validation, and final feedback separately.
+- Do not print or persist API keys.
+
+- [ ] **Step 1: 새 결과 구조의 RED 테스트를 작성한다.**
+
+평가 결과에 다음 필드를 요구한다.
+
+- `judgement.coreAsks`.
+- `judgement.statedFacts`.
+- `scoreEvidence`.
+- `lockedFeedbackType`.
+- `messageScore`.
+- `copyValidationPassed`.
+- `finalFeedback`.
+- `expectedFeedbackTypeMatched`.
+- `expectedScoreRangeMatched`.
+
+fixture의 중요 사례에는 기대 `contextFit`, 필수 플레이스홀더, 금지된 추가 사실을 기록한다. 특히 31, 52, 56, 146, 208, 257, 283, 292, 296, 317, 324, 329, 330, 335번을 포함한다.
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_quality_evaluation`
+
+Expected: FAIL because the evaluator still expects one complete feedback candidate.
+
+- [ ] **Step 3: 운영과 같은 판정·문구 흐름을 평가하도록 수정한다.**
+
+평가 도구가 운영 서비스의 내부 helper를 재사용해 규칙이 중복되지 않게 한다. 각 단계의 원시 비민감 결과와 검증 결과는 분석 파일에 기록하되, 외부 API 응답 구조를 바꾸지 않는다.
+
+- [ ] **Step 4: 평가 도구 단위 테스트를 통과시킨다.**
 
 Run: `.venv/bin/python -m unittest tests.test_quality_evaluation`
 
 Expected: PASS.
 
-- [ ] **Step 5: Record verification scope**
-
-Append the implementation decision, fallback behavior, and actual repeat-evaluation result to `context-notes.md`. Mark the corresponding `checklist.md` items complete only after the commands and real model evaluation finish.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: 품질 평가 변경을 커밋한다.**
 
 ```bash
-git add tests/fixtures/lan_167_feedback_quality_cases.json tests/test_quality_evaluation.py context-notes.md checklist.md
-git commit -m "test: 메시지 피드백 검수 품질 경계 보강"
+git add scripts/evaluate_conversation_quality.py tests/fixtures/lan_167_feedback_quality_cases.json tests/test_quality_evaluation.py
+git commit -m "test: 판정과 문구 품질을 분리해 평가"
 ```
 
-### Task 5: 전체 회귀와 실제 모델 재평가
+---
 
-**Files:**
-- Verify: `app/conversation/application/next_message_service.py`
-- Verify: `tests/test_conversation_api.py`
-- Verify: `tests/test_quality_evaluation.py`
-- Verify: `tests/fixtures/lan_167_feedback_quality_cases.json`
+### Task 7: 전체 검증과 실제 115개 발화 재평가
 
-**Interfaces:**
-- Consumes: 현재 `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, 승인된 사용자 데이터.
-- Produces: 전체 unittest 통과 기록과 중요 사례 14개의 3회 재평가 결과.
+**Files**
 
-- [ ] **Step 1: Run the full test suite**
+- Modify: `context-notes.md` only if implementation discoveries differ from this approved design.
+- Modify: `checklist.md` as each gate completes.
+- Verify: FastAPI OpenAPI schema generated from `app/main.py`.
 
-Run: `.venv/bin/python -m unittest discover -s tests`
-
-Expected: PASS with no test failures.
-
-- [ ] **Step 2: Run static checks**
-
-Run: `.venv/bin/python -m compileall -q app tests scripts`
-
-Expected: PASS with no output.
-
-- [ ] **Step 3: Re-evaluate critical real cases**
-
-Run each command with approved user data and a fresh output file.
+- [ ] **Step 1: 전체 정적·단위 검증을 실행한다.**
 
 ```bash
-.venv/bin/python /tmp/evaluate_landit_lan167_csv.py \
-  --input '/Users/sangmin8817/Downloads/Supabase Snippet Untitled query-3.csv' \
-  --output /tmp/landit-ai-lan167-two-stage-run1.jsonl \
-  --workers 1 \
-  --message-ids 31,52,56,146,208,257,283,292,296,317,324,329,330,335
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m compileall app scripts tests
+.venv/bin/python -m pip check
+git diff --check
 ```
 
-Repeat with output paths ending in `run2.jsonl` and `run3.jsonl`. Compare each output with the pre-change three-run findings. The target is fewer than nine cases with the same material issue in all three runs.
+Expected: all commands exit 0.
 
-- [ ] **Step 4: Review the final diff and commit records**
+- [ ] **Step 2: 외부 계약이 유지되는지 확인한다.**
 
-Run: `git diff --check`
+OpenAPI를 생성해 메시지 피드백과 세션 피드백 응답에 다음 내부 필드가 없는지 확인한다.
 
-Expected: PASS.
+- `scoreEvidence`.
+- `coreAsks`.
+- `statedFacts`.
+- `requiredPlaceholder`.
+- `detectedPatterns`.
 
-Confirm `git status --short` contains only intentional changes and that Tasks 3 and 4 have separate logical commits.
+기존 `nativeScore` 정수 범위와 `starRating`의 `1.0`, `1.5`, `2.0`, `2.5`, `3.0` 계약이 유지되는지 확인한다.
+
+- [ ] **Step 3: 중요 사례 14개를 각 3회 평가한다.**
+
+Run the evaluator with `openai/gpt-5.4-mini` after confirming `OPENROUTER_API_KEY` is set without printing its value.
+
+통과 기준은 다음과 같다.
+
+- 42개 판정 모두 기대 `contextFit`과 feedback type이 일치한다.
+- 146, 283, 329, 330번은 3회 모두 NEEDS_IMPROVEMENT다.
+- 31번은 3회 모두 GOOD이다.
+- 56, 208, 296, 329, 330, 335번에 사용자 발화에 없는 사실이나 이유가 추가되지 않는다.
+- 필수 플레이스홀더와 한국어 `correctionReason` 검증 실패가 없다.
+
+- [ ] **Step 4: 전체 115개 발화를 한 번 재평가한다.**
+
+초기 기준선인 false GOOD 9/22, 중대한 교정 품질 문제 55/93과 비교한다. 중요 사례에서 반복되는 중대 오류가 하나라도 남거나 전체 중대 오류가 감소하지 않으면 완료 처리하지 않고 판정 또는 문구 단계 중 원인이 있는 쪽만 수정한다.
+
+- [ ] **Step 5: 최종 diff와 커밋 범위를 검토한다.**
+
+```bash
+git status --short
+git diff --stat origin/release/LAN-161...HEAD
+git log --oneline origin/release/LAN-161..HEAD
+```
+
+Expected: 변경 줄은 판정·문구 분리, 세션 점수, 품질 평가와 문서에만 연결돼 있고 비밀 값이나 평가 원문 덤프가 커밋되지 않는다.
+
+- [ ] **Step 6: 구현 기록을 마무리한다.**
+
+`context-notes.md`에는 실제 모델 반복 평가 결과와 남은 위험만 추가하고, `checklist.md`의 완료된 항목을 체크한다. 문서 변경을 별도 커밋한다.
+
+```bash
+git add context-notes.md checklist.md
+git commit -m "docs: LAN-167 품질 검증 결과 기록"
+```
+
+## 완료 기준
+
+- [ ] 판정 단계가 핵심 요청, 원문 근거, 세 평가 점수만 생성하고 서버 검증을 통과한다.
+- [ ] `feedbackType`과 메시지 점수는 서버가 확정하며 문구 생성 단계가 변경하지 못한다.
+- [ ] 문구 단계가 필수 플레이스홀더, 한국어 이유, GOOD/NEEDS 필드 계약을 지킨다.
+- [ ] 문구 실패는 한 번만 복구하고 검증되지 않은 전체 피드백으로 fallback하지 않는다.
+- [ ] benchmark catalog와 내부 `detectedPatterns` 정책이 유지된다.
+- [ ] 1~2개 발화 세션 점수는 기존 평균을 유지한다.
+- [ ] 3개 이상 세션 점수는 원시 평균 70%와 GOOD 비율 30%를 반영한다.
+- [ ] 별점은 최종 `nativeScore`에서만 계산한다.
+- [ ] 중요 사례 14개 3회와 전체 115개 평가의 품질 기준을 충족한다.
+- [ ] 전체 unittest, compileall, pip check, OpenAPI 회귀, diff check가 통과한다.
