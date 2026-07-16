@@ -1896,6 +1896,50 @@ class MessageFeedbackApiTests(unittest.TestCase):
             supported_feedback,
         )
 
+    def test_message_feedback_copy_uses_vague_reason_placeholder_template(self):
+        request_payload = valid_message_feedback_payload()
+        request_payload["evaluationContext"]["content"] = (
+            "What do you love about reading?"
+        )
+        request_payload["userMessage"] = (
+            "I like reading a book. This is so cool."
+        )
+        request = MessageFeedbackRequest.model_validate(request_payload)
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=2,
+                clarity=1,
+                language_accuracy=2,
+                language_corrections=[],
+                core_asks=[
+                    {
+                        "ask": "what the user loves about reading",
+                        "addressed": True,
+                        "evidence": "This is so cool",
+                        "requiredPlaceholder": None,
+                    },
+                ],
+                stated_facts=["I like reading a book", "This is so cool"],
+            ),
+        )
+        copy_data = message_feedback_copy()
+        copy_data["correctionExpression"] = (
+            "I like reading books. This is so cool."
+        )
+
+        feedback, _, _ = (
+            next_message_service._parse_and_assemble_message_feedback_copy(
+                copy_data,
+                judgement,
+                request,
+            )
+        )
+
+        self.assertEqual(
+            feedback.correctionExpression,
+            "I like reading a book because [your reason].",
+        )
+
     def test_message_feedback_copy_repair_prompt_lists_required_placeholders(self):
         request = MessageFeedbackRequest.model_validate(
             multiple_hobby_questions_payload(),

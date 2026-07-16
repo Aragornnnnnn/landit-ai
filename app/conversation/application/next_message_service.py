@@ -597,6 +597,21 @@ def _safe_correction_expression(
             "I usually split the cleaning by [your cleaning preference], "
             "and [your previous cleaning routine] worked for me before."
         )
+    if any(
+        _is_vague_generic_evaluation_answer(core_ask)
+        for core_ask in judgement.coreAsks
+    ):
+        preference_fact = next((
+            stated_fact.strip(" .!?")
+            for stated_fact in judgement.statedFacts
+            if re.search(
+                r"\bI\s+(?:like|love|enjoy)\b",
+                stated_fact,
+                re.IGNORECASE,
+            )
+        ), None)
+        if preference_fact is not None:
+            return f"{preference_fact} because [your reason]."
     return None
 
 
@@ -632,6 +647,8 @@ def _validate_message_feedback_copy(
     correction_words = _meaningful_evidence_words(correction_expression)
     for core_ask in judgement.coreAsks:
         if not core_ask.addressed or core_ask.evidence is None:
+            continue
+        if _is_vague_generic_evaluation_answer(core_ask):
             continue
         evidence_words = _meaningful_evidence_words(core_ask.evidence)
         if evidence_words and not _words_overlap(
@@ -1378,9 +1395,10 @@ def _generic_evaluation_evidence(user_message: str) -> str | None:
 
 def _asks_what_is_liked(ask: str) -> bool:
     normalized_ask = ask.casefold()
-    return "what" in normalized_ask and (
-        "like about" in normalized_ask or "love about" in normalized_ask
-    )
+    return "what" in normalized_ask and re.search(
+        r"\b(?:likes?|loves?)\s+about\b",
+        normalized_ask,
+    ) is not None
 
 
 def _asks_for_preference_reason(ask: str) -> bool:
