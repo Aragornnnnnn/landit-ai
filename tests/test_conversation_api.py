@@ -239,15 +239,20 @@ def message_feedback_judgement(
     language_accuracy=2,
     core_asks=None,
     stated_facts=None,
-    language_issue_evidence=...,
+    language_corrections=...,
 ):
     resolved_stated_facts = ["jogging"] if stated_facts is None else stated_facts
-    resolved_language_issue_evidence = language_issue_evidence
-    if language_issue_evidence is ...:
-        resolved_language_issue_evidence = (
-            resolved_stated_facts[0]
+    resolved_language_corrections = language_corrections
+    if language_corrections is ...:
+        resolved_language_corrections = (
+            [
+                {
+                    "evidence": resolved_stated_facts[0],
+                    "replacement": resolved_stated_facts[0],
+                },
+            ]
             if language_accuracy < 2 and resolved_stated_facts
-            else None
+            else []
         )
     return {
         "messageId": message_id,
@@ -264,7 +269,7 @@ def message_feedback_judgement(
             else core_asks
         ),
         "statedFacts": resolved_stated_facts,
-        "languageIssueEvidence": resolved_language_issue_evidence,
+        "languageCorrections": resolved_language_corrections,
         "scoreEvidence": {
             "contextFit": context_fit,
             "clarity": clarity,
@@ -329,10 +334,10 @@ def message_feedback_responses(feedback, user_message):
         "messageId": feedback["messageId"],
         "coreAsks": core_asks,
         "statedFacts": [user_message],
-        "languageIssueEvidence": (
-            user_message
+        "languageCorrections": (
+            [{"evidence": user_message, "replacement": user_message}]
             if score_evidence["languageAccuracy"] < 2
-            else None
+            else []
         ),
         "scoreEvidence": score_evidence,
     }
@@ -991,32 +996,36 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 feedback,
             )
 
-    def test_message_feedback_judgement_requires_language_issue_evidence(self):
+    def test_message_feedback_judgement_requires_language_corrections(self):
         judgement_data = message_feedback_judgement(language_accuracy=1)
-        judgement_data.pop("languageIssueEvidence")
+        judgement_data["languageCorrections"] = []
 
         with self.assertRaises(ValueError):
             conversation_models.MessageFeedbackJudgement.model_validate(
                 judgement_data,
             )
 
-    def test_message_feedback_judgement_rejects_issue_evidence_for_perfect_accuracy(self):
+    def test_message_feedback_judgement_rejects_corrections_for_perfect_accuracy(self):
         judgement_data = message_feedback_judgement(language_accuracy=2)
-        judgement_data["languageIssueEvidence"] = "jogging"
+        judgement_data["languageCorrections"] = [
+            {"evidence": "jogging", "replacement": "go jogging"},
+        ]
 
         with self.assertRaises(ValueError):
             conversation_models.MessageFeedbackJudgement.model_validate(
                 judgement_data,
             )
 
-    def test_message_feedback_judgement_rejects_ungrounded_language_issue_evidence(self):
+    def test_message_feedback_judgement_rejects_ungrounded_language_correction(self):
         request = MessageFeedbackRequest.model_validate(
             multiple_hobby_questions_payload(),
         )
         judgement_data = message_feedback_judgement(
             context_fit=1,
             language_accuracy=1,
-            language_issue_evidence="swimming",
+            language_corrections=[
+                {"evidence": "swimming", "replacement": "go swimming"},
+            ],
             core_asks=[
                 {
                     "ask": "say what activity you like",
@@ -1035,7 +1044,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             next_message_service.AiResponseInvalidError,
-            "message_feedback_judgement_language_issue_evidence",
+            "message_feedback_judgement_language_correction_evidence",
         ):
             next_message_service._parse_message_feedback_judgement(
                 judgement_data,
@@ -1147,7 +1156,9 @@ class MessageFeedbackApiTests(unittest.TestCase):
             message_feedback_judgement(
                 context_fit=0,
                 language_accuracy=1,
-                language_issue_evidence="is boom",
+                language_corrections=[
+                    {"evidence": "is boom", "replacement": "is huge"},
+                ],
                 core_asks=[
                     {
                         "ask": "proof of travel during July",
@@ -1229,6 +1240,51 @@ class MessageFeedbackApiTests(unittest.TestCase):
             judgement,
             feedback,
         )
+
+    def test_message_feedback_copy_allows_only_approved_replacement_words(self):
+        judgement = conversation_models.MessageFeedbackJudgement.model_validate(
+            message_feedback_judgement(
+                context_fit=2,
+                language_accuracy=1,
+                language_corrections=[
+                    {"evidence": "is boom", "replacement": "is huge"},
+                ],
+                core_asks=[
+                    {
+                        "ask": "describe the aircon bill",
+                        "addressed": True,
+                        "evidence": "My aircon bill is boom",
+                        "requiredPlaceholder": None,
+                    },
+                ],
+                stated_facts=["My aircon bill is boom"],
+            ),
+        )
+        feedback = conversation_models.MessageFeedbackData(
+            messageId=1001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="요금이 크게 나왔다고 말한 것과 같아요.",
+            positiveFeedback="에어컨 요금 상태를 설명했어요.",
+            correctionExpression="My aircon bill is huge.",
+            correctionReason="boom 대신 huge를 쓰면 의미가 자연스러워요.",
+        )
+
+        next_message_service._validate_message_feedback_copy(
+            judgement,
+            feedback,
+        )
+
+        unsupported_feedback = feedback.model_copy(
+            update={"correctionExpression": "My aircon bill is expensive."},
+        )
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_copy_unsupported_content",
+        ):
+            next_message_service._validate_message_feedback_copy(
+                judgement,
+                unsupported_feedback,
+            )
 
     def test_message_feedback_judgement_rejects_missed_evaluation_answer(self):
         payload = valid_message_feedback_payload()
@@ -1432,6 +1488,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
                     },
                 ],
                 "statedFacts": ["why do you wanna know that?"],
+                "languageCorrections": [],
                 "scoreEvidence": {
                     "contextFit": 2,
                     "clarity": 2,
@@ -1675,7 +1732,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             prompt,
         )
         self.assertIn(
-            '"languageIssueEvidence":"exact user substring or null"',
+            '"languageCorrections":[{"evidence":"exact user substring","replacement":"corrected expression"}]',
             prompt,
         )
         self.assertIn(

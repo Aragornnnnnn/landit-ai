@@ -283,6 +283,7 @@ class QualityEvaluationTests(unittest.TestCase):
                 },
             ],
             statedFacts=["Yeah, sounds good to me."],
+            languageCorrections=[],
             scoreEvidence=score_evidence,
         )
         generated_copy = MessageFeedbackCopy(
@@ -393,6 +394,7 @@ class QualityEvaluationTests(unittest.TestCase):
                 },
             ],
             statedFacts=["Sangmin"],
+            languageCorrections=[],
             scoreEvidence=score_evidence,
         )
         generated_copy = MessageFeedbackCopy(

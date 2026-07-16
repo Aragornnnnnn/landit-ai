@@ -412,14 +412,14 @@ def _parse_message_feedback_judgement(
     for stated_fact in judgement.statedFacts:
         if _normalize_evidence(stated_fact) not in normalized_user_message:
             raise AiResponseInvalidError
-    if (
-        judgement.languageIssueEvidence is not None
-        and _normalize_evidence(judgement.languageIssueEvidence)
-        not in normalized_user_message
-    ):
-        raise AiResponseInvalidError(
-            "message_feedback_judgement_language_issue_evidence",
-        )
+    for language_correction in judgement.languageCorrections:
+        if (
+            _normalize_evidence(language_correction.evidence)
+            not in normalized_user_message
+        ):
+            raise AiResponseInvalidError(
+                "message_feedback_judgement_language_correction_evidence",
+            )
     if any(
         _is_bare_evaluation_reason(core_ask)
         for core_ask in judgement.coreAsks
@@ -1015,8 +1015,10 @@ def _unsupported_correction_content_words(
     ]
     if addressed_core_asks:
         source_values.extend(judgement.statedFacts)
-        if judgement.languageIssueEvidence is not None:
-            source_values.append(judgement.languageIssueEvidence)
+        source_values.extend(
+            language_correction.replacement
+            for language_correction in judgement.languageCorrections
+        )
     source_words = _meaningful_evidence_words(" ".join(source_values))
     return {
         word
@@ -1500,8 +1502,9 @@ def _message_feedback_judgement_system_prompt(
             "clarity is 2 when the meaning is understandable without guesswork, 1 when some inference is needed, and 0 when the meaning is hard to understand. "
             "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
             "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question. "
-            "When languageAccuracy is 0 or 1, languageIssueEvidence must copy the smallest exact user substring that contains the actionable language or politeness issue. "
-            "When languageAccuracy is 2, languageIssueEvidence must be null. "
+            "When languageAccuracy is 0 or 1, languageCorrections must contain one or more evidence/replacement pairs. "
+            "Each evidence must copy the smallest exact user substring with the actionable issue, and replacement must correct only that substring without adding a new fact. "
+            "When languageAccuracy is 2, languageCorrections must be an empty array. "
             "Do not lower any score for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative alone. "
             "A short noun phrase can fully answer a what-question. "
             "A vague demonstrative evaluation such as 'This is so cool' answers a what-do-you-like-about ask but requires clarity=1. "
@@ -1516,9 +1519,9 @@ def _message_feedback_judgement_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"coreAsks":[{"ask":"short core ask","addressed":true,"evidence":"exact user substring","requiredPlaceholder":null}],"statedFacts":["exact user substring"],"languageIssueEvidence":"exact user substring or null","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}}. '
+            '{"coreAsks":[{"ask":"short core ask","addressed":true,"evidence":"exact user substring","requiredPlaceholder":null}],"statedFacts":["exact user substring"],"languageCorrections":[{"evidence":"exact user substring","replacement":"corrected expression"}],"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}}. '
             "Do not include messageId. "
-            "Use null, not an empty string, for missing evidence, requiredPlaceholder, or languageIssueEvidence."
+            "Use null, not an empty string, for missing core-ask evidence or requiredPlaceholder. Use [] when there is no language correction."
         ),
         f"Evaluation context type: {evaluation_context_type}",
     ])
@@ -1582,10 +1585,11 @@ def _message_feedback_copy_system_prompt(
             "Write only the learner-facing fields that explain the same issue. "
             "For NEEDS_IMPROVEMENT, preserve stated facts, intent, tense, and negation. "
             "Retain at least one meaningful content word from the evidence of every answered core ask in correctionExpression. "
+            "For an identified language issue, use the approved replacement from languageCorrections and do not invent a different correction fact. "
             "Do not replace a stated fact with a placeholder. "
             "Include every required [your ...] placeholder from the judgement in correctionExpression. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
-            "Do not add concrete content words that are absent from the authoritative core asks, evidence, stated facts, or language issue evidence. "
+            "Do not add concrete content words that are absent from the authoritative core asks, evidence, stated facts, or approved language correction replacements. "
             "Never fill an unanswered personal fact with a concrete example; use a concrete [your ...] placeholder instead. "
             "Never use a placeholder in a grammatically or semantically incompatible position, such as a bill being a travel proof. "
             "For contextFit=0, correctionExpression must answer the current evaluation context directly. "

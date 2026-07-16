@@ -112,17 +112,17 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 ### 언어 정확도 근거
 
-내부 판정에 `languageIssueEvidence`를 추가한다. `languageAccuracy`가 0 또는 1이면 실제 사용자 발화에서 교정 가능한 문제를 포함한 가장 작은 부분 문자열을 요구하고, 2면 `null`만 허용한다. 서버는 근거가 실제 사용자 발화에 포함되는지 검증한다. 이 필드는 판정과 문구 생성을 위한 AI 서버 내부 데이터이며 외부 API와 OpenAPI에는 노출하지 않는다.
+내부 판정에 `languageCorrections`를 추가한다. 각 항목은 실제 사용자 발화의 가장 작은 문제 구간인 `evidence`와 그 구간만 고친 `replacement`를 가진다. `languageAccuracy`가 0 또는 1이면 한 개 이상을 요구하고, 2면 빈 배열만 허용한다. 서버는 evidence가 실제 사용자 발화에 포함되는지 검증하며, 2단계 교정 표현은 replacement의 새 내용어만 사용할 수 있다. 이 필드는 AI 서버 내부 데이터이며 외부 API와 OpenAPI에는 노출하지 않는다.
 
-`What do you like about ...?`에 `This is so cool`처럼 지시 대상의 특징을 구체화하지 않은 평가로 답하면 질문에는 반응했으므로 `contextFit=2`를 유지하되 상대가 의미를 추측해야 하므로 `clarity=1`로 판정한다. 이 경계는 서버가 판정 근거에서 결정적으로 정규화한다. 이를 문법 오류로 취급하지 않으며 `languageAccuracy=2`와 `languageIssueEvidence=null`을 유지한다.
+`What do you like about ...?`에 `This is so cool`처럼 지시 대상의 특징을 구체화하지 않은 평가로 답하면 질문에는 반응했으므로 `contextFit=2`를 유지하되 상대가 의미를 추측해야 하므로 `clarity=1`로 판정한다. 이 경계는 서버가 판정 근거에서 결정적으로 정규화한다. 이를 문법 오류로 취급하지 않으며 `languageAccuracy=2`와 `languageCorrections=[]`를 유지한다.
 
 ### 교정 표현의 허용 어휘
 
 NEEDS_IMPROVEMENT 교정 표현은 답했다고 판정한 각 핵심 요청의 evidence에서 기능어를 제외한 핵심 단어를 하나 이상 유지해야 한다. `This is so cool`을 `it helps me relax`로 바꾸는 것처럼 근거의 핵심 단어가 전부 사라지면 `message_feedback_copy_unsupported_content`로 문구 후보를 거부하고 기존 문구 복구를 한 번 수행한다.
 
-근거 단어를 일부 남긴 채 새로운 이유나 경험을 덧붙이는 우회도 허용하지 않는다. 교정 표현의 내용어는 내부 판정의 핵심 요청, evidence, stated facts, language issue evidence 또는 문장 구성에 필요한 제한된 뼈대 어휘에서만 가져온다.
+근거 단어를 일부 남긴 채 새로운 이유나 경험을 덧붙이는 우회도 허용하지 않는다. 교정 표현의 내용어는 내부 판정의 핵심 요청, evidence, stated facts, 승인된 language correction replacement 또는 문장 구성에 필요한 제한된 뼈대 어휘에서만 가져온다.
 
-핵심 요청을 하나도 답하지 못한 `contextFit=0` 판정에서는 무관한 stated facts와 language issue evidence를 교정 표현의 허용 근거에서 제외한다. `I'm`, `old`, `provide`처럼 사용자 사실을 새로 만들지 않고 문장을 완성하는 제한된 문법 뼈대만 허용한다.
+핵심 요청을 하나도 답하지 못한 `contextFit=0` 판정에서는 무관한 stated facts와 language correction replacement를 교정 표현의 허용 근거에서 제외한다. `I'm`, `old`, `provide`처럼 사용자 사실을 새로 만들지 않고 문장을 완성하는 제한된 문법 뼈대만 허용한다.
 
 복구 프롬프트에는 검증 원인 코드와 필수 `[your ...]` 플레이스홀더 목록을 별도 항목으로 전달한다. 복구 결과도 같은 검증을 통과하지 못하면 502로 종료한다.
 
