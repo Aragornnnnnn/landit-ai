@@ -610,6 +610,29 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("Why do you wanna know that?", examples)
         self.assertIn('"feedbackType":"GOOD"', examples)
 
+    def test_feedback_examples_keep_hostility_and_word_choice_in_language_accuracy(self):
+        examples = next_message_service._message_feedback_examples(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn("I hate having guests.", examples)
+        self.assertIn("Total quiet condition.", examples)
+        self.assertIn(
+            '"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1}',
+            examples,
+        )
+
+    def test_feedback_examples_show_second_or_question_branch_as_good(self):
+        examples = next_message_service._message_feedback_examples(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn("I want to learn pottery.", examples)
+        self.assertIn(
+            '"feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}',
+            examples,
+        )
+
     def test_feedback_prompt_requests_internal_score_evidence(self):
         prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
@@ -625,6 +648,48 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertIn(
             '"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}',
+            prompt,
+        )
+
+    def test_feedback_prompt_allows_short_complete_and_or_answers(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "A short noun phrase can fully answer a what-question.",
+            prompt,
+        )
+        self.assertIn(
+            "An answer that clearly satisfies either branch of an or-question "
+            "has contextFit=2.",
+            prompt,
+        )
+
+    def test_feedback_prompt_does_not_double_penalize_language_issue(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "Do not lower contextFit or clarity solely because of an actionable "
+            "grammar, word-choice, nuance, or politeness issue.",
+            prompt,
+        )
+
+    def test_feedback_prompt_marks_hostile_counterpart_reply_as_needing_improvement(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "A hostile or dismissive reply to the counterpart has "
+            "languageAccuracy=1 even when the meaning is clear.",
+            prompt,
+        )
+        self.assertIn(
+            "The directness exception does not apply to hostile or dismissive "
+            "replies to the counterpart.",
             prompt,
         )
 

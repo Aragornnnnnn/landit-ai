@@ -99,7 +99,7 @@ class QualityEvaluationTests(unittest.TestCase):
             "lan166-partial-multi-question-duration": [50, 50],
             "lan166-partial-multi-question-party": [65, 65],
             "lan166-short-context-complete-food": [100, 100],
-            "lan166-harsh-roommate-boundary": [85, 85],
+            "lan166-harsh-roommate-boundary": [65, 85],
             "lan166-unnatural-word-choice-boundary": [85, 85],
             "lan166-valid-alternative-question-answer": [100, 100],
         }

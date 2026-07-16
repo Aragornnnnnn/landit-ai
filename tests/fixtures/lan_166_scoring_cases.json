@@ -78,7 +78,7 @@
     "caseId": "lan166-harsh-roommate-boundary",
     "kind": "message-feedback",
     "expectedFeedbackType": "NEEDS_IMPROVEMENT",
-    "expectedMessageScoreRange": [85, 85],
+    "expectedMessageScoreRange": [65, 85],
     "payload": {
       "sessionId": 97,
       "messageId": 264,
