@@ -24,7 +24,8 @@ from app.models.conversation import (
     InnerThoughtRequest,
     InnerThoughtResponse,
     MessageFeedbackData,
-    MessageFeedbackEvaluation,
+    MessageFeedbackCopy,
+    MessageFeedbackJudgement,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -111,6 +112,9 @@ class _MessageFeedbackCacheEntry:
     score_evidence: MessageFeedbackScoreEvidence
     user_message: str
     expires_at: float
+    judgement: MessageFeedbackJudgement | None = None
+    generated_copy: MessageFeedbackCopy | None = None
+    copy_was_repaired: bool = False
 
 
 # ponytail: 단일 프로세스 TTL cache다. 여러 인스턴스 공유가 필요해지면 외부 저장소로 옮긴다.
@@ -205,46 +209,60 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    data = _request_json_completion(
+    judgement_data = _request_json_completion(
         resolved_settings,
-        system_prompt=_message_feedback_system_prompt(
+        system_prompt=_message_feedback_judgement_system_prompt(
             request.evaluationContext.type,
         ),
-        user_prompt=_message_feedback_user_prompt(request),
-        max_tokens=768,
+        user_prompt=_message_feedback_judgement_user_prompt(request),
+        max_tokens=512,
     )
-    evaluation, detected_patterns = _parse_message_feedback_candidate(
-        data,
-        request.messageId,
+    judgement = _parse_message_feedback_judgement(
+        judgement_data,
+        request,
     )
+    copy_data: dict[str, Any] | None = None
+    copy_was_repaired = False
     try:
-        reviewed_data = _request_json_completion(
+        copy_data = _request_json_completion(
             resolved_settings,
-            system_prompt=_message_feedback_review_system_prompt(
+            system_prompt=_message_feedback_copy_system_prompt(
                 request.evaluationContext.type,
             ),
-            user_prompt=_message_feedback_review_user_prompt(
-                request,
-                evaluation,
-                detected_patterns,
-            ),
+            user_prompt=_message_feedback_copy_user_prompt(request, judgement),
             max_tokens=768,
         )
-        evaluation, detected_patterns = _parse_message_feedback_candidate(
-            reviewed_data,
-            request.messageId,
+        feedback, generated_copy, detected_patterns = _parse_and_assemble_message_feedback_copy(
+            copy_data,
+            judgement,
+            request,
         )
-    except (AiGenerationFailedError, AiResponseInvalidError):
+    except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+        copy_was_repaired = True
         logger.warning(
-            "AI 메시지별 피드백 검수에 실패해 생성 후보를 사용합니다. "
-            "workflow=message_feedback_review sessionId=%s messageId=%s",
+            "AI 메시지별 피드백 문구를 복구합니다. "
+            "workflow=message_feedback_copy_repair sessionId=%s messageId=%s",
             request.sessionId,
             request.messageId,
         )
-
-    feedback = MessageFeedbackData.model_validate(
-        evaluation.model_dump(exclude={"scoreEvidence"}),
-    )
+        repaired_data = _request_json_completion(
+            resolved_settings,
+            system_prompt=_message_feedback_copy_repair_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_copy_repair_user_prompt(
+                request,
+                judgement,
+                copy_data,
+                exc,
+            ),
+            max_tokens=768,
+        )
+        feedback, generated_copy, detected_patterns = _parse_and_assemble_message_feedback_copy(
+            repaired_data,
+            judgement,
+            request,
+        )
     feedback = _postprocess_message_feedback_benchmark(
         feedback,
         detected_patterns,
@@ -254,8 +272,11 @@ def generate_message_feedback(
     _store_message_feedback(
         request.sessionId,
         feedback,
-        score_evidence=evaluation.scoreEvidence,
+        score_evidence=judgement.scoreEvidence,
         user_message=request.userMessage,
+        judgement=judgement,
+        generated_copy=generated_copy,
+        copy_was_repaired=copy_was_repaired,
     )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
@@ -264,18 +285,123 @@ def generate_message_feedback(
     )
 
 
-def _parse_message_feedback_candidate(
+def _parse_message_feedback_judgement(
     data: dict[str, Any],
-    expected_message_id: int,
-) -> tuple[MessageFeedbackEvaluation, Any]:
-    detected_patterns = data.pop("detectedPatterns", None)
+    request: MessageFeedbackRequest,
+) -> MessageFeedbackJudgement:
     try:
-        evaluation = MessageFeedbackEvaluation.model_validate(data)
+        judgement = MessageFeedbackJudgement.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
-    if evaluation.messageId != expected_message_id:
+    if judgement.messageId not in (None, request.messageId):
         raise AiResponseInvalidError
-    return evaluation, detected_patterns
+
+    normalized_user_message = _normalize_evidence(request.userMessage)
+    for core_ask in judgement.coreAsks:
+        if (
+            core_ask.evidence is not None
+            and _normalize_evidence(core_ask.evidence) not in normalized_user_message
+        ):
+            raise AiResponseInvalidError
+    for stated_fact in judgement.statedFacts:
+        if _normalize_evidence(stated_fact) not in normalized_user_message:
+            raise AiResponseInvalidError
+
+    addressed_count = sum(core_ask.addressed for core_ask in judgement.coreAsks)
+    expected_context_fit = (
+        2
+        if addressed_count == len(judgement.coreAsks)
+        else 1
+        if addressed_count > 0
+        else 0
+    )
+    if judgement.scoreEvidence.contextFit != expected_context_fit:
+        raise AiResponseInvalidError
+    return judgement
+
+
+def _feedback_type_from_score_evidence(
+    score_evidence: MessageFeedbackScoreEvidence,
+) -> FeedbackType:
+    scores = (
+        score_evidence.contextFit,
+        score_evidence.clarity,
+        score_evidence.languageAccuracy,
+    )
+    return (
+        FeedbackType.GOOD
+        if all(score == 2 for score in scores)
+        else FeedbackType.NEEDS_IMPROVEMENT
+    )
+
+
+def _parse_and_assemble_message_feedback_copy(
+    data: dict[str, Any],
+    judgement: MessageFeedbackJudgement,
+    request: MessageFeedbackRequest,
+) -> tuple[MessageFeedbackData, MessageFeedbackCopy, Any]:
+    copy_data = dict(data)
+    detected_patterns = copy_data.pop("detectedPatterns", None)
+    try:
+        copy = MessageFeedbackCopy.model_validate(copy_data)
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+    if copy.messageId not in (None, request.messageId):
+        raise AiResponseInvalidError
+
+    feedback_type = _feedback_type_from_score_evidence(judgement.scoreEvidence)
+    copy_fields = copy.model_dump()
+    copy_fields["messageId"] = request.messageId
+    if feedback_type == FeedbackType.GOOD:
+        copy_fields.update({
+            "positiveFeedback": None,
+            "correctionExpression": None,
+            "correctionReason": None,
+        })
+    else:
+        copy_fields.update({
+            "feedbackDetail": None,
+            "benchmarkMessage": None,
+        })
+    try:
+        feedback = MessageFeedbackData.model_validate({
+            **copy_fields,
+            "feedbackType": feedback_type,
+        })
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+    _validate_message_feedback_copy(judgement, feedback)
+    return feedback, copy, detected_patterns
+
+
+def _validate_message_feedback_copy(
+    judgement: MessageFeedbackJudgement,
+    feedback: MessageFeedbackData,
+) -> None:
+    if feedback.feedbackType != FeedbackType.NEEDS_IMPROVEMENT:
+        return
+
+    required_placeholders = [
+        core_ask.requiredPlaceholder
+        for core_ask in judgement.coreAsks
+        if core_ask.requiredPlaceholder is not None
+    ]
+    correction_expression = feedback.correctionExpression
+    correction_reason = feedback.correctionReason
+    if correction_expression is None or correction_reason is None:
+        raise AiResponseInvalidError
+    if any(
+        placeholder not in correction_expression
+        for placeholder in required_placeholders
+    ):
+        raise AiResponseInvalidError
+    if any(
+        re.fullmatch(r"\[your [a-z][a-z ]*\]", placeholder) is None
+        for placeholder in re.findall(r"\[[^\]]+\]", correction_expression)
+    ):
+        raise AiResponseInvalidError
+    if re.search(r"[가-힣]", correction_reason) is None:
+        raise AiResponseInvalidError
 
 
 def generate_session_feedback(
@@ -305,7 +431,7 @@ def generate_session_feedback(
     response = SessionFeedbackResponse(
         sessionId=request.sessionId,
         nativeScore=native_score,
-        starRating=_star_rating_from_native_score(native_score, feedback_entries),
+        starRating=_star_rating_from_native_score(native_score),
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
@@ -491,6 +617,9 @@ def _store_message_feedback(
     *,
     score_evidence: MessageFeedbackScoreEvidence,
     user_message: str,
+    judgement: MessageFeedbackJudgement | None = None,
+    generated_copy: MessageFeedbackCopy | None = None,
+    copy_was_repaired: bool = False,
     now: float | None = None,
 ) -> None:
     current_time = _cache_now() if now is None else now
@@ -502,6 +631,9 @@ def _store_message_feedback(
             score_evidence=score_evidence,
             user_message=user_message,
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
+            judgement=judgement,
+            generated_copy=generated_copy,
+            copy_was_repaired=copy_was_repaired,
         )
 
 
@@ -542,7 +674,17 @@ def _native_score_from_message_feedback_entries(
     ]
     total_score = sum(message_scores)
     message_count = len(message_scores)
-    return (total_score * 2 + message_count) // (message_count * 2)
+    if message_count < 3:
+        return (total_score * 2 + message_count) // (message_count * 2)
+
+    good_count = sum(
+        entry.feedback.feedbackType == FeedbackType.GOOD
+        for entry in feedback_entries
+    )
+    numerator = total_score * 7 + good_count * 300
+    denominator = message_count * 10
+    rounded_score = (numerator * 2 + denominator) // (denominator * 2)
+    return max(50, rounded_score)
 
 
 def _message_score_from_evidence(evidence: MessageFeedbackScoreEvidence) -> int:
@@ -639,7 +781,6 @@ def _detected_pattern_catalog_for_prompt() -> list[dict[str, str]]:
 
 def _star_rating_from_native_score(
     native_score: int,
-    feedback_entries: list[_MessageFeedbackCacheEntry],
 ) -> float:
     if native_score <= 54:
         star_rating = 1.0
@@ -652,12 +793,6 @@ def _star_rating_from_native_score(
     else:
         star_rating = 3.0
 
-    good_count = sum(
-        entry.feedback.feedbackType == FeedbackType.GOOD
-        for entry in feedback_entries
-    )
-    if len(feedback_entries) >= 3 and good_count * 3 <= len(feedback_entries):
-        return min(star_rating, 2.0)
     return star_rating
 
 
@@ -1070,23 +1205,87 @@ def _contains_quantitative_hook(value: str) -> bool:
     )
 
 
-def _message_feedback_system_prompt(
+def _message_feedback_judgement_system_prompt(
     evaluation_context_type: EvaluationContextType,
 ) -> str:
     return "\n\n".join([
         (
             "Role:\n"
-            "You generate one high-quality message-level feedback item for a Korean learner's English utterance."
-        ),
-        (
-            "Priority:\n"
-            "For this MVP, quality is more important than speed or token savings. "
-            "Judge the actual user utterance, not a generic grammar checklist."
+            "You judge a Korean learner's English utterance before any learner-facing feedback is written."
         ),
         _shared_safety_policy(),
         (
-            "Judgement Policy:\n"
-            + _message_feedback_judgement_policy(evaluation_context_type)
+            "Judgement Task:\n"
+            "Identify the independent core asks in the current evaluation context only. "
+            "The scenario title, briefing, and conversation goal provide context but are not additional core asks. "
+            "For each core ask, decide whether the user answered it. "
+            "When answered, copy the exact supporting substring from the user utterance as evidence. "
+            "When unanswered, set evidence to null and use a concrete [your ...] placeholder only when a learner must add personal information to answer it. "
+            "For missing personal information, use the smallest concrete placeholder: tell a little about yourself -> [your hobby], why you like an activity -> [your reason], and proof of travel plans -> [your travel proof]. "
+            "List statedFacts as exact substrings from the user utterance that a correction must preserve. "
+            "Do not write learner-facing feedback, correction expressions, benchmark messages, or detected patterns."
+        ),
+        (
+            "Scoring Evidence Policy:\n"
+            "scoreEvidence has integer contextFit, clarity, and languageAccuracy values from 0 to 2. "
+            "contextFit is 2 only when every core ask is answered, 1 when some but not all are answered, and 0 when none are answered. "
+            "clarity is 2 when the meaning is understandable without guesswork, 1 when some inference is needed, and 0 when the meaning is hard to understand. "
+            "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
+            "Do not lower any score for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative alone. "
+            "A short noun phrase can fully answer a what-question. "
+            "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
+            "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
+            "A direct question about why personal information is needed can be GOOD when a friend has not explained the reason. "
+            "Do not lower contextFit or clarity solely for a languageAccuracy issue. "
+            "Missing one core ask alone must not lower languageAccuracy when the answered part is natural. "
+            "An unrelated but grammatically natural utterance can have contextFit=0 and languageAccuracy=2. "
+            "A hostile or dismissive reply can have languageAccuracy=1 even when it is clear."
+        ),
+        (
+            "Output Schema:\n"
+            "Return ONLY one JSON object with this exact schema: "
+            '{"coreAsks":[{"ask":"short core ask","addressed":true,"evidence":"exact user substring","requiredPlaceholder":null}],"statedFacts":["exact user substring"],"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2}}. '
+            "Do not include messageId. "
+            "Use null, not an empty string, for missing evidence or requiredPlaceholder."
+        ),
+        f"Evaluation context type: {evaluation_context_type}",
+    ])
+
+
+def _message_feedback_judgement_user_prompt(request: MessageFeedbackRequest) -> str:
+    return _message_feedback_user_prompt(request)
+
+
+def _message_feedback_copy_system_prompt(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
+    return "\n\n".join([
+        (
+            "Role:\n"
+            "You write learner-facing Korean feedback for a Korean learner's English utterance."
+        ),
+        _shared_safety_policy(),
+        (
+            "Copy Task:\n"
+            "The authoritative judgement supplied by the server is final. "
+            "Do not change its core asks, stated facts, scoreEvidence, or feedback type. "
+            "Write only the learner-facing fields that explain the same issue. "
+            "For NEEDS_IMPROVEMENT, preserve stated facts, intent, tense, and negation. "
+            "Include every required [your ...] placeholder from the judgement in correctionExpression. "
+            "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
+            "Never fill an unanswered personal fact with a concrete example; use a concrete [your ...] placeholder instead. "
+            "Do not treat capitalization, punctuation, a neutral filler, or a natural grammatical alternative alone as an issue. "
+            "If there is no genuine strength, use a neutral observation instead of praise. "
+            "correctionReason must be natural Korean and explain what to add or change without exposing internal generation rules."
+        ),
+        (
+            "Field Policy:\n"
+            "baseLocaleAnalogy is required and explains how the English sounds through one Korean analogy. "
+            "For GOOD, positiveFeedback, correctionExpression, and correctionReason are null, feedbackDetail is required, and benchmarkMessage is a short non-quantitative Korean message or null. "
+            "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required, feedbackDetail and benchmarkMessage are null. "
+            "correctionExpression contains one English expression only. "
+            "Use the JSON literal null for a missing field. Never return the string \"null\". "
+            "detectedPatterns is internal-only. Include it only when evidence is copied exactly from the user utterance."
         ),
         (
             "Detected Pattern Catalog:\n"
@@ -1097,79 +1296,74 @@ def _message_feedback_system_prompt(
             )
         ),
         (
-            "Scoring Evidence Policy:\n"
-            "scoreEvidence is required and rates the user utterance with integer values 0, 1, or 2. "
-            "contextFit measures whether the utterance fulfills the evaluation context: 2 fully, 1 partially, 0 not at all. "
-            "clarity measures whether the meaning is understandable: 2 without guesswork, 1 with some inference, 0 hard to understand. "
-            "languageAccuracy measures grammar, word choice, nuance, and politeness: 2 no actionable issue, 1 one minor issue while meaning remains clear, 0 a major issue. "
-            "Do not reward length, complexity, or advanced vocabulary by itself. "
-            "A short answer can receive 2 in every category when it is the best response for the context. "
-            "A short noun phrase can fully answer a what-question. "
-            "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
-            "For multiple explicit core asks, contextFit=2 only when the utterance fulfills all of them. "
-            "Answering only one core ask has contextFit=1. "
-            "A bare no or I don't know can answer only the explicit ask it addresses. "
-            "An incomplete clause such as yes I like has languageAccuracy=1. "
-            "Do not lower contextFit or clarity solely because of an actionable grammar, word-choice, nuance, or politeness issue. "
-            "A hostile or dismissive reply to the counterpart has languageAccuracy=1 even when the meaning is clear. "
-            "GOOD requires contextFit=2, clarity=2, and languageAccuracy=2. "
-            "NEEDS_IMPROVEMENT requires at least one score below 2."
-        ),
-        (
-            "Field Policy:\n"
-            "baseLocaleAnalogy is required for every response and should explain how the English sounds through a Korean analogy. "
-            "baseLocaleAnalogy must not start with Korean framing phrases such as '한국어로 비유하자면', '한국어로 비유하면', or '한국어로 치면'. "
-            "baseLocaleAnalogy must start directly with the example or explanation, following this format: \"...\"라고 ...하는 것과 같아요. "
-            "The quoted Korean sentence must show what the English sounds like in Korean. "
-            "For NEEDS_IMPROVEMENT, baseLocaleAnalogy should use one intentionally awkward Korean example as a quoted Korean sentence plus one short feeling explanation. "
-            "feedbackDetail is required for GOOD and must be null for NEEDS_IMPROVEMENT. "
-            "For NEEDS_IMPROVEMENT, positiveFeedback is required and must name one genuine strength grounded in the utterance. "
-            "Do not claim successful communication for profanity, threats, irrelevant content, or unintelligible text; if no specific strength exists, acknowledge the attempt neutrally. "
-            "For NEEDS_IMPROVEMENT, correctionExpression is required and must be the improved English expression only. "
-            "Generate at most one correctionExpression for one message. "
-            "Do not return multiple alternatives, numbered options, slash-separated options, or extra explanation in correctionExpression. "
-            "Preserve the user's meaning, intent, tense, negation, and stated facts. "
-            "Never invent personal facts such as a name, place, hobby, feeling, habit, preference, or experience. "
-            "Use only facts stated in the user utterance, evaluation context, or scenario. "
-            "When a complete answer needs missing personal information, use one specific bracket placeholder such as [your hobby], [your hometown], [your bedtime], or [your dealbreaker]. "
-            "Keep known user facts as written instead of replacing them with placeholders. "
-            "For NEEDS_IMPROVEMENT, correctionReason is required and must explain why correctionExpression is better in Korean. "
-            "correctionReason must explain the original problem and the type of change made, not restate the improved expression. "
-            "When correctionExpression uses a placeholder, tell the learner what information to put there. "
-            "Do not expose this internal no-invention rule in correctionReason or mention that the AI avoided making up or guessing facts. "
-            "Do not use arrow notation such as A -> B inside correctionReason. "
-            "For GOOD, feedbackDetail must explain how well the user did and why in one natural Korean explanation. "
-            "For GOOD, positiveFeedback must be null. "
-            "For GOOD, correctionExpression and correctionReason must be null. "
-            "For NEEDS_IMPROVEMENT, benchmarkMessage must be null. "
-            "detectedPatterns is internal-only and must never contain an inferred or paraphrased evidence string. "
-            "For each detected pattern, use status=correct only when the user correctly used the catalog pattern and copy evidence exactly from the user utterance. "
-            "Do not include legacy fields such as betterExpression, correctionPoint, plusOneExpression, praiseSummary, or praiseReason."
-        ),
-        (
-            "Self-check before final JSON:\n"
-            "1. messageId copied exactly from the Message ID line. "
-            "2. NEEDS_IMPROVEMENT has positiveFeedback, correctionExpression, correctionReason, feedbackDetail=null, and benchmarkMessage=null. "
-            "3. GOOD has positiveFeedback=null, correctionExpression=null, correctionReason=null, and feedbackDetail. "
-            "4. baseLocaleAnalogy sounds like a Korean analogy, not a correction explanation. "
-            "5. GOOD feedbackDetail is Korean and matches the feedbackType. "
-            "6. NEEDS_IMPROVEMENT correctionReason explains the issue and correction direction without arrow notation or repeating correctionExpression. "
-            "7. scoreEvidence contains contextFit, clarity, and languageAccuracy with integer values from 0 to 2. "
-            "8. GOOD has three scores of 2, and NEEDS_IMPROVEMENT has at least one score below 2. "
-            "9. detectedPatterns has only catalog errorType values and exact evidence copied from the user utterance. "
-            "10. correctionExpression preserves known facts and uses a bracket placeholder for missing personal information. "
-            "11. correctionReason explains what the learner should add without exposing internal generation rules. "
-            "12. No legacy fields are present."
-        ),
-        _message_feedback_examples(evaluation_context_type),
-        (
             "Output Schema:\n"
-            "Return ONLY valid JSON matching this schema exactly: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD|NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"...","positiveFeedback":null,"feedbackDetail":"GOOD explanation or null","correctionExpression":"improved English expression or null","correctionReason":"Korean correction reason or null","benchmarkMessage":"short Korean feedback sentence for GOOD or null for NEEDS_IMPROVEMENT","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
-            "Return one JSON object, not an array. "
-            "messageId is a server identifier, not a value to infer. Copy it exactly."
+            "Return ONLY one JSON object with this exact schema: "
+            '{"baseLocaleAnalogy":"...","positiveFeedback":"... or null","feedbackDetail":"... or null","correctionExpression":"... or null","correctionReason":"... or null","benchmarkMessage":"... or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            "Do not include messageId, feedbackType, or scoreEvidence."
+        ),
+        f"Evaluation context type: {evaluation_context_type}",
+    ])
+
+
+def _message_feedback_copy_user_prompt(
+    request: MessageFeedbackRequest,
+    judgement: MessageFeedbackJudgement,
+) -> str:
+    feedback_type = _feedback_type_from_score_evidence(
+        judgement.scoreEvidence,
+    )
+    return (
+        f"{_message_feedback_user_prompt(request)}\n\n"
+        f"Locked feedback type: {feedback_type.value}\n\n"
+        f"{_locked_copy_requirements(feedback_type)}\n\n"
+        "Authoritative judgement:\n"
+        f"{judgement.model_dump_json(by_alias=True)}"
+    )
+
+
+def _locked_copy_requirements(feedback_type: FeedbackType) -> str:
+    if feedback_type == FeedbackType.GOOD:
+        return (
+            "Locked GOOD requirements: feedbackDetail must be a Korean explanation. "
+            "positiveFeedback, correctionExpression, and correctionReason must be the JSON literal null."
+        )
+    return (
+        "Locked NEEDS_IMPROVEMENT requirements: positiveFeedback, correctionExpression, and correctionReason are required. "
+        "feedbackDetail and benchmarkMessage must be the JSON literal null."
+    )
+
+
+def _message_feedback_copy_repair_system_prompt(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
+    return "\n\n".join([
+        _message_feedback_copy_system_prompt(evaluation_context_type),
+        (
+            "Copy Repair Task:\n"
+            "The previous copy is invalid. Return a replacement that follows the authoritative judgement and output schema exactly. "
+            "Do not change the judgement or add feedbackType or scoreEvidence."
         ),
     ])
+
+
+def _message_feedback_copy_repair_user_prompt(
+    request: MessageFeedbackRequest,
+    judgement: MessageFeedbackJudgement,
+    invalid_copy: dict[str, Any] | None,
+    error: Exception,
+) -> str:
+    invalid_copy_json = (
+        json.dumps(invalid_copy, ensure_ascii=False, separators=(",", ":"))
+        if invalid_copy is not None
+        else "null"
+    )
+    return (
+        f"{_message_feedback_copy_user_prompt(request, judgement)}\n\n"
+        "Invalid copy JSON:\n"
+        f"{invalid_copy_json}\n\n"
+        "Validation failure:\n"
+        f"{type(error).__name__}"
+    )
 
 
 def _message_feedback_user_prompt(request: MessageFeedbackRequest) -> str:
@@ -1188,114 +1382,6 @@ def _message_feedback_user_prompt(request: MessageFeedbackRequest) -> str:
         f"Evaluation context content: {request.evaluationContext.content}\n"
         f"Evaluation context translation: {request.evaluationContext.translatedContent or '(none)'}\n"
         f"User utterance: {request.userMessage}"
-    )
-
-
-def _message_feedback_review_system_prompt(
-    evaluation_context_type: EvaluationContextType,
-) -> str:
-    return "\n\n".join([
-        (
-            "Review Task:\n"
-            "Review the generated candidate against the original evaluation context and user utterance. "
-            "Return a complete final JSON object, not an approval flag. "
-            "Correct a candidate that misses any explicit core ask, answers a different question, "
-            "invents a personal fact or reason, changes known facts or intent, or treats capitalization, "
-            "punctuation, a neutral filler, or a natural grammatical alternative as an actionable issue."
-        ),
-        _message_feedback_system_prompt(evaluation_context_type),
-    ])
-
-
-def _message_feedback_review_user_prompt(
-    request: MessageFeedbackRequest,
-    evaluation: MessageFeedbackEvaluation,
-    detected_patterns: Any,
-) -> str:
-    candidate = evaluation.model_dump(mode="json")
-    candidate["detectedPatterns"] = detected_patterns
-    return (
-        f"{_message_feedback_user_prompt(request)}\n\n"
-        "Generated candidate:\n"
-        f"{json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))}"
-    )
-
-
-def _message_feedback_judgement_policy(
-    evaluation_context_type: EvaluationContextType,
-) -> str:
-    common_policy = (
-        "Classify the message as GOOD or NEEDS_IMPROVEMENT using these gates in order. "
-        "Actionable Issue Gate: first check whether grammar, word choice, word order, tense, preposition, nuance, or politeness creates a real correction point. "
-        "NEEDS_IMPROVEMENT Gate: mark NEEDS_IMPROVEMENT only when there is an actionable issue and you can provide a better expression aligned with the evaluation context. "
-        "Preserve the user's apparent intent when the intent fits the evaluation context. "
-        "Capitalization or punctuation alone is not an actionable issue in this speaking service. "
-        "A meaning-neutral filler alone is not an actionable issue. "
-        "Do not replace one natural grammatical alternative with another based only on style preference, such as like to watch versus like watching. "
-        "More detail alone is not an actionable issue; a short direct utterance can be GOOD. "
-        "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
-        "The directness exception does not apply to hostile or dismissive replies to the counterpart. "
-        "Use the provided Counterpart role when judging nuance, politeness, and situation fit. "
-        "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
-        "When several issues exist, handle the most important one first. "
-        "Use cautious wording such as can sound when the nuance depends on context. "
-    )
-    if evaluation_context_type == EvaluationContextType.AI_MESSAGE:
-        return (
-            common_policy
-            + "AI_MESSAGE Policy: evaluate whether the user utterance understands and appropriately responds to the AI message. "
-            "Relevance to the AI message is an actionable issue even when the utterance is grammatically correct. "
-            "When the utterance is irrelevant, correctionExpression must be one natural response to the AI message. "
-            "GOOD Gate: mark GOOD when the utterance fits the AI message, the meaning is clear without guesswork, and there is no actionable correction point. "
-            "Boundary examples: 'I like pizza because it is spicy.' is GOOD; "
-            "'I like pizza because spicy.' is NEEDS_IMPROVEMENT because because needs a clause; "
-            "A direct question about why personal information is needed can be GOOD when a friend has not explained the reason. "
-            "Judge relevance using the full evaluation context, including information the AI already provided."
-        )
-    return (
-        common_policy
-        + "SCENARIO_OPENING_INSTRUCTION Policy: evaluate whether the user followed the opening instruction, started the conversation naturally, and spoke appropriately to the counterpart role. "
-        "Opening instruction fulfillment is an actionable issue even when the utterance is grammatically correct. "
-        "When the user did not follow the instruction, correctionExpression must be one natural opening utterance that fulfills it. "
-        "Do not judge relevance to an AI question or whether the user answered an AI question. "
-        "GOOD Gate: mark GOOD when the utterance fulfills the opening instruction, is clear without guesswork, and has no actionable correction point. "
-        "For a cafe staff counterpart, 'Can I get an iced americano?' can be GOOD when the opening instruction asks the user to order a drink."
-    )
-
-
-def _message_feedback_examples(
-    evaluation_context_type: EvaluationContextType,
-) -> str:
-    if evaluation_context_type == EvaluationContextType.AI_MESSAGE:
-        return (
-            "AI_MESSAGE Feedback Examples:\n"
-            "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
-            "GOOD JSON example after a friend asks for personal information without explaining why: user utterance 'What do you need it for?': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"그걸 어디에 쓸 건데?\\"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"필요한 이유를 자연스럽게 확인했어요."}\n'
-            "GOOD JSON example after a friend asks about usual hobbies or something new to try: user utterance 'I want to learn pottery.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"도예를 배워보고 싶어\\"라고 해보고 싶은 일을 바로 답하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"질문이 제시한 두 방향 중 해보고 싶은 일을 자연스럽게 골라 답했어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"해보고 싶은 일을 자연스럽게 답했어요."}\n'
-            "NEEDS_IMPROVEMENT JSON example after a roommate asks how to split cleaning and what worked before: user utterance 'I don't know.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"청소는 어떻게 나눌지랑 전에 해본 방식은 아직 모르겠어\\"라고 질문의 한 부분만 답하는 것과 같아요.","positiveFeedback":"아직 정해진 기준이 없다는 뜻은 분명하게 말했어요.","feedbackDetail":null,"correctionExpression":"I do not know what worked before, but we could [your preferred cleaning plan].","correctionReason":"이전 방식에 대해서는 잘 답했지만 원하는 청소 분담 방식이 빠졌어요. [your preferred cleaning plan]에 선호하는 분담 방법을 넣어 보세요.","benchmarkMessage":null}\n'
-            "NEEDS_IMPROVEMENT JSON example after a friend asks about daily routine, wake-up time, and bedtime: user utterance 'I usually wake up at 9.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"나는 보통 9시에 일어나. 근데 하루가 언제 끝나는지는 말 안 할게\\"라고 일부만 답하는 것과 같아요.","positiveFeedback":"평소에 일어나는 시간을 분명하게 말한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"I usually wake up at 9, and I go to bed around [your bedtime].","correctionReason":"일어나는 시간에는 잘 답했지만 자는 시간이 빠졌어요. [your bedtime]에 평소 잠드는 시간을 넣어 보세요.","benchmarkMessage":null}\n'
-            "NEEDS_IMPROVEMENT JSON example after a roommate asks about bad roommate experiences and dealbreakers: user utterance 'um... no': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"그런 룸메이트는 없었어. 하지만 뭘 못 참는지는 말 안 할게\\"라고 일부만 답하는 것과 같아요.","positiveFeedback":"룸메이트 때문에 힘들었던 적이 없다는 뜻은 전달했어요.","feedbackDetail":null,"correctionExpression":"No, I have not, but I cannot deal with [your dealbreaker].","correctionReason":"이전 경험에는 잘 답했지만 못 참는 생활 습관이 빠졌어요. [your dealbreaker]에 자신이 불편하게 느끼는 행동을 넣어 보세요.","benchmarkMessage":null}\n'
-            "NEEDS_IMPROVEMENT JSON example after a new acquaintance asks for a name and self-introduction: user utterance 'Hi, my name is Sangmin.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"안녕하세요, 저는 상민이에요\\"라고 이름만 소개하는 것과 같아요.","positiveFeedback":"이름을 자연스럽게 소개한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"Hi, my name is Sangmin. I enjoy [your hobby].","correctionReason":"이름에는 잘 답했지만 자신에 대한 소개가 빠졌어요. [your hobby]에 평소 좋아하는 활동을 넣어 보세요.","benchmarkMessage":null}\n'
-            "NEEDS_IMPROVEMENT JSON example for user utterance 'I like pizza because spicy.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"피자를 좋아해요. 매워서\\"라고 이유를 끝맺지 못한 것과 같아요.","positiveFeedback":"좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I like pizza because it is spicy.","correctionReason":"because 뒤에는 이유를 설명하는 절이 필요해요. it is spicy를 붙이면 좋아하는 이유가 완전한 문장이 돼요.","benchmarkMessage":null}'
-            "\nNEEDS_IMPROVEMENT JSON example after a roommate asks about guests: user utterance 'I hate having guests.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"손님 오는 건 질색이야\\"라고 바로 잘라 말하는 것과 같아요.","positiveFeedback":"손님에 대한 자신의 기준을 분명히 말한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"I’d rather not have guests in the room.","correctionReason":"상대의 제안을 거칠게 거절하기보다, 원하는 경계를 부드럽게 말하면 룸메이트와 기준을 조율하기 더 자연스러워요.","benchmarkMessage":null}'
-            "\nNEEDS_IMPROVEMENT JSON example after a friend asks what study setup helps: user utterance 'Total quiet condition.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"완전 조용한 조건\\"이라고 답하는 것과 같아요.","positiveFeedback":"집중하려면 조용해야 한다는 뜻은 분명히 전달했어요.","feedbackDetail":null,"correctionExpression":"I need total silence.","correctionReason":"질문에는 충분히 답했지만, condition보다 silence를 쓰고 문장으로 말하면 더 자연스러워요.","benchmarkMessage":null}'
-        )
-    return (
-        "SCENARIO_OPENING_INSTRUCTION Feedback Examples:\n"
-        "GOOD JSON example for user utterance 'Can I get an iced americano?': "
-        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"아이스 아메리카노 한 잔 주세요\\"라고 자연스럽게 주문하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"원하는 음료를 공손하게 주문했어요."}\n'
-        "NEEDS_IMPROVEMENT JSON example for user utterance 'I like soccer.': "
-        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":0,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"저는 축구를 좋아해요\\"라고 음료 주문 안내에 다른 이야기를 꺼내는 것과 같아요.","positiveFeedback":"영어로 먼저 말을 시작했어요.","feedbackDetail":null,"correctionExpression":"Can I get [your drink]?","correctionReason":"음료를 주문하는 상황이므로 [your drink]에 원하는 음료를 넣어 요청해 보세요.","benchmarkMessage":null}'
     )
 
 

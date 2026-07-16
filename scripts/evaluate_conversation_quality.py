@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.conversation.application.next_message_service import (
+    AiGenerationFailedError,
+    AiResponseInvalidError,
     _get_expected_message_feedback_entries,
     _generate_closing_message_candidate,
     _looks_like_meta_closing,
@@ -106,14 +110,23 @@ def _evaluate_feedback_case(
             request.sessionId,
             [request.messageId],
         )[0]
+    except (
+        AiGenerationFailedError,
+        AiResponseInvalidError,
+        ValidationError,
+    ) as exc:
+        return _feedback_evaluation_error_result(case, run, exc)
     finally:
         clear_message_feedback_cache()
 
     feedback = feedback_entry.feedback
     score_evidence = feedback_entry.score_evidence
+    judgement = feedback_entry.judgement
+    generated_copy = feedback_entry.generated_copy
     message_score = _message_score_from_evidence(score_evidence)
     feedback_type = feedback.feedbackType.value
     expected_feedback_type = case["expectedFeedbackType"]
+    expected_context_fit = case.get("expectedContextFit")
     expected_score_range = case.get("expectedMessageScoreRange")
     required_placeholders = case.get("requiredCorrectionPlaceholders", [])
     correction_expression = feedback.correctionExpression or ""
@@ -146,7 +159,17 @@ def _evaluate_feedback_case(
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
         "feedbackTypeMatchesExpectation": feedback_type == expected_feedback_type,
+        "judgement": (
+            judgement.model_dump(mode="json") if judgement is not None else None
+        ),
         "scoreEvidence": score_evidence.model_dump(),
+        "expectedContextFit": expected_context_fit,
+        "contextFitMatchesExpectation": (
+            score_evidence.contextFit == expected_context_fit
+            if expected_context_fit is not None
+            else None
+        ),
+        "lockedFeedbackType": feedback_type,
         "messageScore": message_score,
         "expectedMessageScoreRange": expected_score_range,
         "messageScoreWithinExpectation": (
@@ -159,11 +182,64 @@ def _evaluate_feedback_case(
         "feedbackDetail": feedback.feedbackDetail,
         "correctionExpression": feedback.correctionExpression,
         "correctionReason": feedback.correctionReason,
+        "generatedCopy": (
+            generated_copy.model_dump(mode="json")
+            if generated_copy is not None
+            else None
+        ),
+        "copyValidationPassed": generated_copy is not None,
+        "copyWasRepaired": feedback_entry.copy_was_repaired,
+        "finalFeedback": feedback.model_dump(mode="json"),
+        "expectedFeedbackTypeMatched": feedback_type == expected_feedback_type,
+        "expectedScoreRangeMatched": (
+            expected_score_range[0] <= message_score <= expected_score_range[1]
+            if expected_score_range is not None
+            else None
+        ),
         "missingRequiredCorrectionPlaceholders": missing_placeholders,
         "foundForbiddenFeedbackTerms": found_forbidden_terms,
         "feedbackTextMatchesExpectation": (
             not missing_placeholders and not found_forbidden_terms
         ),
+        "validationError": None,
+    }
+
+
+def _feedback_evaluation_error_result(
+    case: dict[str, Any],
+    run: int,
+    error: Exception,
+) -> dict[str, Any]:
+    return {
+        "caseId": case["caseId"],
+        "kind": "message-feedback",
+        "run": run,
+        "expectedFeedbackType": case["expectedFeedbackType"],
+        "feedbackType": None,
+        "feedbackTypeMatchesExpectation": False,
+        "judgement": None,
+        "scoreEvidence": None,
+        "expectedContextFit": case.get("expectedContextFit"),
+        "contextFitMatchesExpectation": False,
+        "lockedFeedbackType": None,
+        "messageScore": None,
+        "expectedMessageScoreRange": case.get("expectedMessageScoreRange"),
+        "messageScoreWithinExpectation": False,
+        "baseLocaleAnalogy": None,
+        "positiveFeedback": None,
+        "feedbackDetail": None,
+        "correctionExpression": None,
+        "correctionReason": None,
+        "generatedCopy": None,
+        "copyValidationPassed": False,
+        "copyWasRepaired": False,
+        "finalFeedback": None,
+        "expectedFeedbackTypeMatched": False,
+        "expectedScoreRangeMatched": False,
+        "missingRequiredCorrectionPlaceholders": [],
+        "foundForbiddenFeedbackTerms": [],
+        "feedbackTextMatchesExpectation": False,
+        "validationError": type(error).__name__,
     }
 
 

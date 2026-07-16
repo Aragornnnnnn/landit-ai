@@ -3,6 +3,7 @@
     "caseId": "lan167-capitalization-and-period-only",
     "kind": "message-feedback",
     "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
     "expectedMessageScoreRange": [100, 100],
     "payload": {
       "sessionId": 167,
@@ -28,6 +29,7 @@
     "caseId": "lan167-meaning-neutral-filler",
     "kind": "message-feedback",
     "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
     "expectedMessageScoreRange": [100, 100],
     "payload": {
       "sessionId": 167,
@@ -53,6 +55,7 @@
     "caseId": "lan167-valid-like-to-watch",
     "kind": "message-feedback",
     "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
     "expectedMessageScoreRange": [100, 100],
     "payload": {
       "sessionId": 167,
@@ -78,6 +81,7 @@
     "caseId": "lan167-partial-self-introduction",
     "kind": "message-feedback",
     "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
     "expectedMessageScoreRange": [80, 80],
     "requiredCorrectionPlaceholders": ["[your hobby]"],
     "forbiddenFeedbackTerms": [
@@ -112,6 +116,7 @@
     "caseId": "lan167-off-topic-answer",
     "kind": "message-feedback",
     "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 0,
     "expectedMessageScoreRange": [60, 60],
     "requiredCorrectionPlaceholders": ["[your travel proof]"],
     "forbiddenFeedbackTerms": ["passport", "plane ticket", "hotel reservation"],
@@ -133,6 +138,60 @@
         "translatedContent": "여행 계획을 증명할 수 있는 것이 있나요?"
       },
       "userMessage": "My aircon bill is very high."
+    }
+  },
+  {
+    "caseId": "lan167-partial-hobby-reason",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
+    "expectedMessageScoreRange": [80, 80],
+    "requiredCorrectionPlaceholders": ["[your reason]"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1676,
+      "turnNumber": 6,
+      "messageSequence": 12,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "취미 이야기하기",
+        "briefing": "친구와 여가 활동에 관해 이야기합니다.",
+        "conversationGoal": "좋아하는 활동과 이유를 자연스럽게 말합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What are you into? What do you love about it?",
+        "translatedContent": "무엇을 좋아해? 그것의 어떤 점이 좋아?"
+      },
+      "userMessage": "I like jogging."
+    }
+  },
+  {
+    "caseId": "lan167-preserve-unknown-reason",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [70, 85],
+    "forbiddenFeedbackTerms": ["relax", "relaxing"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1677,
+      "turnNumber": 7,
+      "messageSequence": 14,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "취미 이야기하기",
+        "briefing": "친구와 여가 활동에 관해 이야기합니다.",
+        "conversationGoal": "좋아하는 활동과 이유를 자연스럽게 말합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What do you like about reading?",
+        "translatedContent": "독서의 어떤 점이 좋아?"
+      },
+      "userMessage": "I like reading a book. This is so cool."
     }
   }
 ]

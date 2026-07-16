@@ -13,7 +13,9 @@ from app.core.config import Settings
 from app.conversation.application.next_message_service import AiResponseInvalidError
 from app.models.conversation import (
     FeedbackStatus,
+    MessageFeedbackCopy,
     MessageFeedbackData,
+    MessageFeedbackJudgement,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
 )
@@ -61,6 +63,7 @@ def feedback_case():
         "caseId": "feedback-natural-colloquial",
         "kind": "message-feedback",
         "expectedFeedbackType": "GOOD",
+        "expectedContextFit": 2,
         "expectedMessageScoreRange": [100, 100],
         "payload": {
             "sessionId": 200,
@@ -132,6 +135,8 @@ class QualityEvaluationTests(unittest.TestCase):
                 "lan167-valid-like-to-watch",
                 "lan167-partial-self-introduction",
                 "lan167-off-topic-answer",
+                "lan167-partial-hobby-reason",
+                "lan167-preserve-unknown-reason",
             },
         )
         introduction_case = cases_by_id["lan167-partial-self-introduction"]
@@ -140,6 +145,28 @@ class QualityEvaluationTests(unittest.TestCase):
             ["[your hobby]"],
         )
         self.assertIn("없는 사실", introduction_case["forbiddenFeedbackTerms"])
+        hobby_case = cases_by_id["lan167-partial-hobby-reason"]
+        self.assertEqual(
+            hobby_case["requiredCorrectionPlaceholders"],
+            ["[your reason]"],
+        )
+        reading_case = cases_by_id["lan167-preserve-unknown-reason"]
+        self.assertIn("relax", reading_case["forbiddenFeedbackTerms"])
+        self.assertEqual(
+            {
+                case_id: case["expectedContextFit"]
+                for case_id, case in cases_by_id.items()
+            },
+            {
+                "lan167-capitalization-and-period-only": 2,
+                "lan167-meaning-neutral-filler": 2,
+                "lan167-valid-like-to-watch": 2,
+                "lan167-partial-self-introduction": 1,
+                "lan167-off-topic-answer": 0,
+                "lan167-partial-hobby-reason": 1,
+                "lan167-preserve-unknown-reason": 2,
+            },
+        )
 
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -245,6 +272,28 @@ class QualityEvaluationTests(unittest.TestCase):
             clarity=2,
             languageAccuracy=2,
         )
+        judgement = MessageFeedbackJudgement(
+            messageId=2001,
+            coreAsks=[
+                {
+                    "ask": "accept the movie suggestion",
+                    "addressed": True,
+                    "evidence": "Yeah, sounds good to me.",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            statedFacts=["Yeah, sounds good to me."],
+            scoreEvidence=score_evidence,
+        )
+        generated_copy = MessageFeedbackCopy(
+            messageId=2001,
+            baseLocaleAnalogy='"그래, 좋아"라고 자연스럽게 동의하는 것과 같아요.',
+            positiveFeedback=None,
+            feedbackDetail="친구의 제안에 자연스럽게 동의했어요.",
+            correctionExpression=None,
+            correctionReason=None,
+            benchmarkMessage=None,
+        )
 
         with (
             patch(
@@ -257,6 +306,9 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
+                        judgement=judgement,
+                        generated_copy=generated_copy,
+                        copy_was_repaired=False,
                     ),
                 ],
             ),
@@ -271,6 +323,24 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["feedbackType"], "GOOD")
         self.assertEqual(results[0]["expectedFeedbackType"], "GOOD")
         self.assertTrue(results[0]["feedbackTypeMatchesExpectation"])
+        self.assertEqual(
+            results[0]["judgement"]["coreAsks"][0]["evidence"],
+            "Yeah, sounds good to me.",
+        )
+        self.assertEqual(results[0]["lockedFeedbackType"], "GOOD")
+        self.assertEqual(results[0]["expectedContextFit"], 2)
+        self.assertTrue(results[0]["contextFitMatchesExpectation"])
+        self.assertTrue(results[0]["copyValidationPassed"])
+        self.assertEqual(
+            results[0]["generatedCopy"]["feedbackDetail"],
+            "친구의 제안에 자연스럽게 동의했어요.",
+        )
+        self.assertEqual(
+            results[0]["finalFeedback"]["feedbackType"],
+            "GOOD",
+        )
+        self.assertTrue(results[0]["expectedFeedbackTypeMatched"])
+        self.assertTrue(results[0]["expectedScoreRangeMatched"])
         self.assertIn("scoreEvidence", results[0])
         self.assertEqual(
             results[0]["scoreEvidence"],
@@ -304,6 +374,34 @@ class QualityEvaluationTests(unittest.TestCase):
             clarity=2,
             languageAccuracy=2,
         )
+        judgement = MessageFeedbackJudgement(
+            messageId=2001,
+            coreAsks=[
+                {
+                    "ask": "introduce yourself",
+                    "addressed": True,
+                    "evidence": "Sangmin",
+                    "requiredPlaceholder": None,
+                },
+                {
+                    "ask": "share a hobby",
+                    "addressed": False,
+                    "evidence": None,
+                    "requiredPlaceholder": "[your hobby]",
+                },
+            ],
+            statedFacts=["Sangmin"],
+            scoreEvidence=score_evidence,
+        )
+        generated_copy = MessageFeedbackCopy(
+            messageId=2001,
+            baseLocaleAnalogy='"이름만 말하고 소개는 덧붙이지 않았어요"라고 답하는 것과 같아요.',
+            positiveFeedback="이름을 자연스럽게 소개한 점은 좋아요.",
+            feedbackDetail=None,
+            correctionExpression="Hi, my name is Sangmin. I enjoy [your hobby].",
+            correctionReason="[your hobby]에 평소 좋아하는 활동을 넣어 소개를 완성해 보세요.",
+            benchmarkMessage=None,
+        )
 
         with (
             patch(
@@ -316,6 +414,9 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
+                        judgement=judgement,
+                        generated_copy=generated_copy,
+                        copy_was_repaired=False,
                     ),
                 ],
             ),
@@ -331,3 +432,19 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["missingRequiredCorrectionPlaceholders"], [])
         self.assertEqual(results[0]["foundForbiddenFeedbackTerms"], [])
         self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
+
+    def test_feedback_result_records_invalid_judgement_without_aborting_batch(self):
+        with patch(
+            "scripts.evaluate_conversation_quality.generate_message_feedback",
+            side_effect=AiResponseInvalidError,
+        ):
+            results = evaluate_cases(
+                [feedback_case()],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(results[0]["validationError"], "AiResponseInvalidError")
+        self.assertFalse(results[0]["copyValidationPassed"])
+        self.assertIsNone(results[0]["finalFeedback"])
