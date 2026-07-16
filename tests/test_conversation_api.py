@@ -1115,6 +1115,75 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
         self.assertEqual(judgement.languageCorrections, [])
 
+    def test_message_feedback_judgement_ignores_natural_reading_alternative(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What do you love about reading?"
+        )
+        payload["userMessage"] = "I like reading a book. This is so cool."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            language_accuracy=1,
+            language_corrections=[
+                {"evidence": "a book", "replacement": "books"},
+            ],
+            core_asks=[
+                {
+                    "ask": "what the user loves about reading",
+                    "addressed": True,
+                    "evidence": "This is so cool",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["I like reading a book", "This is so cool"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
+        self.assertEqual(judgement.languageCorrections, [])
+
+    def test_message_feedback_judgement_restores_missing_age_correction(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = "Tell me about yourself."
+        payload["userMessage"] = "Hi, my name is sandman. I'm 25 years."
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            language_accuracy=2,
+            language_corrections=[],
+            core_asks=[
+                {
+                    "ask": "tell me about yourself",
+                    "addressed": True,
+                    "evidence": "I'm 25 years",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=["my name is sandman", "I'm 25 years"],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(judgement.scoreEvidence.languageAccuracy, 1)
+        self.assertEqual(
+            [
+                correction.model_dump()
+                for correction in judgement.languageCorrections
+            ],
+            [
+                {
+                    "evidence": "I'm 25 years",
+                    "replacement": "I'm 25 years old",
+                },
+            ],
+        )
+
     def test_message_feedback_judgement_ignores_capitalization_only_correction(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (

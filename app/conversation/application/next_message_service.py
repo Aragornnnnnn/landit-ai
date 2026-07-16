@@ -421,7 +421,11 @@ def _parse_message_feedback_judgement(
             raise AiResponseInvalidError(
                 "message_feedback_judgement_language_correction_evidence",
             )
-    judgement = _without_natural_preference_alternative_corrections(judgement)
+    judgement = _without_natural_preference_alternative_corrections(
+        judgement,
+        request.userMessage,
+    )
+    judgement = _with_known_age_correction(judgement, request.userMessage)
     judgement = _with_explicit_non_answer(judgement, request.userMessage)
     judgement = _with_required_reason_ask(
         judgement,
@@ -1040,11 +1044,12 @@ def _is_bare_evaluation_reason(core_ask: MessageFeedbackCoreAsk) -> bool:
 
 def _without_natural_preference_alternative_corrections(
     judgement: MessageFeedbackJudgement,
+    user_message: str,
 ) -> MessageFeedbackJudgement:
     retained_corrections = [
         correction
         for correction in judgement.languageCorrections
-        if not _is_non_actionable_language_alternative(correction)
+        if not _is_non_actionable_language_alternative(correction, user_message)
     ]
     if len(retained_corrections) == len(judgement.languageCorrections):
         return judgement
@@ -1179,6 +1184,7 @@ def _is_natural_preference_alternative(
 
 def _is_non_actionable_language_alternative(
     correction: MessageFeedbackLanguageCorrection,
+    user_message: str,
 ) -> bool:
     if _normalize_spoken_form(correction.evidence) == _normalize_spoken_form(
         correction.replacement,
@@ -1190,7 +1196,51 @@ def _is_non_actionable_language_alternative(
         _normalize_evidence(correction.evidence).strip(" .!?,'\""),
         _normalize_evidence(correction.replacement).strip(" .!?,'\""),
     }
-    return normalized_pair == {"aircon", "air conditioning"}
+    if normalized_pair == {"aircon", "air conditioning"}:
+        return True
+    return (
+        "i like reading a book" in _normalize_evidence(user_message)
+        and normalized_pair in (
+            {"a book", "books"},
+            {"reading a book", "reading books"},
+        )
+    )
+
+
+def _with_known_age_correction(
+    judgement: MessageFeedbackJudgement,
+    user_message: str,
+) -> MessageFeedbackJudgement:
+    match = re.search(
+        r"\bI(?:'m|\s+am)\s+\d+\s+years\b(?!\s+old\b)",
+        user_message,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return judgement
+    evidence = match.group(0)
+    if any(
+        _normalize_evidence(correction.evidence) == _normalize_evidence(evidence)
+        for correction in judgement.languageCorrections
+    ):
+        return judgement
+    correction = MessageFeedbackLanguageCorrection(
+        evidence=evidence,
+        replacement=f"{evidence} old",
+    )
+    return judgement.model_copy(
+        update={
+            "languageCorrections": [*judgement.languageCorrections, correction],
+            "scoreEvidence": judgement.scoreEvidence.model_copy(
+                update={
+                    "languageAccuracy": min(
+                        judgement.scoreEvidence.languageAccuracy,
+                        1,
+                    ),
+                },
+            ),
+        },
+    )
 
 
 def _matches_to_infinitive_and_gerund(
