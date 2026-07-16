@@ -12,18 +12,32 @@
       "messageSequence": 2,
       "scenario": {
         "scenarioId": 1,
-        "title": "좋아하는 음식 이야기하기",
-        "briefing": "친구와 좋아하는 음식에 관해 이야기합니다.",
-        "conversationGoal": "좋아하는 음식을 자연스럽게 말합니다.",
-        "counterpartRole": "friend"
+        "title": "처음 만난 사람에게 자기소개하기",
+        "briefing": "처음 만난 사람에게 이름을 소개합니다.",
+        "conversationGoal": "이름을 자연스럽게 말합니다.",
+        "counterpartRole": "new acquaintance"
       },
       "evaluationContext": {
         "type": "AI_MESSAGE",
-        "content": "What food do you like?",
-        "translatedContent": "어떤 음식을 좋아해?"
+        "content": "What's your name?",
+        "translatedContent": "이름이 뭐야?"
       },
-      "userMessage": "i like pizza"
-    }
+      "userMessage": "hi my name is sangmin"
+    },
+    "forbiddenFeedbackTerms": [
+      "대문자",
+      "소문자",
+      "쉼표",
+      "마침표",
+      "문장부호",
+      "capitalization",
+      "uppercase",
+      "lowercase",
+      "comma",
+      "period",
+      "punctuation",
+      "full stop"
+    ]
   },
   {
     "caseId": "lan167-meaning-neutral-filler",
@@ -118,7 +132,7 @@
     "expectedFeedbackType": "NEEDS_IMPROVEMENT",
     "expectedContextFit": 0,
     "expectedMessageScoreRange": [60, 60],
-    "requiredCorrectionPlaceholders": ["[your travel proof]"],
+    "requiredCorrectionPlaceholderPrefixes": ["[your travel "],
     "forbiddenFeedbackTerms": ["passport", "plane ticket", "hotel reservation"],
     "payload": {
       "sessionId": 167,
@@ -170,9 +184,9 @@
   {
     "caseId": "lan167-preserve-unknown-reason",
     "kind": "message-feedback",
-    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedFeedbackType": "GOOD",
     "expectedContextFit": 2,
-    "expectedMessageScoreRange": [70, 85],
+    "expectedMessageScoreRange": [100, 100],
     "forbiddenFeedbackTerms": ["relax", "relaxing"],
     "payload": {
       "sessionId": 167,

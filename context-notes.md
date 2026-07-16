@@ -387,3 +387,14 @@
 - 2차 출력은 사용자용 문구 필드만 반환하고, 1차에서 잠긴 점수와 유형을 변경하지 않는다. 2차 생성과 구조 복구가 모두 실패하면 검증된 1차 후보를 사용한다.
 - 대소문자, 문장부호, 공백을 제외했을 때 사용자 발화와 동일한 교정 표현을 거부한다. 사용자용 설명에서 대문자, 소문자, 쉼표, 마침표, 문장부호만을 개선 이유로 제시하는 응답도 거부한다.
 - 구현은 내부 DTO와 판정 조립, 스피킹 검증, 1차 후보, 2차 문구 검수, 프롬프트·fixture, 품질 지표 순서로 테스트를 먼저 추가한 뒤 진행한다.
+
+## 2026-07-17 LAN-167 판정 잠금과 문구 fallback 구현
+
+- 1차 모델은 `scoreEvidence`와 전체 문구 후보만 반환하고, 서버가 요청 `messageId`와 세 점수에서 `feedbackType`을 조립한다. 2차 모델은 잠긴 점수와 유형을 입력으로 받고 사용자용 문구 필드만 반환한다.
+- 2차 생성·구조 복구가 실패하면 검증된 1차 후보를 저장한다. cache와 품질 평가 도구에는 `candidateWasRepaired`, `copyWasRepaired`, `copyWasFallback`만 내부 지표로 남기며 외부 DTO와 OpenAPI에는 노출하지 않는다.
+- 대소문자·문장부호 차이만 있는 교정과 관련 사용자용 설명은 서버에서 거부한다. `like to + 동사`와 같은 동사의 `like + -ing`형만 다른 단순 선호 교정은 GOOD으로 정규화하고, fallback에도 잘못된 교정 문구가 남지 않게 안전한 GOOD 문구로 교체한다.
+- 1차 후보는 2차 실패에 대비한 구조상 안전한 후보여야 한다. 명확한 NEEDS에서 모델이 근거 없는 칭찬을 피하려고 `positiveFeedback`을 비운 경우에는 `말한 문장의 의미는 이해할 수 있어요.`라는 사실 기반 중립 문구만 보완한다. 일반 플레이스홀더는 최종 2차 문구에서 거부·복구하지만 1차 후보 자체는 fallback으로 유지한다.
+- 실제 `openai/gpt-5.4-mini` 검증은 OpenRouter 호출 제한 때문에 21건을 한 프로세스로 실행하지 않고 고정 7개 사례를 사례별로 3회 실행했다. 대소문자·문장부호, 필러, 자연스러운 문법 대안, 일부 자기소개, 무관한 답변, 취미 이유 누락, 모호하지만 관련된 이유 경계에서 발견된 실패를 보정한 뒤 각 해당 사례의 3회 재측정이 통과했다. 성공 재측정에서는 최종 구조 실패와 copy fallback이 없었다.
+- `I like reading a book. This is so cool.`은 관련된 이유가 있고 두 표현 모두 자연스러워 교정점이 없으므로 fixture 기대값을 NEEDS 70~85점에서 GOOD 100점으로 정정했다.
+- 전체 115개 실제 발화의 비식별 fixture는 현재 저장소에 없어서 재측정하지 못했다. 파일을 제공받으면 `scripts/evaluate_conversation_quality.py`로 구조 실패, 메시지 누락, 1차·2차 복구율과 fallback률을 재측정한다.
+- 최종 로컬 검증은 `.venv/bin/python -m unittest discover -s tests` 112개 통과, `.venv/bin/python -m compileall app tests scripts`, `.venv/bin/python -m pip check`, OpenAPI 내부 필드 비노출 assertion, `git diff --check` 통과다.

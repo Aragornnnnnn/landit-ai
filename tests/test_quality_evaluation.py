@@ -137,6 +137,24 @@ class QualityEvaluationTests(unittest.TestCase):
                 "lan167-preserve-unknown-reason",
             },
         )
+        written_form_case = cases_by_id["lan167-capitalization-and-period-only"]
+        self.assertEqual(
+            written_form_case["forbiddenFeedbackTerms"],
+            [
+                "대문자",
+                "소문자",
+                "쉼표",
+                "마침표",
+                "문장부호",
+                "capitalization",
+                "uppercase",
+                "lowercase",
+                "comma",
+                "period",
+                "punctuation",
+                "full stop",
+            ],
+        )
         introduction_case = cases_by_id["lan167-partial-self-introduction"]
         self.assertEqual(
             introduction_case["requiredCorrectionPlaceholders"],
@@ -281,7 +299,9 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
-                        review_was_fallback=True,
+                        candidate_was_repaired=True,
+                        copy_was_repaired=False,
+                        copy_was_fallback=True,
                     ),
                 ],
             ),
@@ -310,7 +330,10 @@ class QualityEvaluationTests(unittest.TestCase):
             {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
         )
         self.assertEqual(results[0]["messageScore"], 100)
-        self.assertTrue(results[0]["reviewWasFallback"])
+        self.assertTrue(results[0]["candidateWasRepaired"])
+        self.assertFalse(results[0]["copyWasRepaired"])
+        self.assertTrue(results[0]["copyWasFallback"])
+        self.assertNotIn("reviewWasFallback", results[0])
         self.assertEqual(results[0]["expectedMessageScoreRange"], [100, 100])
         self.assertTrue(results[0]["messageScoreWithinExpectation"])
 
@@ -349,7 +372,9 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
-                        review_was_fallback=False,
+                        candidate_was_repaired=False,
+                        copy_was_repaired=False,
+                        copy_was_fallback=False,
                     ),
                 ],
             ),
@@ -364,6 +389,60 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertIn("missingRequiredCorrectionPlaceholders", results[0])
         self.assertEqual(results[0]["missingRequiredCorrectionPlaceholders"], [])
         self.assertEqual(results[0]["foundForbiddenFeedbackTerms"], [])
+        self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
+
+    def test_feedback_result_checks_required_placeholder_prefixes(self):
+        case = feedback_case()
+        case["expectedFeedbackType"] = "NEEDS_IMPROVEMENT"
+        case["expectedMessageScoreRange"] = [60, 60]
+        case["requiredCorrectionPlaceholderPrefixes"] = ["[your travel "]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy="질문에 맞는 증빙을 말해야 하는 상황이에요.",
+            positiveFeedback="문장을 끝까지 말한 점은 좋아요.",
+            correctionExpression="I have [your travel document].",
+            correctionReason="여행 계획을 보여 줄 수 있는 자료를 넣어 답해 보세요.",
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=0,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=MessageFeedbackResponse(
+                    sessionId=200,
+                    messageId=2001,
+                    feedbackStatus=FeedbackStatus.PREPARING,
+                ),
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                        candidate_was_repaired=False,
+                        copy_was_repaired=False,
+                        copy_was_fallback=False,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(
+            results[0]["missingRequiredCorrectionPlaceholderPrefixes"],
+            [],
+        )
         self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
 
     def test_feedback_result_allows_actual_data_without_expected_type(self):
@@ -396,11 +475,9 @@ class QualityEvaluationTests(unittest.TestCase):
                     SimpleNamespace(
                         feedback=feedback,
                         score_evidence=score_evidence,
-                        judgement=None,
-                        generated_copy=None,
-                        judgement_was_repaired=False,
+                        candidate_was_repaired=False,
                         copy_was_repaired=False,
-                        review_was_fallback=False,
+                        copy_was_fallback=False,
                     ),
                 ],
             ),

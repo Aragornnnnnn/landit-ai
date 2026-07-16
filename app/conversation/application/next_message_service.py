@@ -24,9 +24,9 @@ from app.models.conversation import (
     InnerThoughtData,
     InnerThoughtRequest,
     InnerThoughtResponse,
+    MessageFeedbackCandidate,
     MessageFeedbackContent,
     MessageFeedbackData,
-    MessageFeedbackEvaluation,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -126,7 +126,9 @@ class _MessageFeedbackCacheEntry:
     feedback: MessageFeedbackData
     score_evidence: MessageFeedbackScoreEvidence
     user_message: str
-    review_was_fallback: bool
+    candidate_was_repaired: bool
+    copy_was_repaired: bool
+    copy_was_fallback: bool
     expires_at: float
 
 
@@ -226,32 +228,36 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    candidate, detected_patterns = _generate_message_feedback_candidate(
+    (
+        candidate,
+        score_evidence,
+        detected_patterns,
+        candidate_was_repaired,
+    ) = _generate_message_feedback_candidate(
         request,
         resolved_settings,
     )
-    review_was_fallback = False
+    copy_was_repaired = False
+    copy_was_fallback = False
     try:
-        reviewed, detected_patterns = _review_message_feedback_candidate(
+        feedback, detected_patterns, copy_was_repaired = _review_message_feedback_copy(
             request,
             candidate,
+            score_evidence,
             detected_patterns,
             resolved_settings,
         )
     except (AiGenerationFailedError, AiResponseInvalidError) as exc:
         logger.warning(
-            "AI 메시지별 피드백 검수에 실패해 생성 후보를 사용합니다. "
-            "workflow=message_feedback_review_fallback reason=%s "
+            "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
+            "workflow=message_feedback_copy_fallback reason=%s "
             "sessionId=%s messageId=%s",
             getattr(exc, "reason", type(exc).__name__),
             request.sessionId,
             request.messageId,
         )
-        reviewed = candidate
-        review_was_fallback = True
-    feedback = MessageFeedbackData.model_validate(
-        reviewed.model_dump(exclude={"scoreEvidence"}),
-    )
+        feedback = candidate
+        copy_was_fallback = True
     feedback = _postprocess_message_feedback_benchmark(
         feedback,
         detected_patterns,
@@ -261,9 +267,11 @@ def generate_message_feedback(
     _store_message_feedback(
         request.sessionId,
         feedback,
-        score_evidence=reviewed.scoreEvidence,
+        score_evidence=score_evidence,
         user_message=request.userMessage,
-        review_was_fallback=review_was_fallback,
+        candidate_was_repaired=candidate_was_repaired,
+        copy_was_repaired=copy_was_repaired,
+        copy_was_fallback=copy_was_fallback,
     )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
@@ -275,7 +283,7 @@ def generate_message_feedback(
 def _generate_message_feedback_candidate(
     request: MessageFeedbackRequest,
     settings: Settings,
-) -> tuple[MessageFeedbackEvaluation, Any]:
+) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any, bool]:
     candidate_data: dict[str, Any] | None = None
     try:
         candidate_data = _request_json_completion(
@@ -286,7 +294,11 @@ def _generate_message_feedback_candidate(
             user_prompt=_message_feedback_user_prompt(request),
             max_tokens=768,
         )
-        return _parse_message_feedback_candidate(candidate_data, request.messageId)
+        feedback, score_evidence, detected_patterns = _parse_message_feedback_candidate(
+            candidate_data,
+            request,
+        )
+        return feedback, score_evidence, detected_patterns, False
     except AiResponseInvalidError as exc:
         logger.warning(
             "AI 메시지별 피드백 생성 결과를 구조 복구합니다. "
@@ -306,15 +318,20 @@ def _generate_message_feedback_candidate(
             ),
             max_tokens=768,
         )
-        return _parse_message_feedback_candidate(repaired_data, request.messageId)
+        feedback, score_evidence, detected_patterns = _parse_message_feedback_candidate(
+            repaired_data,
+            request,
+        )
+        return feedback, score_evidence, detected_patterns, True
 
 
-def _review_message_feedback_candidate(
+def _review_message_feedback_copy(
     request: MessageFeedbackRequest,
-    candidate: MessageFeedbackEvaluation,
+    candidate: MessageFeedbackData,
+    score_evidence: MessageFeedbackScoreEvidence,
     detected_patterns: Any,
     settings: Settings,
-) -> tuple[MessageFeedbackEvaluation, Any]:
+) -> tuple[MessageFeedbackData, Any, bool]:
     reviewed_data: dict[str, Any] | None = None
     try:
         reviewed_data = _request_json_completion(
@@ -325,18 +342,21 @@ def _review_message_feedback_candidate(
             user_prompt=_message_feedback_review_user_prompt(
                 request,
                 candidate,
+                score_evidence,
                 detected_patterns,
             ),
             max_tokens=768,
         )
-        return _parse_message_feedback_candidate(
+        feedback, reviewed_patterns = _parse_message_feedback_copy(
             reviewed_data,
-            request.messageId,
+            request,
+            score_evidence,
         )
+        return feedback, reviewed_patterns, False
     except AiResponseInvalidError as exc:
         logger.warning(
-            "AI 메시지별 피드백 검수 결과를 구조 복구합니다. "
-            "workflow=message_feedback_review_repair sessionId=%s messageId=%s",
+            "AI 메시지별 피드백 문구 검수 결과를 구조 복구합니다. "
+            "workflow=message_feedback_copy_repair sessionId=%s messageId=%s",
             request.sessionId,
             request.messageId,
         )
@@ -348,31 +368,164 @@ def _review_message_feedback_candidate(
             user_prompt=_message_feedback_review_repair_user_prompt(
                 request,
                 candidate,
+                score_evidence,
                 detected_patterns,
                 reviewed_data,
                 exc,
             ),
             max_tokens=768,
         )
-        return _parse_message_feedback_candidate(
+        feedback, reviewed_patterns = _parse_message_feedback_copy(
             repaired_data,
-            request.messageId,
+            request,
+            score_evidence,
         )
+        return feedback, reviewed_patterns, True
 
 
 def _parse_message_feedback_candidate(
     data: dict[str, Any],
-    expected_message_id: int,
-) -> tuple[MessageFeedbackEvaluation, Any]:
+    request: MessageFeedbackRequest,
+) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any]:
     candidate_data = dict(data)
     detected_patterns = candidate_data.pop("detectedPatterns", None)
+    candidate_data = _normalize_message_feedback_placeholders(candidate_data)
     try:
-        evaluation = MessageFeedbackEvaluation.model_validate(candidate_data)
+        candidate = MessageFeedbackCandidate.model_validate(candidate_data)
+        candidate = _complete_candidate_fallback_content(candidate)
+        candidate, score_evidence = _normalize_preference_only_candidate(
+            candidate,
+            request.userMessage,
+        )
+        feedback = _assemble_message_feedback(
+            candidate,
+            message_id=request.messageId,
+            score_evidence=score_evidence,
+        )
     except ValidationError as exc:
         raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
-    if evaluation.messageId != expected_message_id:
-        raise AiResponseInvalidError("message_feedback_message_id")
-    return evaluation, detected_patterns
+    _validate_spoken_message_feedback(
+        feedback,
+        request.userMessage,
+        reject_generic_placeholder=False,
+    )
+    return feedback, score_evidence, detected_patterns
+
+
+def _parse_message_feedback_copy(
+    data: dict[str, Any],
+    request: MessageFeedbackRequest,
+    score_evidence: MessageFeedbackScoreEvidence,
+) -> tuple[MessageFeedbackData, Any]:
+    copy_data = dict(data)
+    detected_patterns = copy_data.pop("detectedPatterns", None)
+    copy_data = _normalize_message_feedback_placeholders(copy_data)
+    try:
+        copy = MessageFeedbackContent.model_validate(copy_data)
+        feedback = _assemble_message_feedback(
+            copy,
+            message_id=request.messageId,
+            score_evidence=score_evidence,
+        )
+    except ValidationError as exc:
+        raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
+    _validate_spoken_message_feedback(feedback, request.userMessage)
+    return feedback, detected_patterns
+
+
+def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, Any]:
+    normalized_data = dict(data)
+    correction_expression = normalized_data.get("correctionExpression")
+    if isinstance(correction_expression, str):
+        normalized_data["correctionExpression"] = re.sub(
+            r"\[([a-z][a-z ]*)\]",
+            _normalize_message_feedback_placeholder,
+            correction_expression,
+        )
+    return normalized_data
+
+
+def _normalize_message_feedback_placeholder(match: re.Match[str]) -> str:
+    label = match.group(1)
+    if label.startswith("your "):
+        return match.group(0)
+    return f"[your {label}]"
+
+
+def _normalize_preference_only_candidate(
+    candidate: MessageFeedbackCandidate,
+    user_message: str,
+) -> tuple[MessageFeedbackCandidate, MessageFeedbackScoreEvidence]:
+    score_evidence = candidate.scoreEvidence
+    if (
+        score_evidence.contextFit != 2
+        or score_evidence.clarity != 2
+        or score_evidence.languageAccuracy != 1
+        or candidate.correctionExpression is None
+        or not _is_like_infinitive_gerund_alternative(
+            user_message,
+            candidate.correctionExpression,
+        )
+    ):
+        return candidate, score_evidence
+    normalized_candidate = candidate.model_copy(
+        update={
+            "baseLocaleAnalogy": "좋아하는 활동을 자연스럽게 말한 상황이에요.",
+            "feedbackDetail": "질문에 맞는 핵심을 자연스럽게 전달했어요.",
+        },
+    )
+    normalized_score_evidence = score_evidence.model_copy(
+        update={"languageAccuracy": 2},
+    )
+    return normalized_candidate, normalized_score_evidence
+
+
+def _complete_candidate_fallback_content(
+    candidate: MessageFeedbackCandidate,
+) -> MessageFeedbackCandidate:
+    if (
+        _feedback_type_from_score_evidence(candidate.scoreEvidence)
+        != FeedbackType.NEEDS_IMPROVEMENT
+        or candidate.scoreEvidence.clarity != 2
+        or candidate.positiveFeedback is not None
+    ):
+        return candidate
+    return candidate.model_copy(
+        update={"positiveFeedback": "말한 문장의 의미는 이해할 수 있어요."},
+    )
+
+
+def _is_like_infinitive_gerund_alternative(
+    user_message: str,
+    correction_expression: str,
+) -> bool:
+    source_match = re.fullmatch(
+        r"i like to ([a-z]+)(?: (.*))?",
+        _normalize_spoken_form(user_message),
+    )
+    correction_match = re.fullmatch(
+        r"i like ([a-z]+ing)(?: (.*))?",
+        _normalize_spoken_form(correction_expression),
+    )
+    if source_match is None or correction_match is None:
+        return False
+    source_verb, source_object = source_match.groups(default="")
+    correction_verb, correction_object = correction_match.groups(default="")
+    return (
+        source_object == correction_object
+        and correction_verb in _gerund_forms(source_verb)
+    )
+
+
+def _gerund_forms(verb: str) -> set[str]:
+    forms = {f"{verb}ing"}
+    if verb.endswith("ie"):
+        forms.add(f"{verb[:-2]}ying")
+    elif verb.endswith("e") and not verb.endswith("ee"):
+        forms.add(f"{verb[:-1]}ing")
+    if re.search(r"[aeiou][b-df-hj-np-tv-z]$", verb):
+        forms.add(f"{verb}{verb[-1]}ing")
+    return forms
 
 
 def _feedback_type_from_score_evidence(
@@ -394,7 +547,7 @@ def _assemble_message_feedback(
     message_id: int,
     score_evidence: MessageFeedbackScoreEvidence,
 ) -> MessageFeedbackData:
-    feedback_values = content.model_dump()
+    feedback_values = content.model_dump(exclude={"scoreEvidence"})
     feedback_type = _feedback_type_from_score_evidence(score_evidence)
     if feedback_type == FeedbackType.GOOD:
         feedback_values.update(
@@ -426,6 +579,8 @@ def _normalize_spoken_form(value: str) -> str:
 def _validate_spoken_message_feedback(
     feedback: MessageFeedbackData,
     user_message: str,
+    *,
+    reject_generic_placeholder: bool = True,
 ) -> None:
     feedback_text = " ".join(
         value
@@ -441,12 +596,30 @@ def _validate_spoken_message_feedback(
     if any(term in feedback_text for term in _WRITTEN_FORM_FEEDBACK_TERMS):
         raise AiResponseInvalidError("message_feedback_written_form_feedback")
     if (
+        reject_generic_placeholder
+        and _has_generic_placeholder(feedback.correctionExpression)
+    ):
+        raise AiResponseInvalidError("message_feedback_generic_placeholder")
+    if (
         feedback.feedbackType == FeedbackType.NEEDS_IMPROVEMENT
         and feedback.correctionExpression is not None
         and _normalize_spoken_form(feedback.correctionExpression)
         == _normalize_spoken_form(user_message)
     ):
         raise AiResponseInvalidError("message_feedback_spoken_form_only")
+
+
+def _has_generic_placeholder(correction_expression: str | None) -> bool:
+    if correction_expression is None:
+        return False
+    labels = re.findall(r"\[([a-z][a-z ]*)\]", correction_expression)
+    return any(
+        label.startswith("your information")
+        or label.startswith("your detail")
+        or label.startswith("your document")
+        or label.startswith("your your ")
+        for label in labels
+    )
 
 
 def _message_feedback_validation_reason(error: ValidationError) -> str:
@@ -669,7 +842,9 @@ def _store_message_feedback(
     *,
     score_evidence: MessageFeedbackScoreEvidence,
     user_message: str,
-    review_was_fallback: bool,
+    candidate_was_repaired: bool = False,
+    copy_was_repaired: bool = False,
+    copy_was_fallback: bool = False,
     now: float | None = None,
 ) -> None:
     current_time = _cache_now() if now is None else now
@@ -680,7 +855,9 @@ def _store_message_feedback(
             feedback=feedback,
             score_evidence=score_evidence,
             user_message=user_message,
-            review_was_fallback=review_was_fallback,
+            candidate_was_repaired=candidate_was_repaired,
+            copy_was_repaired=copy_was_repaired,
+            copy_was_fallback=copy_was_fallback,
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
         )
 
@@ -1271,9 +1448,13 @@ def _message_feedback_system_prompt(
             "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
             "Do not lower a score only for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative. "
             "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
+            "I like reading a book and I like reading books are also both acceptable; do not correct one to the other as a preference. "
+            "For a question asking what the user likes about something, a related reason such as This is so cool is vague but present, so contextFit is 2. "
             "A short answer can be complete when it fits the question. "
             "If information needed to answer is missing, use a [your ...] placeholder in correctionExpression rather than inventing it. "
             "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
+            "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
+            "When a self-introduction question asks for a name and more information, and the user gives only a name, use [your hobby] for the missing detail. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
             "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
@@ -1282,7 +1463,7 @@ def _message_feedback_system_prompt(
         ),
         (
             "Field Policy:\n"
-            "All three scoreEvidence values are integers from 0 to 2. feedbackType is GOOD only when all three values are 2; otherwise it is NEEDS_IMPROVEMENT. "
+            "All three scoreEvidence values are integers from 0 to 2. The server derives feedbackType from scoreEvidence, so do not return feedbackType. "
             "baseLocaleAnalogy is a Korean analogy for the same issue. "
             "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
@@ -1292,7 +1473,7 @@ def _message_feedback_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"messageId":1,"feedbackType":"GOOD or NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         "Detected Pattern Catalog:\n"
@@ -1331,7 +1512,7 @@ def _message_feedback_repair_user_prompt(
         if invalid_candidate is not None
         else "null"
     )
-    validation_reason = getattr(error, "reason", type(error).__name__)
+    validation_reason = _message_feedback_repair_instruction(error)
     return (
         f"{_message_feedback_user_prompt(request)}\n\n"
         "Invalid candidate JSON:\n"
@@ -1339,6 +1520,18 @@ def _message_feedback_repair_user_prompt(
         "Validation failure:\n"
         f"{validation_reason}"
     )
+
+
+def _message_feedback_repair_instruction(error: Exception) -> str:
+    reason = getattr(error, "reason", type(error).__name__)
+    if reason == "message_feedback_generic_placeholder":
+        return (
+            "message_feedback_generic_placeholder: Use a specific placeholder "
+            "such as [your hobby], [your hometown], or [your reason], not a "
+            "generic placeholder such as [your information], [your detail], or "
+            "[your document]."
+        )
+    return reason
 
 
 def _message_feedback_review_system_prompt(
@@ -1352,13 +1545,15 @@ def _message_feedback_review_system_prompt(
         _shared_safety_policy(),
         (
             "Review Task:\n"
-            "Review the candidate against the original request and return the complete final JSON object. You may correct feedbackType and scoreEvidence. "
+            "Review the candidate against the original request and return only the learner-facing copy fields. The supplied scoreEvidence and feedbackType are locked by the server; do not return or change them. "
             "Preserve valid fields and rewrite any invalid field. Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
             "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
             "Preserve the user's meaning, intent, tense, and negation. When information needed to answer is unavailable, use a [your ...] placeholder in correctionExpression. "
             "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
+            "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
             "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
             "Do not make capitalization, punctuation, or a meaning-neutral filler the only improvement. Do not replace a natural grammar alternative only because you prefer another form. "
+            "Do not mention capitalization, commas, periods, uppercase, lowercase, or punctuation as a learner-facing improvement reason. "
             "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
             "When the user answers only part of a multi-part question, help them complete the most important missing part. When the utterance is irrelevant or unclear, do not merely polish its grammar; show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
             "Keep positive feedback factual and avoid formal praise for hostile, irrelevant, or unintelligible utterances. "
@@ -1385,7 +1580,7 @@ def _message_feedback_review_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"messageId":1,"feedbackType":"GOOD or NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         f"Evaluation context type: {evaluation_context_type}",
@@ -1394,13 +1589,18 @@ def _message_feedback_review_system_prompt(
 
 def _message_feedback_review_user_prompt(
     request: MessageFeedbackRequest,
-    candidate: MessageFeedbackEvaluation,
+    candidate: MessageFeedbackData,
+    score_evidence: MessageFeedbackScoreEvidence,
     detected_patterns: Any,
 ) -> str:
     return (
         f"{_message_feedback_user_prompt(request)}\n\n"
         "Candidate JSON:\n"
         f"{candidate.model_dump_json(by_alias=True)}\n\n"
+        "Locked score evidence:\n"
+        f"{score_evidence.model_dump_json()}\n\n"
+        "Locked feedback type:\n"
+        f"{candidate.feedbackType.value}\n\n"
         "Candidate detected patterns:\n"
         f"{json.dumps(detected_patterns, ensure_ascii=False, separators=(',', ':'))}"
     )
@@ -1420,7 +1620,8 @@ def _message_feedback_review_repair_system_prompt(
 
 def _message_feedback_review_repair_user_prompt(
     request: MessageFeedbackRequest,
-    candidate: MessageFeedbackEvaluation,
+    candidate: MessageFeedbackData,
+    score_evidence: MessageFeedbackScoreEvidence,
     detected_patterns: Any,
     invalid_review: dict[str, Any] | None,
     error: Exception,
@@ -1430,9 +1631,9 @@ def _message_feedback_review_repair_user_prompt(
         if invalid_review is not None
         else "null"
     )
-    validation_reason = getattr(error, "reason", type(error).__name__)
+    validation_reason = _message_feedback_repair_instruction(error)
     return (
-        f"{_message_feedback_review_user_prompt(request, candidate, detected_patterns)}\n\n"
+        f"{_message_feedback_review_user_prompt(request, candidate, score_evidence, detected_patterns)}\n\n"
         "Invalid final JSON:\n"
         f"{invalid_review_json}\n\n"
         "Validation failure:\n"

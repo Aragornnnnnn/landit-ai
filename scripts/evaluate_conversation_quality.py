@@ -127,11 +127,20 @@ def _evaluate_feedback_case(
     expected_context_fit = case.get("expectedContextFit")
     expected_score_range = case.get("expectedMessageScoreRange")
     required_placeholders = case.get("requiredCorrectionPlaceholders", [])
+    required_placeholder_prefixes = case.get(
+        "requiredCorrectionPlaceholderPrefixes",
+        [],
+    )
     correction_expression = feedback.correctionExpression or ""
     missing_placeholders = [
         placeholder
         for placeholder in required_placeholders
         if placeholder not in correction_expression
+    ]
+    missing_placeholder_prefixes = [
+        prefix
+        for prefix in required_placeholder_prefixes
+        if prefix not in correction_expression
     ]
     feedback_text = "\n".join(
         value
@@ -156,7 +165,9 @@ def _evaluate_feedback_case(
         "run": run,
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
-        "reviewWasFallback": feedback_entry.review_was_fallback,
+        "candidateWasRepaired": feedback_entry.candidate_was_repaired,
+        "copyWasRepaired": feedback_entry.copy_was_repaired,
+        "copyWasFallback": feedback_entry.copy_was_fallback,
         "feedbackTypeMatchesExpectation": (
             feedback_type == expected_feedback_type
             if expected_feedback_type is not None
@@ -193,9 +204,12 @@ def _evaluate_feedback_case(
             else None
         ),
         "missingRequiredCorrectionPlaceholders": missing_placeholders,
+        "missingRequiredCorrectionPlaceholderPrefixes": missing_placeholder_prefixes,
         "foundForbiddenFeedbackTerms": found_forbidden_terms,
         "feedbackTextMatchesExpectation": (
-            not missing_placeholders and not found_forbidden_terms
+            not missing_placeholders
+            and not missing_placeholder_prefixes
+            and not found_forbidden_terms
         ),
         "validationError": None,
         "validationReason": None,
@@ -213,7 +227,9 @@ def _feedback_evaluation_error_result(
         "run": run,
         "expectedFeedbackType": case.get("expectedFeedbackType"),
         "feedbackType": None,
-        "reviewWasFallback": None,
+        "candidateWasRepaired": None,
+        "copyWasRepaired": None,
+        "copyWasFallback": None,
         "feedbackTypeMatchesExpectation": False,
         "scoreEvidence": None,
         "expectedContextFit": case.get("expectedContextFit"),
@@ -230,6 +246,7 @@ def _feedback_evaluation_error_result(
         "expectedFeedbackTypeMatched": False,
         "expectedScoreRangeMatched": False,
         "missingRequiredCorrectionPlaceholders": [],
+        "missingRequiredCorrectionPlaceholderPrefixes": [],
         "foundForbiddenFeedbackTerms": [],
         "feedbackTextMatchesExpectation": False,
         "validationError": type(error).__name__,

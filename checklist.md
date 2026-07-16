@@ -391,3 +391,14 @@
 - [x] 기존 설계 문서 갱신과 자체 검토.
 - [x] 사용자 설계 문서 검토 승인.
 - [x] 구현 계획 작성.
+- [x] 서버가 `scoreEvidence`로 `feedbackType`과 요청 `messageId`를 조립하도록 구현.
+- [x] 2차 문구 검수가 잠긴 점수와 유형을 변경하지 않도록 구현.
+- [x] 2차 생성·복구 실패 시 1차 후보를 cache에 저장하도록 구현.
+- [x] 대소문자·문장부호만 다른 교정과 표기 지적을 서버 검증으로 차단.
+- [x] 자연스러운 `like to + 동사`와 `like + -ing` 대안을 GOOD으로 정규화.
+- [x] 1차 후보의 명확한 NEEDS 누락 `positiveFeedback`을 중립 문구로 보완.
+- [x] 일반 플레이스홀더는 2차 문구 검수에서 복구하고 1차 후보 fallback은 유지.
+- [x] 품질 평가 결과를 `candidateWasRepaired`, `copyWasRepaired`, `copyWasFallback`으로 분리.
+- [x] 고정 7개 사례를 실제 `openai/gpt-5.4-mini`로 사례별 3회 재평가하고 발견 경계를 보정.
+- [x] 전체 unittest, compileall, pip check, OpenAPI 비노출, diff check 실행.
+- [ ] 비식별화한 전체 115개 실제 발화 fixture를 제공받으면 구조 실패·누락 피드백·복구율을 재측정.
