@@ -1467,6 +1467,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
             prompt,
         )
         self.assertIn(
+            "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question.",
+            prompt,
+        )
+        self.assertIn(
             "The current evaluation context is the only source of core asks.",
             prompt,
         )

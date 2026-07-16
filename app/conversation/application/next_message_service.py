@@ -1389,6 +1389,7 @@ def _message_feedback_judgement_system_prompt(
             "contextFit is 2 only when every core ask is answered, 1 when some but not all are answered, and 0 when none are answered. "
             "clarity is 2 when the meaning is understandable without guesswork, 1 when some inference is needed, and 0 when the meaning is hard to understand. "
             "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
+            "Judge languageAccuracy only from the form and wording of the exact user utterance, never from whether it answers the question. "
             "Do not lower any score for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative alone. "
             "A short noun phrase can fully answer a what-question. "
             "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
