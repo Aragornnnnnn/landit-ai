@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from json import JSONDecodeError
 from pathlib import Path
@@ -104,6 +105,21 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
 
 _BENCHMARK_PATTERN_CATALOG = _load_benchmark_pattern_catalog()
 logger = logging.getLogger(__name__)
+
+_WRITTEN_FORM_FEEDBACK_TERMS = (
+    "대문자",
+    "소문자",
+    "쉼표",
+    "마침표",
+    "문장부호",
+    "capitalization",
+    "uppercase",
+    "lowercase",
+    "comma",
+    "period",
+    "punctuation",
+    "full stop",
+)
 
 @dataclass(frozen=True)
 class _MessageFeedbackCacheEntry:
@@ -396,6 +412,41 @@ def _assemble_message_feedback(
         feedbackType=feedback_type,
         **feedback_values,
     )
+
+
+def _normalize_spoken_form(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    without_punctuation = "".join(
+        " " if unicodedata.category(character).startswith("P") else character
+        for character in normalized
+    )
+    return " ".join(without_punctuation.split())
+
+
+def _validate_spoken_message_feedback(
+    feedback: MessageFeedbackData,
+    user_message: str,
+) -> None:
+    feedback_text = " ".join(
+        value
+        for value in (
+            feedback.baseLocaleAnalogy,
+            feedback.positiveFeedback,
+            feedback.feedbackDetail,
+            feedback.correctionReason,
+            feedback.benchmarkMessage,
+        )
+        if value is not None
+    ).casefold()
+    if any(term in feedback_text for term in _WRITTEN_FORM_FEEDBACK_TERMS):
+        raise AiResponseInvalidError("message_feedback_written_form_feedback")
+    if (
+        feedback.feedbackType == FeedbackType.NEEDS_IMPROVEMENT
+        and feedback.correctionExpression is not None
+        and _normalize_spoken_form(feedback.correctionExpression)
+        == _normalize_spoken_form(user_message)
+    ):
+        raise AiResponseInvalidError("message_feedback_spoken_form_only")
 
 
 def _message_feedback_validation_reason(error: ValidationError) -> str:

@@ -646,6 +646,52 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
+    def test_message_feedback_rejects_written_form_feedback_reason(self):
+        payload = needs_improvement_message_feedback(1001)
+        payload.pop("scoreEvidence")
+        payload["correctionExpression"] = "Hi, my name is Sangmin."
+        payload["correctionReason"] = (
+            "인사 뒤에 쉼표를 넣고 이름을 대문자로 쓰면 자연스러워요."
+        )
+        feedback = conversation_models.MessageFeedbackData.model_validate(payload)
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_written_form_feedback",
+        ):
+            next_message_service._validate_spoken_message_feedback(
+                feedback,
+                "hi my name is sangmin",
+            )
+
+    def test_message_feedback_rejects_case_and_punctuation_only_correction(self):
+        payload = needs_improvement_message_feedback(1001)
+        payload.pop("scoreEvidence")
+        payload["correctionExpression"] = "Hi, my name is Sangmin."
+        payload["correctionReason"] = "이름을 자연스럽게 소개할 수 있어요."
+        feedback = conversation_models.MessageFeedbackData.model_validate(payload)
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_spoken_form_only",
+        ):
+            next_message_service._validate_spoken_message_feedback(
+                feedback,
+                "hi my name is sangmin",
+            )
+
+    def test_message_feedback_accepts_spoken_word_correction(self):
+        payload = needs_improvement_message_feedback(1001)
+        payload.pop("scoreEvidence")
+        payload["correctionExpression"] = "I don't like pizza."
+        payload["correctionReason"] = "부정할 때 don't를 넣어 뜻을 분명히 해요."
+        feedback = conversation_models.MessageFeedbackData.model_validate(payload)
+
+        next_message_service._validate_spoken_message_feedback(
+            feedback,
+            "I no like pizza",
+        )
+
     def test_message_feedback_assembles_good_from_score_and_discards_needs_fields(self):
         content = conversation_models.MessageFeedbackContent.model_validate(
             {
