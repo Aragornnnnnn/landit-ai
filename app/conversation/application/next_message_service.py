@@ -22,8 +22,10 @@ from app.models.conversation import (
     InnerThoughtRequest,
     InnerThoughtResponse,
     MessageFeedbackData,
+    MessageFeedbackEvaluation,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
+    MessageFeedbackScoreEvidence,
     NextMessageRequest,
     NextMessageResponse,
     SessionFeedbackRequest,
@@ -38,6 +40,7 @@ _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS = 3 * 60 * 60
 @dataclass(frozen=True)
 class _MessageFeedbackCacheEntry:
     feedback: MessageFeedbackData
+    score_evidence: MessageFeedbackScoreEvidence
     user_message: str
     expires_at: float
 
@@ -143,9 +146,13 @@ def generate_message_feedback(
     )
     data.pop("detectedPatterns", None)
     try:
-        feedback = MessageFeedbackData.model_validate(data)
+        evaluation = MessageFeedbackEvaluation.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
+
+    feedback = MessageFeedbackData.model_validate(
+        evaluation.model_dump(exclude={"scoreEvidence"}),
+    )
 
     if feedback.messageId != request.messageId:
         raise AiResponseInvalidError
@@ -153,6 +160,7 @@ def generate_message_feedback(
     _store_message_feedback(
         request.sessionId,
         feedback,
+        score_evidence=evaluation.scoreEvidence,
         user_message=request.userMessage,
     )
     return MessageFeedbackResponse(
@@ -189,7 +197,7 @@ def generate_session_feedback(
     response = SessionFeedbackResponse(
         sessionId=request.sessionId,
         nativeScore=native_score,
-        starRating=_star_rating_from_native_score(native_score),
+        starRating=_star_rating_from_native_score(native_score, feedback_entries),
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
@@ -373,6 +381,7 @@ def _store_message_feedback(
     session_id: int,
     feedback: MessageFeedbackData,
     *,
+    score_evidence: MessageFeedbackScoreEvidence,
     user_message: str,
     now: float | None = None,
 ) -> None:
@@ -382,6 +391,7 @@ def _store_message_feedback(
         session_feedbacks = _message_feedback_cache.setdefault(session_id, {})
         session_feedbacks[feedback.messageId] = _MessageFeedbackCacheEntry(
             feedback=feedback,
+            score_evidence=score_evidence,
             user_message=user_message,
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
         )
@@ -418,111 +428,46 @@ def _native_score_from_message_feedback_entries(
     if not feedback_entries:
         return 0
 
-    # ponytail: cache-only heuristic이다. 더 정교한 점수 근거가 필요해지면 피드백 캐시에 evidence를 추가한다.
-    good_count = sum(
-        1
+    message_scores = [
+        _message_score_from_evidence(entry.score_evidence)
         for entry in feedback_entries
-        if entry.feedback.feedbackType == FeedbackType.GOOD
+    ]
+    total_score = sum(message_scores)
+    message_count = len(message_scores)
+    return (total_score * 2 + message_count) // (message_count * 2)
+
+
+def _message_score_from_evidence(evidence: MessageFeedbackScoreEvidence) -> int:
+    weighted_score = (
+        evidence.contextFit * 20
+        + evidence.clarity * 15
+        + evidence.languageAccuracy * 15
     )
-    if good_count == 0:
-        return 50
-
-    attempted_word_score = round(
-        sum(_attempted_word_score(entry.user_message) for entry in feedback_entries)
-        / len(feedback_entries),
-    )
-    sentence_complexity_score = round(
-        sum(_sentence_complexity_score(entry.user_message) for entry in feedback_entries)
-        / len(feedback_entries),
-    )
-    comprehensibility_score = round(
-        sum(_comprehensibility_score(entry.feedback) for entry in feedback_entries)
-        / len(feedback_entries),
-    )
-    raw_score = round(
-        attempted_word_score * 0.2
-        + sentence_complexity_score * 0.3
-        + comprehensibility_score * 0.5,
-    )
-    band_min, band_max = _native_score_band_for_good_count(good_count)
-    return _clamp_score(raw_score, band_min, band_max)
+    return max(50, weighted_score)
 
 
-def _attempted_word_score(user_message: str) -> int:
-    return _clamp_score(len(_english_words(user_message)) * 8, 0, 100)
-
-
-def _sentence_complexity_score(user_message: str) -> int:
-    words = _english_words(user_message)
-    normalized = f" {_normalize_visible_text(user_message)} "
-    score = 35
-    if len(words) >= 6:
-        score += 10
-    if len(words) >= 10:
-        score += 10
-    if any(marker in normalized for marker in [" because ", " since ", " and ", " but ", " so "]):
-        score += 15
-    if any(marker in normalized for marker in [" would ", " could ", " should ", " have ", " has "]):
-        score += 10
-    if _contains_indirect_question_pattern(normalized):
-        score += 20
-    return _clamp_score(score, 0, 100)
-
-
-def _comprehensibility_score(feedback: MessageFeedbackData) -> int:
-    if feedback.feedbackType == FeedbackType.GOOD:
-        return 90
-    return 65
-
-
-def _native_score_band_for_good_count(good_count: int) -> tuple[int, int]:
-    if good_count == 1:
-        return (55, 64)
-    if good_count == 2:
-        return (65, 74)
-    if good_count == 3:
-        return (75, 89)
-    return (90, 100)
-
-
-def _star_rating_from_native_score(native_score: int) -> float:
+def _star_rating_from_native_score(
+    native_score: int,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> float:
     if native_score <= 54:
-        return 1.0
-    if native_score <= 64:
-        return 1.5
-    if native_score <= 74:
-        return 2.0
-    if native_score <= 89:
-        return 2.5
-    return 3.0
+        star_rating = 1.0
+    elif native_score <= 64:
+        star_rating = 1.5
+    elif native_score <= 74:
+        star_rating = 2.0
+    elif native_score <= 89:
+        star_rating = 2.5
+    else:
+        star_rating = 3.0
 
-
-def _english_words(user_message: str) -> list[str]:
-    return re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", user_message)
-
-
-def _normalize_visible_text(value: str) -> str:
-    return " ".join(value.lower().split())
-
-
-def _contains_indirect_question_pattern(normalized_message: str) -> bool:
-    return any(
-        marker in normalized_message
-        for marker in [
-            " know what ",
-            " know where ",
-            " know why ",
-            " know how ",
-            " wonder what ",
-            " wonder where ",
-            " wonder why ",
-            " wonder how ",
-        ]
+    good_count = sum(
+        entry.feedback.feedbackType == FeedbackType.GOOD
+        for entry in feedback_entries
     )
-
-
-def _clamp_score(value: int, minimum: int, maximum: int) -> int:
-    return max(minimum, min(maximum, value))
+    if len(feedback_entries) >= 3 and good_count * 3 <= len(feedback_entries):
+        return min(star_rating, 2.0)
+    return star_rating
 
 
 def _next_message_system_prompt() -> str:
@@ -949,6 +894,21 @@ def _message_feedback_system_prompt(
             + _message_feedback_judgement_policy(evaluation_context_type)
         ),
         (
+            "Scoring Evidence Policy:\n"
+            "scoreEvidence is required and rates the user utterance with integer values 0, 1, or 2. "
+            "contextFit measures whether the utterance fulfills the evaluation context: 2 fully, 1 partially, 0 not at all. "
+            "clarity measures whether the meaning is understandable: 2 without guesswork, 1 with some inference, 0 hard to understand. "
+            "languageAccuracy measures grammar, word choice, nuance, and politeness: 2 no actionable issue, 1 one minor issue while meaning remains clear, 0 a major issue. "
+            "Do not reward length, complexity, or advanced vocabulary by itself. "
+            "A short answer can receive 2 in every category when it is the best response for the context. "
+            "A short noun phrase can fully answer a what-question. "
+            "An answer that clearly satisfies either branch of an or-question has contextFit=2. "
+            "Do not lower contextFit or clarity solely because of an actionable grammar, word-choice, nuance, or politeness issue. "
+            "A hostile or dismissive reply to the counterpart has languageAccuracy=1 even when the meaning is clear. "
+            "GOOD requires contextFit=2, clarity=2, and languageAccuracy=2. "
+            "NEEDS_IMPROVEMENT requires at least one score below 2."
+        ),
+        (
             "Field Policy:\n"
             "baseLocaleAnalogy is required for every response and should explain how the English sounds through a Korean analogy. "
             "baseLocaleAnalogy must not start with Korean framing phrases such as '한국어로 비유하자면', '한국어로 비유하면', or '한국어로 치면'. "
@@ -977,13 +937,15 @@ def _message_feedback_system_prompt(
             "4. baseLocaleAnalogy sounds like a Korean analogy, not a correction explanation. "
             "5. GOOD feedbackDetail is Korean and matches the feedbackType. "
             "6. NEEDS_IMPROVEMENT correctionReason explains the issue and correction direction without arrow notation or repeating correctionExpression. "
-            "7. No legacy fields are present."
+            "7. scoreEvidence contains contextFit, clarity, and languageAccuracy with integer values from 0 to 2. "
+            "8. GOOD has three scores of 2, and NEEDS_IMPROVEMENT has at least one score below 2. "
+            "9. No legacy fields are present."
         ),
         _message_feedback_examples(evaluation_context_type),
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD|NEEDS_IMPROVEMENT","baseLocaleAnalogy":"...","positiveFeedback":null,"feedbackDetail":"GOOD explanation or null","correctionExpression":"improved English expression or null","correctionReason":"Korean correction reason or null","benchmarkMessage":"short Korean feedback sentence for GOOD or null for NEEDS_IMPROVEMENT"}. '
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD|NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"...","positiveFeedback":null,"feedbackDetail":"GOOD explanation or null","correctionExpression":"improved English expression or null","correctionReason":"Korean correction reason or null","benchmarkMessage":"short Korean feedback sentence for GOOD or null for NEEDS_IMPROVEMENT"}. '
             "Return one JSON object, not an array. "
             "messageId is a server identifier, not a value to infer. Copy it exactly."
         ),
@@ -1019,6 +981,7 @@ def _message_feedback_judgement_policy(
         "Preserve the user's apparent intent when the intent fits the evaluation context. "
         "More detail alone is not an actionable issue; a short direct utterance can be GOOD. "
         "Do not mark a clear and context-appropriate casual utterance as NEEDS_IMPROVEMENT solely because it sounds direct. "
+        "The directness exception does not apply to hostile or dismissive replies to the counterpart. "
         "Use the provided Counterpart role when judging nuance, politeness, and situation fit. "
         "A professor, friend, roommate, cafe staff, or stranger may interpret the same sentence differently. "
         "When several issues exist, handle the most important one first. "
@@ -1054,18 +1017,24 @@ def _message_feedback_examples(
         return (
             "AI_MESSAGE Feedback Examples:\n"
             "GOOD JSON example for user utterance 'I ate an apple because I was hungry.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"사과 하나를 먹었어요. 배고파서요\\"라고 이유를 바로 붙여 말하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"먹은 것과 이유를 because로 자연스럽게 연결해서 상대가 답변의 핵심을 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"이유를 자연스럽게 붙여 말했어요."}\n'
             "GOOD JSON example after a friend asks for personal information without explaining why: user utterance 'What do you need it for?': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"그걸 어디에 쓸 건데?\\"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"필요한 이유를 자연스럽게 확인했어요."}\n'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"그걸 어디에 쓸 건데?\\"라고 친구에게 이유를 자연스럽게 묻는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"친구에게 필요한 이유를 가볍게 확인하는 자연스러운 구어체예요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"필요한 이유를 자연스럽게 확인했어요."}\n'
+            "GOOD JSON example after a friend asks about usual hobbies or something new to try: user utterance 'I want to learn pottery.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"도예를 배워보고 싶어\\"라고 해보고 싶은 일을 바로 답하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"질문이 제시한 두 방향 중 해보고 싶은 일을 자연스럽게 골라 답했어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"해보고 싶은 일을 자연스럽게 답했어요."}\n'
             "NEEDS_IMPROVEMENT JSON example for user utterance 'I like pizza because spicy.': "
-            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"피자를 좋아해요. 매워서\\"라고 이유를 끝맺지 못한 것과 같아요.","positiveFeedback":"좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I like pizza because it is spicy.","correctionReason":"because 뒤에는 이유를 설명하는 절이 필요해요. it is spicy를 붙이면 좋아하는 이유가 완전한 문장이 돼요.","benchmarkMessage":null}'
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"피자를 좋아해요. 매워서\\"라고 이유를 끝맺지 못한 것과 같아요.","positiveFeedback":"좋아하는 음식과 이유를 함께 말하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"I like pizza because it is spicy.","correctionReason":"because 뒤에는 이유를 설명하는 절이 필요해요. it is spicy를 붙이면 좋아하는 이유가 완전한 문장이 돼요.","benchmarkMessage":null}'
+            "\nNEEDS_IMPROVEMENT JSON example after a roommate asks about guests: user utterance 'I hate having guests.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"손님 오는 건 질색이야\\"라고 바로 잘라 말하는 것과 같아요.","positiveFeedback":"손님에 대한 자신의 기준을 분명히 말한 점은 좋아요.","feedbackDetail":null,"correctionExpression":"I’d rather not have guests in the room.","correctionReason":"상대의 제안을 거칠게 거절하기보다, 원하는 경계를 부드럽게 말하면 룸메이트와 기준을 조율하기 더 자연스러워요.","benchmarkMessage":null}'
+            "\nNEEDS_IMPROVEMENT JSON example after a friend asks what study setup helps: user utterance 'Total quiet condition.': "
+            '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":1},"baseLocaleAnalogy":"\\"완전 조용한 조건\\"이라고 답하는 것과 같아요.","positiveFeedback":"집중하려면 조용해야 한다는 뜻은 분명히 전달했어요.","feedbackDetail":null,"correctionExpression":"I need total silence.","correctionReason":"질문에는 충분히 답했지만, condition보다 silence를 쓰고 문장으로 말하면 더 자연스러워요.","benchmarkMessage":null}'
         )
     return (
         "SCENARIO_OPENING_INSTRUCTION Feedback Examples:\n"
         "GOOD JSON example for user utterance 'Can I get an iced americano?': "
-        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","baseLocaleAnalogy":"\\"아이스 아메리카노 한 잔 주세요\\"라고 자연스럽게 주문하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"원하는 음료를 공손하게 주문했어요."}\n'
+        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"GOOD","scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"아이스 아메리카노 한 잔 주세요\\"라고 자연스럽게 주문하는 것과 같아요.","positiveFeedback":null,"feedbackDetail":"원하는 음료를 공손하게 주문해서 점원이 바로 이해할 수 있어요.","correctionExpression":null,"correctionReason":null,"benchmarkMessage":"원하는 음료를 공손하게 주문했어요."}\n'
         "NEEDS_IMPROVEMENT JSON example for user utterance 'I like soccer.': "
-        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","baseLocaleAnalogy":"\\"저는 축구를 좋아해요\\"라고 음료 주문 안내에 다른 이야기를 꺼내는 것과 같아요.","positiveFeedback":"먼저 영어로 말을 시작하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"Can I get an iced americano?","correctionReason":"I like soccer.는 문법적으로 맞지만 음료를 주문하라는 시작 안내를 수행하지 못해요. 원하는 음료를 바로 요청하는 표현으로 바꾸면 상황에 맞아요.","benchmarkMessage":null}'
+        '{"messageId":"copy the exact Message ID from the user message","feedbackType":"NEEDS_IMPROVEMENT","scoreEvidence":{"contextFit":0,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"\\"저는 축구를 좋아해요\\"라고 음료 주문 안내에 다른 이야기를 꺼내는 것과 같아요.","positiveFeedback":"먼저 영어로 말을 시작하려는 시도는 좋아요.","feedbackDetail":null,"correctionExpression":"Can I get an iced americano?","correctionReason":"I like soccer.는 문법적으로 맞지만 음료를 주문하라는 시작 안내를 수행하지 못해요. 원하는 음료를 바로 요청하는 표현으로 바꾸면 상황에 맞아요.","benchmarkMessage":null}'
     )
 
 
