@@ -242,3 +242,14 @@
 - `inner-thought`는 같은 대화 컨텍스트에서 독립적으로 호출하며 마지막 USER 메시지만 평가 대상으로 삼는다.
 - LLM 출력은 `innerThought`, `innerThoughtType`으로 제한하고, API 응답의 `sessionId`, `messageId`는 요청 식별자에서 조립한다.
 - AI 서버는 상태를 저장하지 않는다. BE가 병렬 호출, `PREPARING` 이후 상태 전환, 중복 호출 방지, 최초 성공 결과 저장을 담당한다.
+
+## 2026-07-16 LAN-166 메시지 평가 근거 기반 세션 점수 산정
+
+- 현재 점수는 `GOOD` 절대 개수로 점수 밴드를 정해 짧지만 상황에 맞는 답변과 긴 답변의 사소한 오류를 충분히 구분하지 못한다.
+- 단어 수와 특정 연결 표현은 상황상 짧게 답해야 하는 메시지를 불리하게 만들 수 있어 점수 근거에서 제거한다.
+- 메시지별 내부 평가 근거는 `contextFit`, `clarity`, `languageAccuracy`를 각각 0~2로 생성한다.
+- 메시지 점수는 `contextFit * 20 + clarity * 15 + languageAccuracy * 15`로 계산하고 완료한 발화는 50~100으로 제한한다.
+- `GOOD`은 세 항목이 모두 2일 때만 허용한다. 하나라도 2보다 낮으면 `NEEDS_IMPROVEMENT`로 처리해 피드백과 점수가 같은 판단 근거를 사용하게 한다.
+- 세 평가 근거는 strict integer로 검증해 문자열, 실수, 불리언의 점수 강제 변환을 허용하지 않는다.
+- 세션 `nativeScore`는 메시지 점수 평균을 반올림한다. 기존 점수별 `starRating` 매핑과 외부 API 계약은 유지한다.
+- 평가 근거는 AI 서버의 메시지 피드백 cache entry에만 저장하고 외부 응답과 OpenAPI 스키마에는 노출하지 않는다. 백엔드 DTO와 DB schema는 변경하지 않는다.
