@@ -118,6 +118,8 @@ NEEDS_IMPROVEMENT 문구는 다음 조건을 추가로 검증한다.
 
 `What do you like about ...?`에 `This is so cool`처럼 지시 대상의 특징을 구체화하지 않은 평가로 답하면 질문에는 반응했으므로 `contextFit=2`를 유지하되 상대가 의미를 추측해야 하므로 `clarity=1`로 판정한다. 이 경계는 서버가 판정 근거에서 결정적으로 정규화한다. 이를 문법 오류로 취급하지 않으며 `languageAccuracy=2`와 `languageCorrections=[]`를 유지한다.
 
+모델이 같은 일반 평가를 미응답으로 분류하더라도 서버가 실제 사용자 발화에서 평가 구간을 추출해 해당 핵심 요청을 answered 상태로 정규화한다. 부정문에 포함된 일반 평가는 긍정 답변으로 추론하지 않는다.
+
 ### 교정 표현의 허용 어휘
 
 NEEDS_IMPROVEMENT 교정 표현은 답했다고 판정한 각 핵심 요청의 evidence에서 기능어를 제외한 핵심 단어를 하나 이상 유지해야 한다. `This is so cool`을 `it helps me relax`로 바꾸는 것처럼 근거의 핵심 단어가 전부 사라지면 `message_feedback_copy_unsupported_content`로 문구 후보를 거부하고 기존 문구 복구를 한 번 수행한다.

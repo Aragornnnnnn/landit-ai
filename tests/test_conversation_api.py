@@ -1318,7 +1318,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 unsupported_feedback,
             )
 
-    def test_message_feedback_judgement_rejects_missed_evaluation_answer(self):
+    def test_message_feedback_judgement_normalizes_missed_evaluation_answer(self):
         payload = valid_message_feedback_payload()
         payload["evaluationContext"]["content"] = (
             "What do you like about reading?"
@@ -1339,14 +1339,16 @@ class MessageFeedbackApiTests(unittest.TestCase):
             stated_facts=["I like reading a book.", "This is so cool."],
         )
 
-        with self.assertRaisesRegex(
-            next_message_service.AiResponseInvalidError,
-            "message_feedback_judgement_missed_evaluation_answer",
-        ):
-            next_message_service._parse_message_feedback_judgement(
-                judgement_data,
-                request,
-            )
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertTrue(judgement.coreAsks[0].addressed)
+        self.assertEqual(judgement.coreAsks[0].evidence, "This is so cool")
+        self.assertIsNone(judgement.coreAsks[0].requiredPlaceholder)
+        self.assertEqual(judgement.scoreEvidence.contextFit, 2)
+        self.assertEqual(judgement.scoreEvidence.clarity, 1)
 
     def test_message_feedback_copy_preserves_addressed_evidence_words(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(

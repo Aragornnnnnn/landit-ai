@@ -1097,6 +1097,10 @@ Expected: PASS while the public response and normal two-call path remain unchang
 
 `like to watch`와 `like watching` 사이의 교체만 언어 문제로 제시되면 해당 correction을 제거하고 다른 문제가 없을 때 `languageAccuracy=2`로 정규화한다.
 
+- [x] **Step 10: 일반 평가의 미응답 판정을 결정적으로 보정한다.**
+
+what-do-you-like-about 요청에 대한 긍정적인 일반 평가 구간을 실제 발화에서 추출해 addressed evidence로 사용하고 `contextFit`과 `clarity`를 서버에서 다시 계산한다.
+
 ### Task 14: 운영 배포 gate를 다시 검증한다
 
 **Files**

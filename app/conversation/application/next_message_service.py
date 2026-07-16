@@ -427,13 +427,10 @@ def _parse_message_feedback_judgement(
         for core_ask in judgement.coreAsks
     ):
         raise AiResponseInvalidError("message_feedback_judgement_bare_reason")
-    if any(
-        _is_missed_evaluation_answer(core_ask, request.userMessage)
-        for core_ask in judgement.coreAsks
-    ):
-        raise AiResponseInvalidError(
-            "message_feedback_judgement_missed_evaluation_answer",
-        )
+    judgement = _with_generic_evaluation_answers(
+        judgement,
+        request.userMessage,
+    )
     if (
         judgement.scoreEvidence.clarity == 2
         and any(
@@ -1015,20 +1012,68 @@ def _gerund_matches_verb(verb: str, gerund: str) -> bool:
     return gerund in candidates
 
 
-def _is_missed_evaluation_answer(
-    core_ask: MessageFeedbackCoreAsk,
+def _with_generic_evaluation_answers(
+    judgement: MessageFeedbackJudgement,
     user_message: str,
-) -> bool:
-    if core_ask.addressed:
-        return False
-    normalized_ask = core_ask.ask.casefold()
-    asks_what_is_liked = "what" in normalized_ask and (
+) -> MessageFeedbackJudgement:
+    evidence = _generic_evaluation_evidence(user_message)
+    if evidence is None:
+        return judgement
+    normalized_core_asks = [
+        core_ask.model_copy(
+            update={
+                "addressed": True,
+                "evidence": evidence,
+                "requiredPlaceholder": None,
+            },
+        )
+        if not core_ask.addressed and _asks_what_is_liked(core_ask.ask)
+        else core_ask
+        for core_ask in judgement.coreAsks
+    ]
+    if normalized_core_asks == judgement.coreAsks:
+        return judgement
+    addressed_count = sum(core_ask.addressed for core_ask in normalized_core_asks)
+    context_fit = (
+        2
+        if addressed_count == len(normalized_core_asks)
+        else 1
+        if addressed_count > 0
+        else 0
+    )
+    return judgement.model_copy(
+        update={
+            "coreAsks": normalized_core_asks,
+            "scoreEvidence": judgement.scoreEvidence.model_copy(
+                update={
+                    "contextFit": context_fit,
+                    "clarity": min(judgement.scoreEvidence.clarity, 1),
+                },
+            ),
+        },
+    )
+
+
+def _generic_evaluation_evidence(user_message: str) -> str | None:
+    pattern = re.compile(
+        r"\b(?:this|that|it)(?:'s|\s+is)\s+"
+        r"(?:(?:so|very|really)\s+)?"
+        r"(?:awesome|best|cool|good|great|nice)\b",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(user_message):
+        prefix = user_message[max(0, match.start() - 24):match.start()].casefold()
+        if re.search(r"(?:don't|do not|not)\s+(?:think\s+)?$", prefix):
+            continue
+        return match.group(0)
+    return None
+
+
+def _asks_what_is_liked(ask: str) -> bool:
+    normalized_ask = ask.casefold()
+    return "what" in normalized_ask and (
         "like about" in normalized_ask or "love about" in normalized_ask
     )
-    if not asks_what_is_liked:
-        return False
-    user_words = _meaningful_evidence_words(user_message)
-    return bool(user_words & _GENERIC_EVALUATION_WORDS)
 
 
 def _is_vague_generic_evaluation_answer(
@@ -1036,11 +1081,7 @@ def _is_vague_generic_evaluation_answer(
 ) -> bool:
     if not core_ask.addressed or core_ask.evidence is None:
         return False
-    normalized_ask = core_ask.ask.casefold()
-    asks_what_is_liked = "what" in normalized_ask and (
-        "like about" in normalized_ask or "love about" in normalized_ask
-    )
-    if not asks_what_is_liked:
+    if not _asks_what_is_liked(core_ask.ask):
         return False
     normalized_evidence = core_ask.evidence.casefold().strip(" .!?,'\"")
     return re.fullmatch(
