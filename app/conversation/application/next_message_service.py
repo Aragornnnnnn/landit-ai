@@ -23,6 +23,7 @@ from app.models.conversation import (
     InnerThoughtData,
     InnerThoughtRequest,
     InnerThoughtResponse,
+    MessageFeedbackContent,
     MessageFeedbackData,
     MessageFeedbackEvaluation,
     MessageFeedbackRequest,
@@ -356,6 +357,45 @@ def _parse_message_feedback_candidate(
     if evaluation.messageId != expected_message_id:
         raise AiResponseInvalidError("message_feedback_message_id")
     return evaluation, detected_patterns
+
+
+def _feedback_type_from_score_evidence(
+    score_evidence: MessageFeedbackScoreEvidence,
+) -> FeedbackType:
+    scores = (
+        score_evidence.contextFit,
+        score_evidence.clarity,
+        score_evidence.languageAccuracy,
+    )
+    if all(score == 2 for score in scores):
+        return FeedbackType.GOOD
+    return FeedbackType.NEEDS_IMPROVEMENT
+
+
+def _assemble_message_feedback(
+    content: MessageFeedbackContent,
+    *,
+    message_id: int,
+    score_evidence: MessageFeedbackScoreEvidence,
+) -> MessageFeedbackData:
+    feedback_values = content.model_dump()
+    feedback_type = _feedback_type_from_score_evidence(score_evidence)
+    if feedback_type == FeedbackType.GOOD:
+        feedback_values.update(
+            positiveFeedback=None,
+            correctionExpression=None,
+            correctionReason=None,
+        )
+    else:
+        feedback_values.update(
+            feedbackDetail=None,
+            benchmarkMessage=None,
+        )
+    return MessageFeedbackData(
+        messageId=message_id,
+        feedbackType=feedback_type,
+        **feedback_values,
+    )
 
 
 def _message_feedback_validation_reason(error: ValidationError) -> str:

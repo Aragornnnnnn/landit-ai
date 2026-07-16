@@ -646,6 +646,63 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
+    def test_message_feedback_assembles_good_from_score_and_discards_needs_fields(self):
+        content = conversation_models.MessageFeedbackContent.model_validate(
+            {
+                "baseLocaleAnalogy": "질문에 맞게 자연스럽게 답했어요.",
+                "positiveFeedback": "이 값은 제거되어야 해요.",
+                "feedbackDetail": "핵심을 자연스럽게 전달했어요.",
+                "correctionExpression": "Written-only correction.",
+                "correctionReason": "이 값도 제거되어야 해요.",
+                "benchmarkMessage": "질문에 맞는 핵심을 자연스럽게 전달했어요.",
+            },
+        )
+        score_evidence = conversation_models.MessageFeedbackScoreEvidence(
+            contextFit=2,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        feedback = next_message_service._assemble_message_feedback(
+            content,
+            message_id=1001,
+            score_evidence=score_evidence,
+        )
+
+        self.assertEqual(feedback.messageId, 1001)
+        self.assertEqual(feedback.feedbackType.value, "GOOD")
+        self.assertIsNone(feedback.positiveFeedback)
+        self.assertIsNone(feedback.correctionExpression)
+        self.assertIsNone(feedback.correctionReason)
+
+    def test_message_feedback_assembles_needs_from_score_and_discards_good_fields(self):
+        content = conversation_models.MessageFeedbackContent.model_validate(
+            {
+                "baseLocaleAnalogy": "질문의 일부만 답한 상황이에요.",
+                "positiveFeedback": "핵심 단어를 말한 점은 좋아요.",
+                "feedbackDetail": "이 값은 제거되어야 해요.",
+                "correctionExpression": "I like [your hobby] because [your reason].",
+                "correctionReason": "빠진 이유를 덧붙여 보세요.",
+                "benchmarkMessage": "이 값도 제거되어야 해요.",
+            },
+        )
+        score_evidence = conversation_models.MessageFeedbackScoreEvidence(
+            contextFit=1,
+            clarity=2,
+            languageAccuracy=2,
+        )
+
+        feedback = next_message_service._assemble_message_feedback(
+            content,
+            message_id=1001,
+            score_evidence=score_evidence,
+        )
+
+        self.assertEqual(feedback.messageId, 1001)
+        self.assertEqual(feedback.feedbackType.value, "NEEDS_IMPROVEMENT")
+        self.assertIsNone(feedback.feedbackDetail)
+        self.assertIsNone(feedback.benchmarkMessage)
+
     def test_message_feedback_evaluation_rejects_type_and_score_mismatch(self):
         payload = good_message_feedback()
         payload["scoreEvidence"] = {

@@ -285,11 +285,9 @@ class MessageFeedbackResponse(BaseModel):
     feedbackStatus: FeedbackStatus
 
 
-class MessageFeedbackData(BaseModel):
+class MessageFeedbackContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    messageId: int = Field(gt=0)
-    feedbackType: FeedbackType
     baseLocaleAnalogy: str
     positiveFeedback: str | None = None
     feedbackDetail: str | None = None
@@ -344,6 +342,11 @@ class MessageFeedbackData(BaseModel):
             )
         return value
 
+
+class MessageFeedbackData(MessageFeedbackContent):
+    messageId: int = Field(gt=0)
+    feedbackType: FeedbackType
+
     @model_validator(mode="after")
     def feedback_fields_must_match_type(self) -> Self:
         if self.feedbackType == FeedbackType.NEEDS_IMPROVEMENT:
@@ -376,6 +379,10 @@ class MessageFeedbackScoreEvidence(BaseModel):
     contextFit: int = Field(strict=True, ge=0, le=2)
     clarity: int = Field(strict=True, ge=0, le=2)
     languageAccuracy: int = Field(strict=True, ge=0, le=2)
+
+
+class MessageFeedbackCandidate(MessageFeedbackContent):
+    scoreEvidence: MessageFeedbackScoreEvidence
 
 
 class MessageFeedbackEvaluation(MessageFeedbackData):
