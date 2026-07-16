@@ -423,6 +423,10 @@ def _parse_message_feedback_judgement(
             )
     judgement = _without_natural_preference_alternative_corrections(judgement)
     judgement = _with_explicit_non_answer(judgement, request.userMessage)
+    judgement = _with_required_reason_ask(
+        judgement,
+        request.evaluationContext.content,
+    )
     judgement = _with_inferred_required_placeholders(judgement)
     if any(
         _is_bare_evaluation_reason(core_ask)
@@ -1112,6 +1116,35 @@ def _with_explicit_non_answer(
     )
 
 
+def _with_required_reason_ask(
+    judgement: MessageFeedbackJudgement,
+    evaluation_content: str,
+) -> MessageFeedbackJudgement:
+    if not _asks_for_preference_reason(evaluation_content) or any(
+        _asks_for_preference_reason(core_ask.ask)
+        for core_ask in judgement.coreAsks
+    ):
+        return judgement
+    core_asks = [
+        *judgement.coreAsks,
+        MessageFeedbackCoreAsk(
+            ask="what do you love about it",
+            addressed=False,
+            evidence=None,
+            requiredPlaceholder="[your reason]",
+        ),
+    ]
+    context_fit = 1 if any(core_ask.addressed for core_ask in core_asks) else 0
+    return judgement.model_copy(
+        update={
+            "coreAsks": core_asks,
+            "scoreEvidence": judgement.scoreEvidence.model_copy(
+                update={"contextFit": context_fit},
+            ),
+        },
+    )
+
+
 def _required_placeholder_for_ask(ask: str) -> str | None:
     normalized_ask = ask.casefold()
     if "clean" in normalized_ask and "split" in normalized_ask:
@@ -1297,6 +1330,18 @@ def _asks_what_is_liked(ask: str) -> bool:
     normalized_ask = ask.casefold()
     return "what" in normalized_ask and (
         "like about" in normalized_ask or "love about" in normalized_ask
+    )
+
+
+def _asks_for_preference_reason(ask: str) -> bool:
+    normalized_ask = ask.casefold()
+    return (
+        _asks_what_is_liked(ask)
+        or "reason" in normalized_ask
+        or (
+            "why" in normalized_ask
+            and ("like" in normalized_ask or "love" in normalized_ask)
+        )
     )
 
 

@@ -1288,6 +1288,42 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(judgement.scoreEvidence.clarity, 1)
         self.assertEqual(judgement.scoreEvidence.languageAccuracy, 2)
 
+    def test_message_feedback_judgement_restores_omitted_reason_question(self):
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = (
+            "What are you into? What do you love about it?"
+        )
+        payload["userMessage"] = (
+            "I like to watch Formula One. Do you know Formula One?"
+        )
+        request = MessageFeedbackRequest.model_validate(payload)
+        judgement_data = message_feedback_judgement(
+            context_fit=2,
+            language_accuracy=2,
+            core_asks=[
+                {
+                    "ask": "what are you into",
+                    "addressed": True,
+                    "evidence": "I like to watch Formula One",
+                    "requiredPlaceholder": None,
+                },
+            ],
+            stated_facts=[
+                "I like to watch Formula One",
+                "Do you know Formula One?",
+            ],
+        )
+
+        judgement = next_message_service._parse_message_feedback_judgement(
+            judgement_data,
+            request,
+        )
+
+        self.assertEqual(len(judgement.coreAsks), 2)
+        self.assertFalse(judgement.coreAsks[1].addressed)
+        self.assertEqual(judgement.coreAsks[1].requiredPlaceholder, "[your reason]")
+        self.assertEqual(judgement.scoreEvidence.contextFit, 1)
+
     def test_message_feedback_copy_excludes_unrelated_facts_when_context_fit_is_zero(self):
         judgement = conversation_models.MessageFeedbackJudgement.model_validate(
             message_feedback_judgement(
