@@ -114,6 +114,7 @@ class _MessageFeedbackCacheEntry:
     expires_at: float
     judgement: MessageFeedbackJudgement | None = None
     generated_copy: MessageFeedbackCopy | None = None
+    judgement_was_repaired: bool = False
     copy_was_repaired: bool = False
 
 
@@ -209,7 +210,7 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    judgement, _judgement_was_repaired = _generate_message_feedback_judgement(
+    judgement, judgement_was_repaired = _generate_message_feedback_judgement(
         request,
         resolved_settings,
     )
@@ -268,6 +269,7 @@ def generate_message_feedback(
         user_message=request.userMessage,
         judgement=judgement,
         generated_copy=generated_copy,
+        judgement_was_repaired=judgement_was_repaired,
         copy_was_repaired=copy_was_repaired,
     )
     return MessageFeedbackResponse(
@@ -648,6 +650,7 @@ def _store_message_feedback(
     user_message: str,
     judgement: MessageFeedbackJudgement | None = None,
     generated_copy: MessageFeedbackCopy | None = None,
+    judgement_was_repaired: bool = False,
     copy_was_repaired: bool = False,
     now: float | None = None,
 ) -> None:
@@ -662,6 +665,7 @@ def _store_message_feedback(
             expires_at=current_time + _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS,
             judgement=judgement,
             generated_copy=generated_copy,
+            judgement_was_repaired=judgement_was_repaired,
             copy_was_repaired=copy_was_repaired,
         )
 

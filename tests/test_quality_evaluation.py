@@ -308,6 +308,7 @@ class QualityEvaluationTests(unittest.TestCase):
                         score_evidence=score_evidence,
                         judgement=judgement,
                         generated_copy=generated_copy,
+                        judgement_was_repaired=True,
                         copy_was_repaired=False,
                     ),
                 ],
@@ -331,6 +332,7 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["expectedContextFit"], 2)
         self.assertTrue(results[0]["contextFitMatchesExpectation"])
         self.assertTrue(results[0]["copyValidationPassed"])
+        self.assertTrue(results[0]["judgementWasRepaired"])
         self.assertEqual(
             results[0]["generatedCopy"]["feedbackDetail"],
             "친구의 제안에 자연스럽게 동의했어요.",
@@ -416,6 +418,7 @@ class QualityEvaluationTests(unittest.TestCase):
                         score_evidence=score_evidence,
                         judgement=judgement,
                         generated_copy=generated_copy,
+                        judgement_was_repaired=False,
                         copy_was_repaired=False,
                     ),
                 ],
@@ -465,6 +468,7 @@ class QualityEvaluationTests(unittest.TestCase):
                         score_evidence=score_evidence,
                         judgement=None,
                         generated_copy=None,
+                        judgement_was_repaired=False,
                         copy_was_repaired=False,
                     ),
                 ],
@@ -494,5 +498,6 @@ class QualityEvaluationTests(unittest.TestCase):
             )
 
         self.assertEqual(results[0]["validationError"], "AiResponseInvalidError")
+        self.assertFalse(results[0]["judgementWasRepaired"])
         self.assertFalse(results[0]["copyValidationPassed"])
         self.assertIsNone(results[0]["finalFeedback"])

@@ -192,6 +192,7 @@ def _evaluate_feedback_case(
             else None
         ),
         "copyValidationPassed": generated_copy is not None,
+        "judgementWasRepaired": feedback_entry.judgement_was_repaired,
         "copyWasRepaired": feedback_entry.copy_was_repaired,
         "finalFeedback": feedback.model_dump(mode="json"),
         "expectedFeedbackTypeMatched": (
@@ -240,6 +241,7 @@ def _feedback_evaluation_error_result(
         "correctionReason": None,
         "generatedCopy": None,
         "copyValidationPassed": False,
+        "judgementWasRepaired": False,
         "copyWasRepaired": False,
         "finalFeedback": None,
         "expectedFeedbackTypeMatched": False,

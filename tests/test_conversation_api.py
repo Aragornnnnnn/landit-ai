@@ -1130,6 +1130,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "Judgement Repair Task",
             fake_openai.completions.calls[1]["messages"][0]["content"],
         )
+        feedback_entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertTrue(feedback_entry.judgement_was_repaired)
 
     def test_message_feedback_rejects_invalid_judgement_after_one_repair(self):
         invalid_judgement = message_feedback_judgement(
