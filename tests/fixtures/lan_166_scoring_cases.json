@@ -148,5 +148,80 @@
       },
       "userMessage": "I want to play soccer with my friend."
     }
+  },
+  {
+    "caseId": "lan166-session-113-cleaning-no-answer",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [80, 80],
+    "payload": {
+      "sessionId": 113,
+      "messageId": 317,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "룸메이트와 생활 규칙 정하기",
+        "briefing": "새 룸메이트와 청소와 생활 습관을 미리 조율합니다.",
+        "conversationGoal": "서로의 생활 규칙과 불편한 점을 자연스럽게 확인합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Okay, before this place turns into a disaster — how do you usually like to split cleaning stuff? I'm curious what worked for you before.",
+        "translatedContent": "방 난장판 되기 전에 청소를 보통 어떻게 나누는지, 전에는 어떻게 했는지 궁금해."
+      },
+      "userMessage": "I don't know."
+    }
+  },
+  {
+    "caseId": "lan166-session-113-daily-rhythm-partial",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [80, 80],
+    "payload": {
+      "sessionId": 113,
+      "messageId": 319,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "룸메이트와 생활 규칙 정하기",
+        "briefing": "새 룸메이트와 청소와 생활 습관을 미리 조율합니다.",
+        "conversationGoal": "서로의 생활 규칙과 불편한 점을 자연스럽게 확인합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Sounds like you’re still figuring it out. I'm such a night owl, it's a problem. What's your whole daily rhythm like — when are you up, when do you crash?",
+        "translatedContent": "넌 하루 리듬이 어때. 언제 일어나고 언제 자?"
+      },
+      "userMessage": "um... I usually wake up at 9."
+    }
+  },
+  {
+    "caseId": "lan166-session-113-roommate-dealbreakers-partial",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [80, 80],
+    "payload": {
+      "sessionId": 113,
+      "messageId": 321,
+      "turnNumber": 3,
+      "messageSequence": 6,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "룸메이트와 생활 규칙 정하기",
+        "briefing": "새 룸메이트와 청소와 생활 습관을 미리 조율합니다.",
+        "conversationGoal": "서로의 생활 규칙과 불편한 점을 자연스럽게 확인합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Nice, that sounds pretty normal. Have you ever had a roommate situation that drove you crazy? I wanna know what your dealbreakers are so I don't accidentally become that person.",
+        "translatedContent": "전에 룸메이트 때문에 힘들었던 적이 있어. 네가 못 참는 점도 알고 싶어."
+      },
+      "userMessage": "um... no"
+    }
   }
 ]

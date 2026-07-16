@@ -291,3 +291,13 @@
 - [x] 세션 피드백 및 전체 unittest 실행.
 - [x] API 문서와 작업 결정 사항 반영.
 - [x] 논리 단위 커밋 생성.
+
+## 2026-07-16 LAN-166 benchmarkMessage 근거 검증과 다중 질문 보정
+
+- [x] catalog 기반 benchmarkMessage 덮어쓰기와 정량·출처 문구 fallback 실패 테스트 작성 및 RED 확인.
+- [x] 다중 핵심 질문의 부분 답변을 `contextFit=1`로 안내하는 프롬프트 회귀 테스트 추가.
+- [x] 내부 `detectedPatterns`와 사용자 발화 evidence를 검증하는 catalog 보정 구현.
+- [x] 검증되지 않은 정량·출처 주장을 기본 비정량 문구로 대체.
+- [x] 빈 Landit catalog와 API 문서, 작업 결정 사항 반영.
+- [x] 전체 unittest, compileall, diff check 실행.
+- [x] 최종 diff 검토와 논리 단위 커밋 생성.

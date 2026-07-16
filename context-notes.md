@@ -269,3 +269,12 @@
 - 전체 실제 데이터 20개 세션의 63개 발화를 한 번씩 평가했을 때, `GOOD`이 없거나 1/3인 세션도 원시 점수 평균만으로 2.5점 별을 받았다. 이는 메시지 피드백의 `NEEDS_IMPROVEMENT`와 사용자에게 보이는 세션 별점이 충돌하는 문제다.
 - `nativeScore`는 문맥 충족과 의미 전달 정도를 그대로 보존한다. 단, 발화가 3개 이상이고 `GOOD` 비율이 1/3 이하이면 `starRating`만 최대 2.0으로 제한한다. 한두 발화에서 사소한 오류가 있는 경우에는 제한하지 않는다.
 - `nativeScore`, `starRating` 응답 필드와 OpenAPI 타입은 바뀌지 않으므로 backend DTO와 DB schema 변경은 필요하지 않다.
+
+## 2026-07-16 LAN-166 benchmarkMessage 근거 검증과 다중 질문 보정
+
+- `detectedPatterns`는 LLM 응답에서 읽되 메시지 피드백 cache와 외부 API 응답에는 저장하거나 노출하지 않는다.
+- GOOD의 `benchmarkMessage`는 `status=correct`, catalog 등록, `gamifiable=true`, `sourceVerified=true`, 실제 사용자 발화에 포함된 `evidence`를 모두 만족하는 경우에만 catalog 문구로 덮어쓴다.
+- 검증된 catalog 근거가 없을 때는 LLM의 비정량 문구를 유지한다. 퍼센트, 비율, 횟수 통계, 출처 주장이 포함된 문구나 빈 문구는 기본 문구로 대체한다.
+- 출처가 확인된 Landit 정량 패턴이 아직 없어 `app/data/benchmark_patterns.json`은 빈 catalog로 시작한다. SayNow의 퍼센트와 출처는 복사하지 않는다.
+- 여러 핵심 질문이 한 평가 컨텍스트에 있으면 모두 충족한 경우에만 `contextFit=2`로 평가한다. 하나만 답하면 `contextFit=1`이며, 짧다는 이유만으로 감점하지 않는다.
+- 실제 세션 113의 `I don't know.`, `um... I usually wake up at 9.`, `um... no`는 `openai/gpt-5.4-mini` 재평가에서 모두 `NEEDS_IMPROVEMENT`, `contextFit=1`, 80점으로 나왔다. 3발화 세션의 GOOD 비율은 0이므로 기존 별점 상한 규칙에 따라 세션 별점은 최대 2.0이다.

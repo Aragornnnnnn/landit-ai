@@ -189,7 +189,7 @@ def good_message_feedback(message_id=1001):
         "feedbackDetail": "좋아하는 음식과 이유를 because로 자연스럽게 연결했어요.",
         "correctionExpression": None,
         "correctionReason": None,
-        "benchmarkMessage": "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
+        "benchmarkMessage": "이유를 자연스럽게 붙여 말했어요.",
     }
 
 
@@ -666,6 +666,53 @@ class MessageFeedbackApiTests(unittest.TestCase):
             prompt,
         )
 
+    def test_feedback_prompt_requires_all_core_asks_for_full_context_fit(self):
+        prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        self.assertIn(
+            "For multiple explicit core asks, contextFit=2 only when the "
+            "utterance fulfills all of them.",
+            prompt,
+        )
+        self.assertIn(
+            "Answering only one core ask has contextFit=1.",
+            prompt,
+        )
+        self.assertIn(
+            "A bare no or I don't know can answer only the explicit ask it addresses.",
+            prompt,
+        )
+        self.assertIn("I don't know.", prompt)
+        self.assertIn("I usually wake up at 9.", prompt)
+        self.assertIn("um... no", prompt)
+        self.assertIn('"scoreEvidence":{"contextFit":1,"clarity":2,"languageAccuracy":2}', prompt)
+
+    def test_feedback_prompt_exposes_verified_catalog_patterns_only(self):
+        catalog = {
+            "informal_question": {
+                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
+                "gamifiable": True,
+                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
+                "source": "Landit 검증 출처",
+                "sourceVerified": True,
+            },
+        }
+
+        with patch.object(
+            next_message_service,
+            "_BENCHMARK_PATTERN_CATALOG",
+            catalog,
+            create=True,
+        ):
+            prompt = next_message_service._message_feedback_system_prompt(
+                EvaluationContextType.AI_MESSAGE,
+            )
+
+        self.assertIn("Detected Pattern Catalog", prompt)
+        self.assertIn('"errorType":"informal_question"', prompt)
+
     def test_feedback_prompt_does_not_double_penalize_language_issue(self):
         prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
@@ -1000,6 +1047,140 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             get_expected_message_feedbacks(100, [1001]),
             [cached_feedback],
+        )
+
+    def test_message_feedback_overwrites_benchmark_from_verified_catalog_pattern(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "질문 의도를 자연스럽게 확인했어요."
+        ai_response["detectedPatterns"] = [
+            {
+                "errorType": "informal_question",
+                "status": "correct",
+                "evidence": "why do you wanna know that?",
+            },
+        ]
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+        catalog = {
+            "informal_question": {
+                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
+                "gamifiable": True,
+                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
+                "source": "Landit 검증 출처",
+                "sourceVerified": True,
+            },
+        }
+
+        with (
+            patch.object(
+                next_message_service,
+                "_BENCHMARK_PATTERN_CATALOG",
+                catalog,
+                create=True,
+            ),
+            patch("app.core.openai_client.OpenAI", return_value=fake_openai),
+        ):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "검증된 정량 benchmark 문구예요.",
+        )
+
+    def test_catalog_benchmark_requires_evidence_from_user_utterance(self):
+        catalog = {
+            "informal_question": {
+                "description": "친구에게 이유를 자연스럽게 묻는 구어체 질문",
+                "gamifiable": True,
+                "benchmarkMessage": "검증된 정량 benchmark 문구예요.",
+                "source": "Landit 검증 출처",
+                "sourceVerified": True,
+            },
+        }
+        detected_patterns = [
+            {
+                "errorType": "informal_question",
+                "status": "correct",
+                "evidence": "what do you need it for",
+            },
+        ]
+
+        with patch.object(
+            next_message_service,
+            "_BENCHMARK_PATTERN_CATALOG",
+            catalog,
+            create=True,
+        ):
+            benchmark_message = (
+                next_message_service._benchmark_message_from_detected_patterns(
+                    detected_patterns,
+                    "why do you wanna know that?",
+                )
+            )
+
+        self.assertIsNone(benchmark_message)
+
+    def test_message_feedback_uses_default_for_unverified_quantitative_benchmark(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "한국인의 23%가 놓치는 이유 연결을 챙겼어요."
+        ai_response["detectedPatterns"] = []
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "질문에 맞는 핵심을 자연스럽게 전달했어요.",
+        )
+
+    def test_message_feedback_uses_default_for_unverified_benchmark_source_claim(self):
+        ai_response = good_message_feedback()
+        ai_response["benchmarkMessage"] = "조사에 따르면 이유를 덧붙인 표현이에요."
+        ai_response["detectedPatterns"] = []
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(
+            cached_feedback.benchmarkMessage,
+            "질문에 맞는 핵심을 자연스럽게 전달했어요.",
         )
 
     def test_message_feedback_invalid_ai_response_returns_502(self):
@@ -1372,6 +1553,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertNotIn(
             "scoreEvidence",
+            body["data"]["messageFeedbacks"][0],
+        )
+        self.assertNotIn(
+            "detectedPatterns",
             body["data"]["messageFeedbacks"][0],
         )
         self.assertIsNone(get_cached_message_feedback(100, 1001))

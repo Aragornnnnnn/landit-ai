@@ -102,6 +102,9 @@ class QualityEvaluationTests(unittest.TestCase):
             "lan166-harsh-roommate-boundary": [65, 85],
             "lan166-unnatural-word-choice-boundary": [85, 85],
             "lan166-valid-alternative-question-answer": [100, 100],
+            "lan166-session-113-cleaning-no-answer": [80, 80],
+            "lan166-session-113-daily-rhythm-partial": [80, 80],
+            "lan166-session-113-roommate-dealbreakers-partial": [80, 80],
         }
         self.assertEqual(set(cases_by_id), set(expected_ranges))
         for case_id, expected_range in expected_ranges.items():
