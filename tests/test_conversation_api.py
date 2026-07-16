@@ -211,28 +211,67 @@ def needs_improvement_message_feedback(message_id=1003):
     }
 
 
+def partial_hobby_feedback(message_id=1001):
+    return {
+        "messageId": message_id,
+        "feedbackType": "NEEDS_IMPROVEMENT",
+        "scoreEvidence": {
+            "contextFit": 1,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        },
+        "baseLocaleAnalogy": '"조깅은 좋아하지만 왜 좋은지는 말 안 할게"라고 일부만 답하는 것과 같아요.',
+        "positiveFeedback": "좋아하는 활동을 분명하게 말했어요.",
+        "feedbackDetail": None,
+        "correctionExpression": "I like jogging because [your reason].",
+        "correctionReason": "좋아하는 활동에는 답했지만 이유가 빠졌어요. [your reason]에 조깅을 좋아하는 이유를 넣어 보세요.",
+        "benchmarkMessage": None,
+    }
+
+
+def multiple_hobby_questions_payload():
+    payload = valid_message_feedback_payload()
+    payload["evaluationContext"] = {
+        "type": "AI_MESSAGE",
+        "content": "What are you into? What do you love about it?",
+        "translatedContent": "무엇을 좋아해? 그것의 어떤 점이 좋아?",
+    }
+    payload["userMessage"] = "I like jogging."
+    return payload
+
+
 class FakeCompletions:
-    def __init__(self, content=None, error=None):
-        self.content = content
-        self.error = error
+    def __init__(self, content=None, error=None, *, contents=None, errors=None):
+        self.contents = list(contents) if contents is not None else [content]
+        self.errors = list(errors) if errors is not None else [error]
         self.kwargs = None
+        self.calls = []
 
     def create(self, **kwargs):
         self.kwargs = kwargs
-        if self.error is not None:
-            raise self.error
+        self.calls.append(kwargs)
+        index = len(self.calls) - 1
+        error = self.errors[index] if index < len(self.errors) else None
+        if error is not None:
+            raise error
+        content = self.contents[index] if index < len(self.contents) else self.contents[-1]
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(content=self.content),
+                    message=SimpleNamespace(content=content),
                 ),
             ],
         )
 
 
 class FakeOpenAI:
-    def __init__(self, content=None, error=None):
-        self.completions = FakeCompletions(content=content, error=error)
+    def __init__(self, content=None, error=None, *, contents=None, errors=None):
+        self.completions = FakeCompletions(
+            content=content,
+            error=error,
+            contents=contents,
+            errors=errors,
+        )
         self.chat = SimpleNamespace(completions=self.completions)
 
 
@@ -768,6 +807,93 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202)
         self.assertNotIn("scoreEvidence", response.json()["data"])
         self.assertIsNotNone(get_cached_message_feedback(100, 1001))
+
+    def test_message_feedback_stores_valid_reviewed_candidate(self):
+        generated = good_message_feedback()
+        reviewed = partial_hobby_feedback()
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(generated), json.dumps(reviewed)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=multiple_hobby_questions_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(cached_feedback.feedbackType, "NEEDS_IMPROVEMENT")
+        self.assertEqual(
+            cached_feedback.correctionExpression,
+            "I like jogging because [your reason].",
+        )
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn(
+            "Review Task",
+            fake_openai.completions.calls[1]["messages"][0]["content"],
+        )
+        self.assertIn(
+            "Generated candidate",
+            fake_openai.completions.calls[1]["messages"][1]["content"],
+        )
+
+    def test_message_feedback_falls_back_when_review_call_fails(self):
+        generated = good_message_feedback()
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(generated)],
+            errors=[None, RuntimeError("review unavailable")],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(cached_feedback.feedbackType, "GOOD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_message_feedback_falls_back_when_review_message_id_differs(self):
+        generated = good_message_feedback()
+        invalid_review = good_message_feedback(message_id=9999)
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(generated), json.dumps(invalid_review)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        cached_feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(cached_feedback)
+        self.assertEqual(cached_feedback.feedbackType, "GOOD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_message_feedback_rejects_score_evidence_inconsistent_with_type(self):
         inconsistent_responses = [

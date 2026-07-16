@@ -1,5 +1,6 @@
 # 대화 생성 API의 LLM 호출과 응답 검증을 담당하는 모듈
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -101,6 +102,7 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
 
 
 _BENCHMARK_PATTERN_CATALOG = _load_benchmark_pattern_catalog()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -202,19 +204,43 @@ def generate_message_feedback(
     request: MessageFeedbackRequest,
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
+    resolved_settings = settings or Settings()
     data = _request_json_completion(
-        settings or Settings(),
+        resolved_settings,
         system_prompt=_message_feedback_system_prompt(
             request.evaluationContext.type,
         ),
         user_prompt=_message_feedback_user_prompt(request),
         max_tokens=768,
     )
-    detected_patterns = data.pop("detectedPatterns", None)
+    evaluation, detected_patterns = _parse_message_feedback_candidate(
+        data,
+        request.messageId,
+    )
     try:
-        evaluation = MessageFeedbackEvaluation.model_validate(data)
-    except ValidationError as exc:
-        raise AiResponseInvalidError from exc
+        reviewed_data = _request_json_completion(
+            resolved_settings,
+            system_prompt=_message_feedback_review_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_review_user_prompt(
+                request,
+                evaluation,
+                detected_patterns,
+            ),
+            max_tokens=768,
+        )
+        evaluation, detected_patterns = _parse_message_feedback_candidate(
+            reviewed_data,
+            request.messageId,
+        )
+    except (AiGenerationFailedError, AiResponseInvalidError):
+        logger.warning(
+            "AI 메시지별 피드백 검수에 실패해 생성 후보를 사용합니다. "
+            "workflow=message_feedback_review sessionId=%s messageId=%s",
+            request.sessionId,
+            request.messageId,
+        )
 
     feedback = MessageFeedbackData.model_validate(
         evaluation.model_dump(exclude={"scoreEvidence"}),
@@ -224,9 +250,6 @@ def generate_message_feedback(
         detected_patterns,
         request.userMessage,
     )
-
-    if feedback.messageId != request.messageId:
-        raise AiResponseInvalidError
 
     _store_message_feedback(
         request.sessionId,
@@ -239,6 +262,20 @@ def generate_message_feedback(
         messageId=request.messageId,
         feedbackStatus=FeedbackStatus.PREPARING,
     )
+
+
+def _parse_message_feedback_candidate(
+    data: dict[str, Any],
+    expected_message_id: int,
+) -> tuple[MessageFeedbackEvaluation, Any]:
+    detected_patterns = data.pop("detectedPatterns", None)
+    try:
+        evaluation = MessageFeedbackEvaluation.model_validate(data)
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
+    if evaluation.messageId != expected_message_id:
+        raise AiResponseInvalidError
+    return evaluation, detected_patterns
 
 
 def generate_session_feedback(
@@ -1151,6 +1188,36 @@ def _message_feedback_user_prompt(request: MessageFeedbackRequest) -> str:
         f"Evaluation context content: {request.evaluationContext.content}\n"
         f"Evaluation context translation: {request.evaluationContext.translatedContent or '(none)'}\n"
         f"User utterance: {request.userMessage}"
+    )
+
+
+def _message_feedback_review_system_prompt(
+    evaluation_context_type: EvaluationContextType,
+) -> str:
+    return "\n\n".join([
+        (
+            "Review Task:\n"
+            "Review the generated candidate against the original evaluation context and user utterance. "
+            "Return a complete final JSON object, not an approval flag. "
+            "Correct a candidate that misses any explicit core ask, answers a different question, "
+            "invents a personal fact or reason, changes known facts or intent, or treats capitalization, "
+            "punctuation, a neutral filler, or a natural grammatical alternative as an actionable issue."
+        ),
+        _message_feedback_system_prompt(evaluation_context_type),
+    ])
+
+
+def _message_feedback_review_user_prompt(
+    request: MessageFeedbackRequest,
+    evaluation: MessageFeedbackEvaluation,
+    detected_patterns: Any,
+) -> str:
+    candidate = evaluation.model_dump(mode="json")
+    candidate["detectedPatterns"] = detected_patterns
+    return (
+        f"{_message_feedback_user_prompt(request)}\n\n"
+        "Generated candidate:\n"
+        f"{json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))}"
     )
 
 
