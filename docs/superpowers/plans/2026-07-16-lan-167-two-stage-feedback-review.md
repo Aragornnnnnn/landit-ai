@@ -922,3 +922,183 @@ git commit -m "docs: LAN-167 판정 복구 품질 검증 결과 기록"
 - [ ] 고정 사례 21건과 중요 사례 42건의 기존 품질 기준이 유지된다.
 - [ ] 내부 복구 flag가 외부 API와 OpenAPI에 노출되지 않는다.
 - [ ] 전체 unittest, compileall, pip check, OpenAPI, diff check가 통과한다.
+
+---
+
+## 운영 배포 안정화 2차 실행 계획
+
+### Task 11: 내부 검증 원인 코드를 계측한다
+
+**Files**
+
+- Modify: `app/conversation/application/next_message_service.py`.
+- Modify: `scripts/evaluate_conversation_quality.py`.
+- Modify: `tests/test_conversation_api.py`.
+- Modify: `tests/test_quality_evaluation.py`.
+
+**Interfaces**
+
+- `AiResponseInvalidError(reason: str = "ai_response_invalid")`.
+- 평가 성공 결과의 `validationReason=None`.
+- 평가 실패 결과의 `validationReason=error.reason`.
+- 외부 API 오류 코드는 계속 `AI_RESPONSE_INVALID`이다.
+
+- [ ] **Step 1: 검증 원인 기록의 RED 테스트를 작성한다.**
+
+문구에 필수 플레이스홀더가 없을 때 다음을 확인한다.
+
+```python
+with self.assertRaisesRegex(
+    AiResponseInvalidError,
+    "message_feedback_copy_missing_placeholder",
+):
+    next_message_service._validate_message_feedback_copy(judgement, feedback)
+```
+
+품질 평가 오류 결과에는 다음을 단언한다.
+
+```python
+self.assertEqual(results[0]["validationReason"], "test_validation_reason")
+```
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests tests.test_quality_evaluation`
+
+Expected: error reason과 `validationReason`이 없어 FAIL한다.
+
+- [ ] **Step 3: 원인 코드를 최소 구현한다.**
+
+```python
+class AiResponseInvalidError(Exception):
+    def __init__(self, reason: str = "ai_response_invalid") -> None:
+        super().__init__(reason)
+        self.reason = reason
+```
+
+판정과 문구 파서의 각 검증 지점에서 사용자 데이터가 없는 고정 reason을 전달한다. 평가 오류 결과에는 `getattr(error, "reason", type(error).__name__)`를 기록한다.
+
+- [ ] **Step 4: 테스트와 외부 계약을 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests tests.test_quality_evaluation`
+
+Expected: PASS and API body remains unchanged.
+
+- [ ] **Step 5: 커밋한다.**
+
+```bash
+git add app/conversation/application/next_message_service.py scripts/evaluate_conversation_quality.py tests/test_conversation_api.py tests/test_quality_evaluation.py
+git commit -m "test: 메시지 피드백 검증 실패 원인을 내부 기록"
+```
+
+### Task 12: 사용자 근거 밖의 교정 내용을 문구 복구로 보낸다
+
+**Files**
+
+- Modify: `app/models/conversation.py`.
+- Modify: `app/conversation/application/next_message_service.py`.
+- Modify: `tests/test_conversation_api.py`.
+
+**Interfaces**
+
+- Add internal `MessageFeedbackLanguageIssue` with `evidence: str` and `replacement: str`.
+- Add `MessageFeedbackJudgement.languageIssues: list[MessageFeedbackLanguageIssue]`.
+- Add `_unsupported_correction_content_words(judgement, request, correction_expression) -> set[str]`.
+
+- [ ] **Step 1: 판정 언어 근거의 RED 테스트를 작성한다.**
+
+다음을 검증한다.
+
+- `languageAccuracy=2`인데 `languageIssues`가 있으면 거부한다.
+- `languageAccuracy<2`인데 `languageIssues=[]`면 거부한다.
+- `languageIssues.evidence`가 사용자 발화에 없으면 거부한다.
+- 명시적인 why 질문에서 `Busan is best`의 `best`만 이유 근거로 사용하면 판정 복구 대상이다.
+
+- [ ] **Step 2: 교정 내용 근거의 RED 테스트를 작성한다.**
+
+```python
+with self.assertRaisesRegex(
+    AiResponseInvalidError,
+    "message_feedback_copy_unsupported_content",
+):
+    next_message_service._parse_and_assemble_message_feedback_copy(
+        {
+            **message_feedback_copy(),
+            "correctionExpression": "I like reading because it helps me relax.",
+        },
+        judgement,
+        request,
+    )
+```
+
+`I like reading books because it is so cool.`과 `I recommend Busan because [your reason].`은 통과시킨다.
+
+- [ ] **Step 3: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: 내부 language issue 모델과 unsupported-content 검증이 없어 FAIL한다.
+
+- [ ] **Step 4: 판정 모델과 근거 검증을 구현한다.**
+
+```python
+class MessageFeedbackLanguageIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence: str
+    replacement: str
+```
+
+판정 프롬프트와 출력 스키마에 `languageIssues`를 추가하고, 서버에서 evidence grounding과 점수 조합을 검증한다. 명시적인 why/reason 핵심 요청은 단순 평가 형용사만으로 addressed 처리하지 않도록 한다.
+
+- [ ] **Step 5: 허용 어휘 검증을 구현한다.**
+
+교정 표현을 소문자 영단어로 토큰화한다. userMessage, 검증된 replacement, 필수 placeholder, 제한된 기능어·문장 뼈대 어휘에 없는 내용어를 반환한다. 집합이 비어 있지 않으면 `message_feedback_copy_unsupported_content`로 거부한다.
+
+- [ ] **Step 6: 문구 복구 프롬프트에 검증 원인을 전달한다.**
+
+`type(error).__name__` 대신 `error.reason`을 전달하고, unsupported-content에서는 사용자 발화 밖의 구체 내용을 제거하거나 필요한 개인 정보는 기존 플레이스홀더로 유지하라고 명시한다.
+
+- [ ] **Step 7: 메시지 피드백 전체 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: PASS with normal path 2 calls and repair path at most 3 calls.
+
+- [ ] **Step 8: 커밋한다.**
+
+```bash
+git add app/models/conversation.py app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 사용자 근거 밖의 교정 내용을 문구 복구로 제한"
+```
+
+### Task 13: 운영 배포 gate를 다시 검증한다
+
+**Files**
+
+- Modify: `context-notes.md`.
+- Modify: `checklist.md`.
+
+- [ ] **Step 1: 전체 정적·단위 검증을 실행한다.**
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m compileall app scripts tests
+.venv/bin/python -m pip check
+git diff --check
+```
+
+- [ ] **Step 2: 고정 21건과 중요 42건을 평가한다.**
+
+고정 사례의 모든 자동 expectation이 통과하고, 중요 사례의 최종 형식 실패와 근거 없는 구체 내용 추가가 0건인지 확인한다.
+
+- [ ] **Step 3: 전체 115건을 평가한다.**
+
+Expected: `validationErrorCount<=1` and normal cases keep two model calls.
+
+- [ ] **Step 4: 결과를 문서화하고 커밋한다.**
+
+```bash
+git add context-notes.md checklist.md
+git commit -m "docs: LAN-167 운영 배포 품질 검증 결과 기록"
+```
