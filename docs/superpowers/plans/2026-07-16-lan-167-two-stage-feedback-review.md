@@ -1,8 +1,10 @@
 # LAN-167 피드백 판정·문구 분리와 세션 점수 Implementation Plan
 
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
 **Goal:** 메시지 피드백의 의미 판정을 사용자용 문구 생성과 분리하고, 세 발화 이상 세션의 점수에 GOOD 비율을 반영해 피드백 유형·점수·별점이 일관되게 보이도록 한다.
 
-**Architecture:** 첫 번째 LLM 호출은 `evaluationContext`의 핵심 요청과 사용자 발화 근거, 세 평가 항목만 반환한다. 서버가 근거와 점수의 불변식을 검증한 뒤 `feedbackType`을 확정한다. 두 번째 호출은 확정된 판정을 입력받아 사용자용 문구만 생성하며, 서버가 판정을 결합하고 플레이스홀더·한국어 이유·기존 GOOD/NEEDS 필드 계약을 검증한다. 문구 검증 실패 때만 한 번 복구 호출하고, 검증되지 않은 전체 피드백으로 fallback하지 않는다. 메시지 점수는 유지하되 3개 이상 세션은 원시 평균 70%와 GOOD 비율 30%를 정수 반올림해 `nativeScore`를 만들고 별점은 최종 점수에서만 계산한다.
+**Architecture:** 첫 번째 LLM 호출은 `evaluationContext`의 핵심 요청과 사용자 발화 근거, 세 평가 항목만 반환한다. 서버가 근거와 점수의 불변식을 검증한 뒤 `feedbackType`을 확정한다. 판정 형식 검증이 실패한 경우에만 판정 복구를 한 번 수행하고, 두 번째 정상 단계는 확정된 판정을 입력받아 사용자용 문구만 생성한다. 문구 검증 실패도 한 번만 복구하며 검증되지 않은 결과로 fallback하지 않는다. 메시지 점수는 유지하되 3개 이상 세션은 원시 평균 70%와 GOOD 비율 30%를 정수 반올림해 `nativeScore`를 만들고 별점은 최종 점수에서만 계산한다.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, OpenAI Python SDK, unittest.
 
@@ -561,3 +563,362 @@ git commit -m "docs: LAN-167 품질 검증 결과 기록"
 - [ ] 별점은 최종 `nativeScore`에서만 계산한다.
 - [ ] 중요 사례 14개 3회와 전체 115개 평가의 품질 기준을 충족한다.
 - [ ] 전체 unittest, compileall, pip check, OpenAPI 회귀, diff check가 통과한다.
+
+---
+
+## 운영 안정화 후속 계획
+
+### Task 8: 판정 형식 오류를 한 번만 복구한다
+
+**Files**
+
+- Modify: `app/conversation/application/next_message_service.py:105-125, 205-285, 1208-1385`.
+- Modify: `tests/test_conversation_api.py:1020-1130, 1840-1870`.
+
+**Interfaces**
+
+- Add `_generate_message_feedback_judgement(request: MessageFeedbackRequest, settings: Settings) -> tuple[MessageFeedbackJudgement, bool]`.
+- Add `_message_feedback_judgement_repair_system_prompt(evaluation_context_type: EvaluationContextType) -> str`.
+- Add `_message_feedback_judgement_repair_user_prompt(request: MessageFeedbackRequest, invalid_judgement: dict[str, Any] | None, error: Exception) -> str`.
+- Keep `generate_message_feedback()`의 외부 반환형과 API 오류 계약을 유지한다.
+
+- [ ] **Step 1: 판정 복구 성공·실패의 RED 테스트를 작성한다.**
+
+`tests/test_conversation_api.py`에 다음 두 테스트를 추가한다.
+
+```python
+def test_message_feedback_repairs_invalid_judgement_once(self):
+    valid_judgement = message_feedback_judgement(
+        context_fit=1,
+        core_asks=[
+            {
+                "ask": "say what activity you like",
+                "addressed": True,
+                "evidence": "jogging",
+                "requiredPlaceholder": None,
+            },
+            {
+                "ask": "say why you like it",
+                "addressed": False,
+                "evidence": None,
+                "requiredPlaceholder": "[your reason]",
+            },
+        ],
+    )
+    invalid_judgement = dict(valid_judgement)
+    invalid_judgement["messageId"] = 9999
+    fake_openai = FakeOpenAI(contents=[
+        json.dumps(invalid_judgement),
+        json.dumps(valid_judgement),
+        json.dumps(message_feedback_copy()),
+    ])
+    app = create_app(make_settings(
+        openrouter_api_key="test-openrouter-key",
+        openrouter_model="openrouter-test-model",
+    ))
+
+    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+        response = make_client(app).post(
+            "/api/v1/conversation/message-feedback",
+            json=multiple_hobby_questions_payload(),
+        )
+
+    self.assertEqual(response.status_code, 202)
+    self.assertEqual(len(fake_openai.completions.calls), 3)
+    self.assertIn(
+        "Judgement Repair Task",
+        fake_openai.completions.calls[1]["messages"][0]["content"],
+    )
+
+
+def test_message_feedback_rejects_invalid_judgement_after_one_repair(self):
+    invalid_judgement = message_feedback_judgement(
+        context_fit=1,
+        core_asks=[
+            {
+                "ask": "say what activity you like",
+                "addressed": True,
+                "evidence": "jogging",
+                "requiredPlaceholder": None,
+            },
+            {
+                "ask": "say why you like it",
+                "addressed": False,
+                "evidence": None,
+                "requiredPlaceholder": "[your reason]",
+            },
+        ],
+    )
+    invalid_judgement["messageId"] = 9999
+    fake_openai = FakeOpenAI(contents=[
+        json.dumps(invalid_judgement),
+        json.dumps(invalid_judgement),
+    ])
+    app = create_app(make_settings(
+        openrouter_api_key="test-openrouter-key",
+        openrouter_model="openrouter-test-model",
+    ))
+
+    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+        response = make_client(app).post(
+            "/api/v1/conversation/message-feedback",
+            json=multiple_hobby_questions_payload(),
+        )
+
+    self.assertEqual(response.status_code, 502)
+    self.assertEqual(len(fake_openai.completions.calls), 2)
+    self.assertIsNone(get_cached_message_feedback(100, 1001))
+```
+
+- [ ] **Step 2: provider 실패를 복구하지 않는 RED 테스트를 보강한다.**
+
+기존 `test_message_feedback_generation_failure_returns_503` 마지막에 다음 단언을 추가한다.
+
+```python
+self.assertEqual(len(fake_openai.completions.calls), 1)
+```
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: 판정 복구 테스트는 호출 수와 repair prompt 단언에서 FAIL하고, provider 실패 테스트는 기존 503 계약을 유지한다.
+
+- [ ] **Step 3: 판정 생성과 한 번의 복구를 최소 구현한다.**
+
+`generate_message_feedback()`의 첫 호출과 parser 호출을 다음 helper로 옮긴다.
+
+```python
+def _generate_message_feedback_judgement(
+    request: MessageFeedbackRequest,
+    settings: Settings,
+) -> tuple[MessageFeedbackJudgement, bool]:
+    judgement_data: dict[str, Any] | None = None
+    try:
+        judgement_data = _request_json_completion(
+            settings,
+            system_prompt=_message_feedback_judgement_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_judgement_user_prompt(request),
+            max_tokens=512,
+        )
+        return _parse_message_feedback_judgement(judgement_data, request), False
+    except AiResponseInvalidError as exc:
+        logger.warning(
+            "AI 메시지별 피드백 판정을 복구합니다. "
+            "workflow=message_feedback_judgement_repair sessionId=%s messageId=%s",
+            request.sessionId,
+            request.messageId,
+        )
+        repaired_data = _request_json_completion(
+            settings,
+            system_prompt=_message_feedback_judgement_repair_system_prompt(
+                request.evaluationContext.type,
+            ),
+            user_prompt=_message_feedback_judgement_repair_user_prompt(
+                request,
+                judgement_data,
+                exc,
+            ),
+            max_tokens=512,
+        )
+        return _parse_message_feedback_judgement(repaired_data, request), True
+```
+
+repair system prompt는 기존 판정 system prompt에 다음 규칙만 추가한다.
+
+```text
+Judgement Repair Task:
+The previous judgement is invalid. Return one replacement that follows the judgement schema, evidence grounding, contextFit invariant, and [your ...] placeholder format exactly.
+```
+
+repair user prompt는 원본 요청, `invalid_judgement`의 JSON 또는 `null`, `type(error).__name__`만 전달한다. 로그에는 원시 판정 JSON과 사용자 발화를 넣지 않는다.
+
+`generate_message_feedback()`에서는 다음처럼 사용한다.
+
+```python
+judgement, judgement_was_repaired = _generate_message_feedback_judgement(
+    request,
+    resolved_settings,
+)
+```
+
+`AiGenerationFailedError`는 helper에서 잡지 않으므로 기존 503 흐름을 유지한다.
+
+- [ ] **Step 4: 판정 복구 테스트와 메시지 피드백 전체 테스트를 통과시킨다.**
+
+Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
+
+Expected: 정상 경로 2회, 판정 복구 성공 경로 3회, 판정 복구 재실패 2회, provider 실패 1회 호출이 모두 통과한다.
+
+- [ ] **Step 5: 판정 복구 구현을 커밋한다.**
+
+```bash
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 유효하지 않은 메시지 판정을 한 번 복구"
+```
+
+### Task 9: 판정 복구 여부를 내부 품질 결과에 기록한다
+
+**Files**
+
+- Modify: `app/conversation/application/next_message_service.py:105-125, 610-640`.
+- Modify: `scripts/evaluate_conversation_quality.py:120-245`.
+- Modify: `tests/test_quality_evaluation.py:250-500`.
+
+**Interfaces**
+
+- Add internal `_MessageFeedbackCacheEntry.judgement_was_repaired: bool = False`.
+- Add internal quality result field `judgementWasRepaired: bool`.
+- Do not add the field to `MessageFeedbackData`, API responses, or OpenAPI.
+
+- [ ] **Step 1: 내부 복구 여부 결과의 RED 테스트를 작성한다.**
+
+평가 도구 mock cache entry에 `judgement_was_repaired=True`를 넣고 다음을 단언한다.
+
+```python
+self.assertTrue(results[0]["judgementWasRepaired"])
+```
+
+오류 결과에는 다음 단언을 추가한다.
+
+```python
+self.assertFalse(results[0]["judgementWasRepaired"])
+```
+
+- [ ] **Step 2: RED를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_quality_evaluation`
+
+Expected: FAIL because cache entries and evaluation results do not expose the internal repair flag.
+
+- [ ] **Step 3: cache와 평가 결과에 내부 flag를 연결한다.**
+
+```python
+@dataclass(frozen=True)
+class _MessageFeedbackCacheEntry:
+    feedback: MessageFeedbackData
+    score_evidence: MessageFeedbackScoreEvidence
+    user_message: str
+    expires_at: float
+    judgement: MessageFeedbackJudgement | None = None
+    generated_copy: MessageFeedbackCopy | None = None
+    judgement_was_repaired: bool = False
+    copy_was_repaired: bool = False
+```
+
+`_store_message_feedback()` 인자와 생성부에 같은 flag를 추가하고, 평가 성공 결과에는 다음 값을 기록한다.
+
+```python
+"judgementWasRepaired": feedback_entry.judgement_was_repaired,
+```
+
+평가 오류 결과에는 `False`를 기록한다.
+
+- [ ] **Step 4: 평가 도구와 OpenAPI 회귀를 확인한다.**
+
+Run: `.venv/bin/python -m unittest tests.test_quality_evaluation tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_openapi_uses_evaluation_context_contract`
+
+Expected: PASS and OpenAPI contains no `judgementWasRepaired` field.
+
+- [ ] **Step 5: 평가 계측 변경을 커밋한다.**
+
+```bash
+git add app/conversation/application/next_message_service.py scripts/evaluate_conversation_quality.py tests/test_quality_evaluation.py
+git commit -m "test: 판정 복구 사용 여부를 품질 결과에 기록"
+```
+
+### Task 10: 실제 데이터로 운영 가능 기준을 검증한다
+
+**Files**
+
+- Modify: `context-notes.md`.
+- Modify: `checklist.md`.
+- Verify: `tests/fixtures/lan_167_feedback_quality_cases.json` and the approved 115-row CSV input under `/tmp`.
+
+**Acceptance Gates**
+
+- 전체 115건 중 최종 `AiResponseInvalidError`는 최대 1건이다. 1/115는 0.87%이므로 실패율 1% 이하를 만족한다.
+- 정상 사례는 판정 복구 없이 2회 호출을 유지한다.
+- 판정 복구는 최초 판정 검증 실패에서만 한 번 사용한다.
+- 중요 사례의 `feedbackType`, 점수, 플레이스홀더, 사용자 사실 보존 품질은 기존 통과 결과보다 나빠지지 않는다.
+- 목표를 넘으면 두 번째 blind retry를 추가하지 않고 실패 단계와 검증 원인을 다시 분류한다.
+
+- [ ] **Step 1: 전체 정적·단위 검증을 실행한다.**
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m compileall app scripts tests
+.venv/bin/python -m pip check
+git diff --check
+```
+
+Expected: all commands exit 0.
+
+- [ ] **Step 2: 고정 품질 사례를 각 3회 평가한다.**
+
+```bash
+.venv/bin/python scripts/evaluate_conversation_quality.py \
+  --cases tests/fixtures/lan_167_feedback_quality_cases.json \
+  --runs 3 \
+  --kind message-feedback \
+  --output /tmp/lan-167-judgement-repair-fixture-results.json
+```
+
+Expected: 21개 결과의 기대 피드백 유형, `contextFit`, 점수 범위, 필수 플레이스홀더, 금지 문구 검사가 모두 통과한다.
+
+- [ ] **Step 3: 기존 중요 사례 14개를 각 3회 평가한다.**
+
+기존 `/tmp/lan-167-important-*.json` 입력을 사용해 총 42개 결과를 생성한다. 통과 기준은 다음과 같다.
+
+- 31번은 3회 모두 GOOD이다.
+- 146, 283, 329, 330번은 3회 모두 NEEDS_IMPROVEMENT다.
+- 208, 321, 333, 335번의 교정 표현은 검증된 의미별 플레이스홀더를 사용한다.
+- 사용자 발화에 없는 구체적인 이름, 장소, 취미, 경험, 이유가 추가되지 않는다.
+
+- [ ] **Step 4: 전체 115개 발화를 한 번 평가한다.**
+
+기존 승인된 CSV를 `/tmp/lan-167-user-data-cases.json`으로 변환한 입력을 사용한다. 결과 집계는 다음 값을 기록한다.
+
+```text
+totalResults
+validationErrorCount
+judgementRepairCount
+copyRepairCount
+GOODCount
+NEEDS_IMPROVEMENTCount
+messageScoreDistribution
+```
+
+Expected: `totalResults=115`, `validationErrorCount<=1`.
+
+- [ ] **Step 5: 실패율과 문구 품질 gate를 판정한다.**
+
+`validationErrorCount>1`이면 완료 처리하지 않는다. 실패 사례를 판정 호출, 판정 복구, 문구 호출, 문구 복구로 나눠 원인을 기록하고 추가 재시도 없이 설계를 다시 검토한다.
+
+- [ ] **Step 6: 외부 계약과 최종 diff를 확인한다.**
+
+OpenAPI에 `judgementWasRepaired`, `coreAsks`, `statedFacts`, `scoreEvidence`, `detectedPatterns`가 노출되지 않는지 확인한다.
+
+```bash
+git status --short
+git diff --check
+git log --oneline origin/release/LAN-161..HEAD
+```
+
+- [ ] **Step 7: 검증 결과를 문서화하고 커밋한다.**
+
+```bash
+git add context-notes.md checklist.md
+git commit -m "docs: LAN-167 판정 복구 품질 검증 결과 기록"
+```
+
+## 운영 안정화 완료 기준
+
+- [ ] 판정 형식 검증 실패만 한 번 복구한다.
+- [ ] provider 실패는 재시도하지 않고 기존 503 계약을 유지한다.
+- [ ] 판정 복구 결과도 유효하지 않으면 502를 반환하고 cache에 저장하지 않는다.
+- [ ] 정상 경로는 LLM 2회, 판정 또는 문구 단일 복구 경로는 3회, 두 단계 모두 복구하면 최대 4회다.
+- [ ] 전체 115건 실제 평가의 최종 형식 실패가 최대 1건이다.
+- [ ] 고정 사례 21건과 중요 사례 42건의 기존 품질 기준이 유지된다.
+- [ ] 내부 복구 flag가 외부 API와 OpenAPI에 노출되지 않는다.
+- [ ] 전체 unittest, compileall, pip check, OpenAPI, diff check가 통과한다.
