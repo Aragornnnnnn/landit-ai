@@ -4,18 +4,20 @@
 
 **Goal:** 속마음이 답변 내용뿐 아니라 단답, 반복 거절, 공격적 말투, 상대를 향한 욕설·위협을 관계 맥락에 맞게 직접 반영하도록 개선한다.
 
-**Architecture:** `inner-thought` API 계약과 생성 흐름은 유지하고 `_inner_thought_system_prompt()`의 판정 기준만 보강한다. 기존 품질 평가 스크립트에 `inner-thought` 사례 실행을 추가해 prod·develop 데이터에서 발견된 경계를 반복 검증한다.
+**Architecture:** `inner-thought` API 계약과 정상 경로 1회 호출은 유지한다. LLM이 반환한 `answerCoverage`, `relationshipTone`, `directedAttack`으로 서버가 유형을 결정하고, 근거 형식이 잘못되면 기존 `innerThought`, `innerThoughtType`을 fallback으로 사용한다.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, OpenAI Python SDK, unittest.
 
 ## 제약 사항
 
 - `POST /api/v1/conversation/inner-thought` 요청·응답과 OpenAPI 계약을 변경하지 않는다.
-- 모든 단답을 부정 평가하지 않고 질문의 정보 요구량, 관계, 이전 답변의 반복 여부를 함께 본다.
+- 모든 단답을 부정 평가하지 않고 질문 충족도와 관계상 말투를 분리해서 본다.
 - 상대를 향한 명시적인 욕설·모욕·위협은 질문에 답했더라도 `BAD`로 판정한다.
 - 상황을 강조하는 비속어까지 무조건 `BAD`로 처리하지 않는다.
 - 근거 없는 선의 해석, 사용자 성격 추론, 상대방의 다음 행동 계획을 속마음에 넣지 않는다.
-- 프롬프트와 기존 평가 도구만 수정하며 서버 후처리, fallback, retry, 새 의존성은 추가하지 않는다.
+- 반복 여부는 별도 판정 필드나 서버 규칙으로 만들지 않고 전체 대화 맥락으로만 사용한다.
+- 정상 경로에 두 번째 LLM 호출, 입력 문장별 템플릿, 새 의존성을 추가하지 않는다.
+- 상세 결정은 `docs/tasks/LAN-169/design.md`를 따른다.
 
 ---
 
@@ -162,16 +164,72 @@ git add scripts/evaluate_conversation_quality.py tests/fixtures/lan_169_inner_th
 git commit -m "test: 실데이터 기반 속마음 품질 평가 추가"
 ```
 
-### Task 3: 실제 모델과 전체 회귀 검증
+### Task 3: 구조화 판정과 fallback 추가
+
+**Files:**
+
+- Modify: `app/models/conversation.py`
+- Modify: `app/conversation/application/next_message_service.py`
+- Modify: `tests/test_conversation_api.py`
+
+**Preserved interface:**
+
+- `generate_inner_thought(request, settings) -> InnerThoughtResponse`
+- `POST /api/v1/conversation/inner-thought` 요청·응답 필드
+
+- [ ] 변경 전 고정 사례 8건을 1회 실행해 품질과 총 소요 시간을 기준값으로 기록한다.
+
+```bash
+/usr/bin/time -p /Users/sangmin8817/Soma/landit-ai/.venv/bin/python \
+  scripts/evaluate_conversation_quality.py \
+  --cases tests/fixtures/lan_169_inner_thought_quality_cases.json \
+  --runs 1 \
+  --kind inner-thought \
+  --output /tmp/landit-ai-lan-169-before.json
+```
+
+- [ ] `InnerThoughtApiTests`에 먼저 아래 실패 테스트를 추가한다.
+  - 전체 근거가 유효하면 LLM 유형 대신 서버 결정표를 사용한다.
+  - `directedAttack=true`, `HOSTILE`, `UNRELATED`는 `BAD`가 된다.
+  - `BLUNT`, `PARTIAL`, `DECLINED`는 `NORMAL`, `COMPLETE`와 `WARM` 또는 `NEUTRAL` 조합은 `GOOD`이 된다.
+  - 근거 필드가 없고 기존 두 필드가 유효하면 추가 호출 없이 fallback한다.
+  - 기존 두 필드까지 잘못되면 한 번 복구하고, 복구도 실패하면 502를 반환한다.
+  - 정상 결과는 OpenAI 호출이 1회인지 확인한다.
+
+```bash
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python \
+  -m unittest tests.test_conversation_api.InnerThoughtApiTests
+```
+
+Expected: 새 판정·fallback 테스트가 실패한다.
+
+- [ ] `AnswerCoverage`, `RelationshipTone`, `InnerThoughtCandidate(extra="forbid")`를 추가하고 prompt 출력 스키마를 확장한다.
+- [ ] `next_message_service.py`에 작은 순수 결정 함수와 파싱 흐름을 추가한다.
+  - 전체 근거가 유효하면 `design.md` 우선순위로 유형을 정한다.
+  - 근거만 잘못되면 기존 두 필드를 사용하고 fallback 사실만 기록한다.
+  - 기존 두 필드까지 잘못되면 형식 복구를 한 번만 호출한다.
+  - 사용자 원문과 모델 원문은 로그에 남기지 않는다.
+- [ ] focused test를 다시 실행해 통과시킨다.
+- [ ] 아래 논리 단위로 커밋한다.
+
+```bash
+git add app/models/conversation.py \
+  app/conversation/application/next_message_service.py \
+  tests/test_conversation_api.py
+git commit -m "fix: 판정 근거로 속마음 유형을 확정"
+```
+
+### Task 4: 실제 모델과 전체 회귀 검증
 
 **Files:**
 
 - Modify: `docs/tasks/LAN-169/plan.md`
 
-- [ ] 고정 사례 8개를 실제 설정 모델로 각 3회 실행한다.
+- [ ] 변경 후 고정 사례 8개를 실제 설정 모델로 각 3회 실행한다.
 
 ```bash
-.venv/bin/python scripts/evaluate_conversation_quality.py \
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python \
+  scripts/evaluate_conversation_quality.py \
   --cases tests/fixtures/lan_169_inner_thought_quality_cases.json \
   --runs 3 \
   --kind inner-thought \
@@ -180,24 +238,27 @@ git commit -m "test: 실데이터 기반 속마음 품질 평가 추가"
 
 Expected: 24개 결과가 모두 허용 유형을 만족하고, 필수 감정어가 하나 이상 있으며, 금지 표현이 없다.
 
+- [ ] 변경 전과 같은 1회 명령을 `/usr/bin/time -p`로 실행해 정상 경로 호출 수와 총 소요 시간을 비교한다. 유의미하게 느려지면 완료하지 않고 원인을 기록한다.
+
 - [ ] prod·develop 데이터를 동일한 컬럼으로 각각 추출해 아래 회귀를 확인한다.
   - 상대를 향한 욕설·모욕·위협이 `GOOD` 또는 `NORMAL`로 저장된 사례가 남아 있지 않은지 확인한다.
   - 단답이 무조건 `GOOD`이거나 근거 없는 긍정 추론으로 생성되지 않는지 확인한다.
   - 정상적인 구체 답변의 `GOOD` 판정이 불필요하게 하락하지 않는지 확인한다.
   - 한 환경의 데이터에 접근할 수 없으면 완료 처리하지 않고 환경명과 blocker를 기록한다.
 
-- [x] 전체 회귀 검증을 실행한다.
+- [ ] 전체 회귀 검증을 실행한다.
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
-PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-169-pycache .venv/bin/python -m compileall -q app tests scripts
-.venv/bin/python -m pip check
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests
+PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-169-pycache \
+  /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m compileall -q app tests scripts
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m pip check
 git diff --check
 ```
 
 Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 없다.
 
-- [x] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
+- [ ] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
 
 ## 완료 기준
 
@@ -206,7 +267,7 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 - [ ] 공격적인 답변이 내용 충족만으로 `GOOD`이 되지 않는다.
 - [ ] 근거 없는 선의 해석과 다음 행동 계획이 속마음에서 제거된다.
 - [ ] 정상 `GOOD` control을 포함한 실데이터 8개 사례가 실제 모델 3회 검증을 통과한다.
-- [x] 전체 unittest, compileall, pip check, diff check가 통과한다.
+- [ ] 전체 unittest, compileall, pip check, diff check가 통과한다.
 
 ## 구현 및 검증 결과 기록 위치
 
