@@ -2100,6 +2100,33 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 prompt,
             )
 
+    def test_message_feedback_review_prompt_is_compact_and_evidence_first(self):
+        candidate_prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+        review_prompt = next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        for prompt in (candidate_prompt, review_prompt):
+            self.assertIn('"coverageEvidence"', prompt)
+            self.assertIn('"ignoredSpeechArtifacts"', prompt)
+            self.assertIn('"actionableIssues"', prompt)
+            self.assertIn("exact substring", prompt)
+            self.assertIn("contextFit below 2 requires MISSING coverage", prompt)
+            self.assertIn(
+                "languageAccuracy below 2 requires a LANGUAGE_ACCURACY issue",
+                prompt,
+            )
+
+        self.assertIn("rebuild the evidence independently", review_prompt)
+        self.assertNotIn("cleaning-preference question", review_prompt)
+        self.assertNotIn("daily-rhythm question", review_prompt)
+        self.assertNotIn(
+            "roommate question about a bad experience",
+            review_prompt,
+        )
+
     def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
@@ -2116,12 +2143,9 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "A yes-or-no answer to one question does not answer a separate open-ended question.",
             candidate_prompt,
         )
-        self.assertIn(
-            "When NEEDS_IMPROVEMENT is caused by only part",
-            copy_prompt,
-        )
-        for prompt in (candidate_prompt, copy_prompt):
-            self.assertIn("one most important improvement", prompt)
+        self.assertIn("one most important improvement", candidate_prompt)
+        self.assertIn("one most important improvement", copy_prompt)
+        for prompt in (candidate_prompt,):
             self.assertIn("I'm not sure yet. I prefer to split the cleaning [your preferred way].", prompt)
             self.assertIn("I'm up at 9am, and I go to bed at [your bedtime].", prompt)
             self.assertIn(
@@ -2133,6 +2157,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 prompt,
             )
             self.assertIn("Do not make a punctuation or spacing change", prompt)
+        self.assertIn("MISSING coverage", copy_prompt)
+        self.assertIn("[your ...] placeholder", copy_prompt)
 
     def test_message_feedback_repair_prompt_explains_generic_placeholder(self):
         request = conversation_models.MessageFeedbackRequest.model_validate(
