@@ -356,7 +356,7 @@ class MessageFeedbackContent(BaseModel):
             return None
         placeholders = re.findall(r"\[[^\]]+\]", value)
         if any(
-            re.fullmatch(r"\[your [a-z][a-z ]*\]", placeholder) is None
+            re.fullmatch(r"\[your [^\[\]\r\n]+\]", placeholder) is None
             for placeholder in placeholders
         ):
             raise ValueError("correctionExpression placeholders must use [your ...] format")

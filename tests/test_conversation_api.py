@@ -961,6 +961,25 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "I enjoy [your hobby].",
         )
 
+    def test_message_feedback_accepts_hyphenated_placeholder_label(self):
+        content = conversation_models.MessageFeedbackContent.model_validate(
+            {
+                "baseLocaleAnalogy": (
+                    '"몇 시에 일어나는지는 말하지 않았어요"라고 '
+                    "답하는 것과 같아요."
+                ),
+                "correctionExpression": (
+                    "I'm up at [your wake-up time], and I go to bed at "
+                    "[your bedtime]."
+                ),
+            },
+        )
+
+        self.assertEqual(
+            content.correctionExpression,
+            "I'm up at [your wake-up time], and I go to bed at [your bedtime].",
+        )
+
     def test_message_feedback_uses_generic_candidate_until_copy_rewrites_it(self):
         candidate = message_feedback_candidate(
             needs_improvement_message_feedback(1001),
