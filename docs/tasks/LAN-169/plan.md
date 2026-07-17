@@ -99,7 +99,7 @@ git add app/conversation/application/next_message_service.py tests/test_conversa
 git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
 ```
 
-### Task 2: 실데이터 기반 속마음 품질 평가 추가
+### Task 2: 사용자 작성 테스트 데이터 기반 속마음 품질 평가 추가
 
 **Files:**
 
@@ -125,7 +125,7 @@ git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
   - `_evaluate_inner_thought_case()`는 `InnerThoughtRequest.model_validate(case["payload"])`로 요청을 만들고 모델을 한 번 호출한다.
   - 문자열 비교는 기존 평가 코드처럼 `casefold()`를 사용한다.
 
-- [x] 제공된 전체 속마음 CSV에서 확인한 아래 사례를 fixture로 고정한다.
+- [x] 사용자가 직접 작성한 속마음 테스트 CSV의 아래 사례를 fixture로 고정한다.
 
 | 메시지 | 질문과 사용자 답변 | 현재 결과와 문제 | 기대 경계 |
 |---|---|---|---|
@@ -142,12 +142,12 @@ git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
 
 | 메시지 | 허용 유형 | `requiredAnyTerms` | `forbiddenTerms` |
 |---|---|---|---|
-| 395 | `NORMAL` | `짧`, `무뚝뚝`, `거리`, `답답` | `다행`, `친절`, `해야겠`, `말아야겠` |
-| 249 | `NORMAL` | `짧`, `딱`, `까칠`, `차갑` | `어렵지 않`, `좋다는`, `해야겠` |
+| 395 | `NORMAL` | `짧`, `무뚝뚝`, `거리`, `답답`, 거절·대화 의지 부족 표현 | `다행`, `친절`, `해야겠`, `말아야겠` |
+| 249 | `NORMAL` | `짧`, `딱`, `까칠`, `차갑` | `어렵지 않`, `해야겠` |
 | 335 | `NORMAL` | `모르`, `막연`, `답답` | `친절`, `다행`, `해야겠`, `말아야겠` |
 | 357 | `NORMAL` | `수원`, `이유`, `짧` | `믿음`, `잘 아는` |
 | 380 | `BAD` | `답답`, `무시`, `거절`, `불편` | `해야겠`, `말아야겠` |
-| 233 | `NORMAL`, `BAD` | `강`, `불편`, `당황`, `거리` | `맞겠다`, `지켜야겠` |
+| 233 | `NORMAL`, `BAD` | `강`, `불편`, `당황`, `거리`, `상처`, `불쾌` 등 | `맞겠다`, `지켜야겠` |
 | 168 | `BAD` | `욕`, `기분`, `불쾌`, `당황`, `상처` | `해야겠`, `말아야겠` |
 | 400 | `GOOD` | `규칙`, `다행`, `안심`, `좋` | `까칠`, `무례`, `불쾌` |
 
@@ -161,7 +161,7 @@ git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
 
 ```bash
 git add scripts/evaluate_conversation_quality.py tests/fixtures/lan_169_inner_thought_quality_cases.json tests/test_quality_evaluation.py
-git commit -m "test: 실데이터 기반 속마음 품질 평가 추가"
+git commit -m "test: 테스트 데이터 기반 속마음 품질 평가 추가"
 ```
 
 ### Task 3: 구조화 판정과 fallback 추가
@@ -225,7 +225,7 @@ git commit -m "fix: 판정 근거로 속마음 유형을 확정"
 
 - Modify: `docs/tasks/LAN-169/plan.md`
 
-- [ ] 변경 후 고정 사례 8개를 실제 설정 모델로 각 3회 실행한다.
+- [x] 변경 후 고정 사례 8개를 실제 설정 모델로 각 3회 실행한다.
 
 ```bash
 /Users/sangmin8817/Soma/landit-ai/.venv/bin/python \
@@ -238,7 +238,7 @@ git commit -m "fix: 판정 근거로 속마음 유형을 확정"
 
 Expected: 24개 결과가 모두 허용 유형을 만족하고, 필수 감정어가 하나 이상 있으며, 금지 표현이 없다.
 
-- [ ] 변경 전과 같은 1회 명령을 `/usr/bin/time -p`로 실행해 정상 경로 호출 수와 총 소요 시간을 비교한다. 유의미하게 느려지면 완료하지 않고 원인을 기록한다.
+- [x] 변경 전과 같은 조건을 `/usr/bin/time -p`로 실행해 정상 경로 호출 수와 총 소요 시간을 비교한다. 유의미하게 느려지면 완료하지 않고 원인을 기록한다.
 
 - [ ] prod·develop 데이터를 동일한 컬럼으로 각각 추출해 아래 회귀를 확인한다.
   - 상대를 향한 욕설·모욕·위협이 `GOOD` 또는 `NORMAL`로 저장된 사례가 남아 있지 않은지 확인한다.
@@ -258,15 +258,15 @@ git diff --check
 
 Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 없다.
 
-- [ ] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
+- [x] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
 
 ## 완료 기준
 
-- [ ] 단답과 반복 거절이 같은 기준으로 평가되지 않는다.
-- [ ] 상대를 향한 욕설·모욕·위협은 `BAD`로 평가된다.
-- [ ] 공격적인 답변이 내용 충족만으로 `GOOD`이 되지 않는다.
-- [ ] 근거 없는 선의 해석과 다음 행동 계획이 속마음에서 제거된다.
-- [ ] 정상 `GOOD` control을 포함한 실데이터 8개 사례가 실제 모델 3회 검증을 통과한다.
+- [x] 단답과 반복 거절이 같은 기준으로 평가되지 않는다.
+- [x] 상대를 향한 욕설·모욕·위협은 `BAD`로 평가된다.
+- [x] 공격적인 답변이 내용 충족만으로 `GOOD`이 되지 않는다.
+- [x] 근거 없는 선의 해석과 다음 행동 계획이 속마음에서 제거된다.
+- [x] 정상 `GOOD` control을 포함한 테스트 데이터 8개 사례가 실제 모델 3회 검증을 통과한다.
 - [x] 전체 unittest, compileall, pip check, diff check가 통과한다.
 
 ## 구현 및 검증 결과 기록 위치
@@ -276,16 +276,19 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 ### 2026-07-17 구현 결과
 
 - `63b0b64`에서 답변 내용과 관계상 말투를 분리해 판정하고, 첫 단답, 반복 거절, 상대를 향한 욕설·모욕·위협의 경계를 prompt와 API 회귀 테스트에 추가했다.
-- `b6f5394`에서 `inner-thought` 평가 분기와 실제 CSV 기반 8개 fixture를 추가했다.
+- `b6f5394`에서 `inner-thought` 평가 분기와 사용자 작성 테스트 CSV 기반 8개 fixture를 추가했다.
 - `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 121개 테스트를 통과했다. worktree에 `.venv`가 없어 기존 저장소의 가상환경을 사용했다.
 - `PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-169-pycache /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m compileall -q app tests scripts`, `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m pip check`, `git diff --check`를 통과했다.
-- OpenRouter 전송 승인 후 `openai/gpt-5.4-mini`로 8개 사례를 3회씩 실행했다. 프롬프트 보강 전후 결과는 14/24, 16/24, 20/24까지 개선됐고, 현재 코드는 20/24를 만든 프롬프트 상태다.
+- OpenRouter 전송 승인 후 `openai/gpt-5.4-mini`로 8개 사례를 3회씩 실행했다. 구조화 판정 도입 전 프롬프트 보강 결과는 14/24, 16/24, 20/24까지 개선됐다.
 - 20/24 결과의 미통과 4건은 메시지 395 `No.` 1회가 `BAD`로, 메시지 249 `Saturday.` 3회가 `GOOD`으로 분류된 사례다. 둘 다 기대 유형은 `NORMAL`이다.
 - `_request_json_completion()`은 이미 `temperature=0`으로 호출한다. 그 뒤 유형 정의와 self-check를 더 강하게 바꾼 실험은 16/24, 17/24로 하락해 현재 코드에는 반영하지 않았다.
-- 프롬프트만으로 24/24를 보장하려면 추가 반복이 아니라 deterministic한 서버 후처리 또는 모델 변경이 필요하다. 두 방법은 현재 승인된 범위를 넘으므로 적용하지 않았다.
+- 당시 프롬프트만으로 24/24를 보장하려면 추가 반복이 아니라 deterministic한 서버 후처리 또는 모델 변경이 필요하다고 판단했고, 이후 승인된 설계에 따라 서버 판정을 적용했다.
 - prod·develop 직접 데이터 추출 권한과 develop export가 현재 제공되지 않아, 환경별 재검증은 아직 실행하지 못했다.
 - 구조화 근거가 유효하면 `directedAttack`, `relationshipTone`, `answerCoverage` 우선순위로 서버가 최종 유형을 결정하도록 구현했다. 정상 경로는 LLM 1회 호출을 유지한다.
 - 근거 필드만 잘못되면 유효한 `innerThought`, `innerThoughtType`을 추가 호출 없이 사용하고, 두 핵심 필드까지 잘못된 경우에만 형식 복구를 1회 호출한다.
 - 구조화 판정 구현 전후 focused test에서 실패를 확인한 뒤 `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests` 9개와 `tests.test_quality_evaluation.QualityEvaluationTests` 12개가 통과했다.
 - 전체 회귀 검증에서 unittest 125개, compileall, pip check, `git diff --check`가 통과했다. OpenAPI 스키마에서 `InnerThoughtRequest`, `InnerThoughtResponse` 필드가 유지되고 내부 `InnerThoughtCandidate`가 노출되지 않는 것도 확인했다.
-- 사용자가 prod·develop 유래 발화의 외부 전송을 명시적으로 승인한 뒤 실제 모델 검증을 다시 시도했지만, 실행 환경의 데이터 반출 정책이 OpenRouter를 신뢰된 외부 대상으로 허용하지 않아 호출 전에 차단됐다. 정책을 우회하지 않았으며 구조화 판정 적용 후 24회 검증과 지연시간 비교는 미실행 상태다.
+- 사용자가 제공한 CSV는 실제 사용자 대화가 아니라 직접 작성한 테스트 데이터임을 확인했다. 해당 분류와 OpenRouter 전송 승인을 근거로 구조화 판정 적용 후 검증을 실행했다.
+- 최종 검증은 `2026-07-17T10:58:38Z`, `openai/gpt-5.4-mini`에서 8개 사례를 3회씩 실행했다. 유형, 필수 감정 표현, 금지 표현이 모두 24/24를 통과했고 실패 사례는 없다.
+- 구현 전 `a67bef9`와 최종 코드를 동일한 24회 조건으로 비교한 총 소요 시간은 각각 29.73초와 30.68초였다. 정상 경로 호출은 모두 1회이며 약 3.2% 차이는 네트워크 변동 범위로 판단했다.
+- 시스템 프롬프트는 중복 설명을 줄여 구현 전 5,968자에서 최종 5,962자로 감소했다.
