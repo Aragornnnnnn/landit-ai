@@ -1638,20 +1638,28 @@ class MessageFeedbackApiTests(unittest.TestCase):
             EvaluationContextType.AI_MESSAGE,
         )
 
+        self.assertIn(
+            "score contextFit as 2 only when every independent requested part is answered",
+            candidate_prompt,
+        )
+        self.assertIn(
+            "A yes-or-no answer to one question does not answer a separate open-ended question.",
+            candidate_prompt,
+        )
+        self.assertIn(
+            "When the locked type is NEEDS_IMPROVEMENT because only part",
+            copy_prompt,
+        )
         for prompt in (candidate_prompt, copy_prompt):
             self.assertIn("one most important improvement", prompt)
             self.assertIn("I'm not sure yet. I prefer to split the cleaning [your preferred way].", prompt)
             self.assertIn("I'm up at 9am, and I go to bed at [your bedtime].", prompt)
             self.assertIn(
-                "No, I haven't had a roommate situation that drove me crazy.",
+                "No, I haven't. My dealbreakers are [your dealbreakers].",
                 prompt,
             )
             self.assertIn(
-                "Do not add an answer to the second question in that correction.",
-                prompt,
-            )
-            self.assertIn(
-                "Do not use [your dealbreaker] or mention dealbreakers in correctionReason.",
+                "the missing dealbreakers answer",
                 prompt,
             )
             self.assertIn("Do not make a punctuation or spacing change", prompt)
