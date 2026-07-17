@@ -1930,6 +1930,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             make_settings(
                 openrouter_api_key="test-openrouter-key",
                 openrouter_model="openrouter-test-model",
+                openrouter_review_model="openrouter-review-model",
             ),
         )
 
@@ -1941,6 +1942,14 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            [
+                "openrouter-test-model",
+                "openrouter-review-model",
+                "openrouter-review-model",
+            ],
+        )
         self.assertTrue(
             next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
             .copy_was_repaired,
@@ -2295,6 +2304,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             make_settings(
                 openrouter_api_key="test-openrouter-key",
                 openrouter_model="openrouter-test-model",
+                openrouter_review_model="openrouter-review-model",
             ),
         )
 
@@ -2329,6 +2339,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
             review_messages[0]["content"],
         )
         self.assertIn("Candidate JSON", review_messages[1]["content"])
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            ["openrouter-test-model", "openrouter-review-model"],
+        )
         cached_feedback = get_cached_message_feedback(100, 1001)
         self.assertIsNotNone(cached_feedback)
         self.assertEqual(cached_feedback.feedbackType, "GOOD")

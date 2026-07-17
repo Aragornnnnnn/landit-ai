@@ -632,6 +632,9 @@ def main() -> None:
     report = {
         "evaluatedAt": datetime.now(timezone.utc).isoformat(),
         "model": settings.openrouter_model,
+        "reviewModel": (
+            settings.openrouter_review_model or settings.openrouter_model
+        ),
         "casesFile": str(args.cases),
         "casesSha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "runs": args.runs,

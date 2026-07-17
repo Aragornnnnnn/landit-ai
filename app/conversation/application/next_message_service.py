@@ -498,6 +498,7 @@ def _review_message_feedback_candidate(
     bool,
 ]:
     reviewed_data: dict[str, Any] | None = None
+    review_model = _message_feedback_review_model(settings)
     try:
         reviewed_data = _request_json_completion(
             settings,
@@ -512,6 +513,7 @@ def _review_message_feedback_candidate(
                 detected_patterns,
             ),
             max_tokens=768,
+            model=review_model,
         )
         (
             feedback,
@@ -554,6 +556,7 @@ def _review_message_feedback_candidate(
                 exc,
             ),
             max_tokens=768,
+            model=review_model,
         )
         (
             feedback,
@@ -923,12 +926,13 @@ def _request_json_completion(
     system_prompt: str,
     user_prompt: str,
     max_tokens: int,
+    model: str | None = None,
 ) -> dict[str, Any]:
-    model = _required_openrouter_model(settings)
+    resolved_model = model or _required_openrouter_model(settings)
     try:
         client = create_openai_client(settings)
         completion = client.chat.completions.create(
-            model=model,
+            model=resolved_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -965,6 +969,15 @@ def _required_openrouter_model(settings: Settings) -> str:
     if settings.openrouter_model is None or not settings.openrouter_model.strip():
         raise AiGenerationFailedError("OPENROUTER_MODEL is required.")
     return settings.openrouter_model
+
+
+def _message_feedback_review_model(settings: Settings) -> str:
+    if (
+        settings.openrouter_review_model is None
+        or not settings.openrouter_review_model.strip()
+    ):
+        return _required_openrouter_model(settings)
+    return settings.openrouter_review_model
 
 
 def _extract_message_content(completion: Any) -> str:

@@ -42,6 +42,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.openrouter_base_url, "https://openrouter.ai/api/v1")
         self.assertIsNone(settings.openrouter_api_key)
         self.assertIsNone(settings.openrouter_model)
+        self.assertIsNone(settings.openrouter_review_model)
         self.assertIsNone(settings.sentry_dsn)
 
     def test_settings_read_openrouter_environment_variables(self):
@@ -52,6 +53,7 @@ class SettingsTests(unittest.TestCase):
                 "OPENROUTER_API_KEY": "test-openrouter-key",
                 "OPENROUTER_BASE_URL": "https://openrouter.example/v1",
                 "OPENROUTER_MODEL": "openrouter-test-model",
+                "OPENROUTER_REVIEW_MODEL": "openrouter-review-model",
             },
             clear=True,
         ):
@@ -65,6 +67,10 @@ class SettingsTests(unittest.TestCase):
         )
         self.assertEqual(settings.openrouter_base_url, "https://openrouter.example/v1")
         self.assertEqual(settings.openrouter_model, "openrouter-test-model")
+        self.assertEqual(
+            settings.openrouter_review_model,
+            "openrouter-review-model",
+        )
 
 
 class AppFactoryTests(unittest.TestCase):

@@ -697,7 +697,10 @@ class QualityEvaluationTests(unittest.TestCase):
                 ),
                 patch(
                     "scripts.evaluate_conversation_quality.Settings",
-                    return_value=SimpleNamespace(openrouter_model="openai/test-model"),
+                    return_value=SimpleNamespace(
+                        openrouter_model="openai/test-model",
+                        openrouter_review_model="openai/review-model",
+                    ),
                 ),
                 patch(
                     "scripts.evaluate_conversation_quality.evaluate_cases",
@@ -709,6 +712,7 @@ class QualityEvaluationTests(unittest.TestCase):
             report = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(report["model"], "openai/test-model")
+        self.assertEqual(report["reviewModel"], "openai/review-model")
         self.assertEqual(report["casesFile"], str(cases_path))
         self.assertEqual(report["casesSha256"], hashlib.sha256(b"[]").hexdigest())
         self.assertEqual(report["runs"], 2)
