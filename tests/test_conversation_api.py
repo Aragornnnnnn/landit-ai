@@ -990,6 +990,16 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "I'm up at [your wake-up time].",
         )
 
+    def test_message_feedback_normalizes_line_break_in_placeholder_label(self):
+        normalized = next_message_service._normalize_message_feedback_placeholders(
+            {"correctionExpression": "I'm up at [your \n bedtime]."},
+        )
+
+        self.assertEqual(
+            normalized["correctionExpression"],
+            "I'm up at [your bedtime].",
+        )
+
     def test_message_feedback_rejects_nested_placeholder_label(self):
         with self.assertRaisesRegex(
             ValidationError,
@@ -1044,6 +1054,39 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             entry.feedback.correctionExpression,
             "I'm up at [your wake-up time], and I go to bed at [your bedtime].",
+        )
+
+    def test_message_feedback_normalizes_placeholder_line_break_without_repair(self):
+        candidate = message_feedback_candidate(
+            needs_improvement_message_feedback(1001),
+        )
+        candidate["correctionExpression"] = "I'm up at [your \n bedtime]."
+        copy = message_feedback_copy(needs_improvement_message_feedback(1001))
+        copy["correctionExpression"] = candidate["correctionExpression"]
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(copy)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        entry = next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
+        self.assertFalse(entry.candidate_was_repaired)
+        self.assertFalse(entry.copy_was_repaired)
+        self.assertEqual(
+            entry.feedback.correctionExpression,
+            "I'm up at [your bedtime].",
         )
 
     def test_message_feedback_uses_generic_candidate_until_copy_rewrites_it(self):

@@ -7,7 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN = re.compile(
-    r"\[([^\[\]\r\n]+)\]",
+    r"\[([^\[\]]+)\]",
+)
+_CORRECTION_EXPRESSION_PLACEHOLDER_LINE_BREAK_PATTERN = re.compile(
+    r"[ \t]*[\r\n]+[ \t]*",
 )
 CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE = (
     "Use [your <specific label>] placeholders only. "
@@ -34,9 +37,12 @@ def correction_expression_placeholder_labels(value: str) -> list[str]:
 
 def normalize_correction_expression_placeholders(value: str) -> str:
     def normalize_placeholder(match: re.Match[str]) -> str:
-        label = match.group(1)
+        label = _CORRECTION_EXPRESSION_PLACEHOLDER_LINE_BREAK_PATTERN.sub(
+            " ",
+            match.group(1),
+        ).strip()
         if label.startswith("your "):
-            return match.group(0)
+            return f"[{label}]"
         return f"[your {label}]"
 
     return _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.sub(
@@ -53,6 +59,8 @@ def has_supported_correction_expression_placeholders(value: str) -> bool:
         and "]" not in unparsed_value
         and all(
             label.startswith("your ") and label.removeprefix("your ").strip()
+            and "\r" not in label
+            and "\n" not in label
             for label in labels
         )
     )
