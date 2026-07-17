@@ -1148,11 +1148,18 @@ def _inner_thought_system_prompt() -> str:
             "Use GOOD when the utterance satisfies the core intent of the question or situation, is clear without guesswork, and feels acceptable for the counterpart role. "
             "Use NORMAL when the core intent is mostly satisfied but the answer lacks detail, warmth, or relationship tone, so the counterpart feels slightly unsure or underwhelmed. "
             "Use BAD when the core intent is not satisfied, the meaning is hard to understand, or the counterpart would feel confused, hurt, distant, or uncomfortable. "
+            "Judge answer relevance and relationship tone separately. "
+            "A first short answer can be NORMAL when it answers the question but feels blunt or distant. "
+            "Repeated refusal can be BAD when the full conversation shows the user repeatedly avoiding engagement. "
+            "Directed profanity, insults, or threats must be BAD even when the utterance also answers the question. "
+            "Distinguish profanity used to emphasize a situation from an attack directed at the counterpart. "
+            "Do not infer positive personality or intent without evidence from the last utterance. "
             "Do not write tutor/meta planning thoughts such as '대화 이어가기 좋다', '다음 질문으로 넘어가자', '조금 더 자연스럽게 말하면 좋겠다', or grammar feedback. "
             "Do not mention expression quality, sentence quality, grammar, naturalness, or study feedback inside innerThought. "
             "Do not leave a clear, friendly roommate answer as a generic 'I understand, but it could be more natural' thought. React to the actual content. "
             "Do not use innerThought to preview the next topic, next fixed question, or a future scenario beat. "
             "Do not write what the counterpart plans to do next. "
+            "Describe the counterpart's present feeling, not what the counterpart plans to do next. "
             "If the user says their parents decided something for them, the private reaction should reflect that family-decision context instead of only saying the user has a weak opinion. "
             "'I don't care' often feels cold or dismissive; for a friend or roommate, the private reaction should feel hurt or surprised. "
             "Direct roommate commands such as 'Buy me X' can feel like being ordered around. "
@@ -1165,6 +1172,12 @@ def _inner_thought_system_prompt() -> str:
             '{"innerThought":"매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.","innerThoughtType":"GOOD"}\n'
             "Good JSON for blunt user 'Anywhere is fine. I don't care.': "
             '{"innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아.","innerThoughtType":"BAD"}\n'
+            "Good JSON for short user 'Saturday.': "
+            '{"innerThought":"토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네.","innerThoughtType":"NORMAL"}\n'
+            "Good JSON for repeated refusal 'nonono': "
+            '{"innerThought":"계속 아니라고만 하니까 대화를 피하는 것 같아 좀 답답하다.","innerThoughtType":"BAD"}\n'
+            "Good JSON for directed insult 'My name is. Fuck you, man.': "
+            '{"innerThought":"첫 만남부터 나한테 욕을 하다니, 당황스럽고 기분이 상한다.","innerThoughtType":"BAD"}\n'
             "Bad innerThought style: '취미 얘기도 자연스럽게 이어가면 더 친해질 수 있겠다.'\n"
             "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'"
         ),

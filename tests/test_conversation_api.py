@@ -575,6 +575,26 @@ class InnerThoughtApiTests(unittest.TestCase):
             "Do not use innerThought to preview the next topic, next fixed question, or a future scenario beat.",
             messages[0]["content"],
         )
+        self.assertIn(
+            "Judge answer relevance and relationship tone separately.",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "A first short answer can be NORMAL",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Repeated refusal can be BAD",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Directed profanity, insults, or threats must be BAD",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Do not infer positive personality or intent without evidence",
+            messages[0]["content"],
+        )
 
     def test_inner_thought_invalid_ai_response_returns_502(self):
         invalid_responses = [
