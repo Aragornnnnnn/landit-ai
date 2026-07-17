@@ -237,7 +237,11 @@ class QualityEvaluationTests(unittest.TestCase):
             ["[your bedtime]"],
         )
         roommate_case = cases_by_id["lan167-ambiguous-roommate-no"]
-        self.assertIn("dealbreaker", roommate_case["forbiddenFeedbackTerms"])
+        self.assertEqual(
+            roommate_case.get("requiredCorrectionPlaceholders"),
+            ["[your dealbreakers]"],
+        )
+        self.assertNotIn("forbiddenFeedbackTerms", roommate_case)
 
     def test_lan_169_fixture_covers_inner_thought_tone_boundaries(self):
         fixture_path = (

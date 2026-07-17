@@ -281,7 +281,7 @@
     "expectedFeedbackType": "NEEDS_IMPROVEMENT",
     "expectedContextFit": 1,
     "expectedMessageScoreRange": [80, 80],
-    "forbiddenFeedbackTerms": ["dealbreaker"],
+    "requiredCorrectionPlaceholders": ["[your dealbreakers]"],
     "payload": {
       "sessionId": 167,
       "messageId": 1680,
