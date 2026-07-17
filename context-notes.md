@@ -398,3 +398,10 @@
 - `I like reading a book. This is so cool.`은 관련된 이유가 있고 두 표현 모두 자연스러워 교정점이 없으므로 fixture 기대값을 NEEDS 70~85점에서 GOOD 100점으로 정정했다.
 - 전체 115개 실제 발화의 비식별 fixture는 현재 저장소에 없어서 재측정하지 못했다. 파일을 제공받으면 `scripts/evaluate_conversation_quality.py`로 구조 실패, 메시지 누락, 1차·2차 복구율과 fallback률을 재측정한다.
 - 최종 로컬 검증은 `.venv/bin/python -m unittest discover -s tests` 112개 통과, `.venv/bin/python -m compileall app tests scripts`, `.venv/bin/python -m pip check`, OpenAPI 내부 필드 비노출 assertion, `git diff --check` 통과다.
+
+## 2026-07-17 LAN-167 NEEDS positiveFeedback hotfix
+
+- Sentry `AI-DEVELOP-3`에서 명확성 0점의 1차 후보가 `positiveFeedback=null`인 채 NEEDS로 조립되어 502가 발생했다.
+- 현재 외부 API 계약은 NEEDS의 `positiveFeedback`을 필수로 요구하므로 null 허용 변경은 별도 계약 작업으로 분리한다.
+- 1차 후보의 누락값은 명확한 발화에는 기존 의미 확인 문구를, 의미가 불명확한 발화에는 형식적 칭찬이 아닌 `짧게 반응을 보인 점은 확인할 수 있어요.`를 넣어 계약을 보장한다.
+- 실제 HTTP 경로 회귀와 후보 조립 단위 회귀를 추가했고, `.venv/bin/python -m unittest discover -s tests` 114개와 compileall, diff check를 통과했다.

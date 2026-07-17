@@ -486,12 +486,15 @@ def _complete_candidate_fallback_content(
     if (
         _feedback_type_from_score_evidence(candidate.scoreEvidence)
         != FeedbackType.NEEDS_IMPROVEMENT
-        or candidate.scoreEvidence.clarity != 2
         or candidate.positiveFeedback is not None
     ):
         return candidate
+    if candidate.scoreEvidence.clarity != 2:
+        positive_feedback = "짧게 반응을 보인 점은 확인할 수 있어요."
+    else:
+        positive_feedback = "말한 문장의 의미는 이해할 수 있어요."
     return candidate.model_copy(
-        update={"positiveFeedback": "말한 문장의 의미는 이해할 수 있어요."},
+        update={"positiveFeedback": positive_feedback},
     )
 
 

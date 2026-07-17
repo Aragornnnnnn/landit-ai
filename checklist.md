@@ -402,3 +402,9 @@
 - [x] 고정 7개 사례를 실제 `openai/gpt-5.4-mini`로 사례별 3회 재평가하고 발견 경계를 보정.
 - [x] 전체 unittest, compileall, pip check, OpenAPI 비노출, diff check 실행.
 - [ ] 비식별화한 전체 115개 실제 발화 fixture를 제공받으면 구조 실패·누락 피드백·복구율을 재측정.
+
+## 2026-07-17 LAN-167 NEEDS positiveFeedback hotfix
+
+- [x] `clarity=0` NEEDS 후보의 누락 `positiveFeedback`으로 발생한 502을 재현.
+- [x] 외부 NEEDS 계약을 유지하는 중립 기본 문구 보정 추가.
+- [x] HTTP·후보 조립 회귀 테스트와 전체 unittest, compileall, diff check 통과.

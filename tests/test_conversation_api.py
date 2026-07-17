@@ -891,6 +891,61 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertFalse(entry.candidate_was_repaired)
         self.assertIsNotNone(entry.feedback.positiveFeedback)
 
+    def test_message_feedback_returns_feedback_when_unclear_needs_candidate_omits_positive_feedback(self):
+        candidate = message_feedback_candidate(
+            needs_improvement_message_feedback(1001),
+        )
+        candidate["scoreEvidence"] = {
+            "contextFit": 0,
+            "clarity": 0,
+            "languageAccuracy": 0,
+        }
+        candidate["positiveFeedback"] = None
+        copy = message_feedback_copy(needs_improvement_message_feedback(1001))
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(copy)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        entry = next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
+        self.assertIsNotNone(entry.feedback.positiveFeedback)
+
+    def test_message_feedback_uses_neutral_positive_feedback_for_unclear_needs_candidate(self):
+        candidate = message_feedback_candidate(
+            needs_improvement_message_feedback(1001),
+        )
+        candidate["scoreEvidence"] = {
+            "contextFit": 0,
+            "clarity": 0,
+            "languageAccuracy": 0,
+        }
+        candidate["positiveFeedback"] = None
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        feedback, _, _ = next_message_service._parse_message_feedback_candidate(
+            candidate,
+            request,
+        )
+
+        self.assertEqual(
+            feedback.positiveFeedback,
+            "짧게 반응을 보인 점은 확인할 수 있어요.",
+        )
+
     def test_message_feedback_accepts_contextual_placeholder(self):
         payload = needs_improvement_message_feedback(1001)
         payload.pop("scoreEvidence")
