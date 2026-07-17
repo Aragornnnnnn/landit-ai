@@ -23,6 +23,7 @@ from app.models.conversation import (
     EvaluationContextType,
     FeedbackStatus,
     FeedbackType,
+    GoalCompletionStatus,
     InnerThoughtCandidate,
     InnerThoughtData,
     InnerThoughtRequest,
@@ -168,49 +169,56 @@ def generate_next_message(
     request: NextMessageRequest,
     settings: Settings | None = None,
 ) -> NextMessageResponse:
-    data = _request_json_completion(
+    data = _request_recoverable_json_completion(
         settings or Settings(),
         system_prompt=_next_message_system_prompt(),
         user_prompt=_next_message_user_prompt(request),
         max_tokens=512,
     )
+    return _recover_next_message_response(data, request)
+
+
+def _recover_next_message_response(
+    data: dict[str, Any],
+    request: NextMessageRequest,
+) -> NextMessageResponse:
+    ai_message = _response_text(data, "aiMessage", request.nextQuestion.questionEn)
+    translated_message = _response_text(
+        data,
+        "translatedMessage",
+        request.nextQuestion.questionKo,
+    )
+    if request.nextQuestion.questionEn not in ai_message:
+        ai_message = f"{ai_message} {request.nextQuestion.questionEn}"
+    if request.nextQuestion.questionKo not in translated_message:
+        translated_message = f"{translated_message} {request.nextQuestion.questionKo}"
     try:
-        response = NextMessageResponse.model_validate(data)
-    except ValidationError as exc:
-        raise AiResponseInvalidError from exc
-    _validate_fixed_question_in_response(request, response)
-    return response
+        status = GoalCompletionStatus(data.get("goalCompletionStatus"))
+    except (TypeError, ValueError):
+        status = GoalCompletionStatus.PARTIAL
+    return NextMessageResponse(
+        aiMessage=ai_message,
+        translatedMessage=translated_message,
+        goalCompletionStatus=status,
+    )
+
+
+def _response_text(data: dict[str, Any], key: str, fallback: str) -> str:
+    value = data.get(key)
+    return value.strip() if isinstance(value, str) and value.strip() else fallback
 
 
 def generate_inner_thought(
     request: InnerThoughtRequest,
     settings: Settings | None = None,
 ) -> InnerThoughtResponse:
-    resolved_settings = settings or Settings()
-    data: dict[str, Any] | None = None
-    try:
-        data = _request_json_completion(
-            resolved_settings,
-            system_prompt=_inner_thought_system_prompt(),
-            user_prompt=_inner_thought_user_prompt(request),
-            max_tokens=256,
-        )
-        inner_thought = _parse_inner_thought_candidate(data, request)
-    except AiResponseInvalidError as exc:
-        logger.warning(
-            "AI 속마음 생성 결과를 구조 복구합니다. "
-            "workflow=inner_thought_repair sessionId=%s messageId=%s reason=%s",
-            request.sessionId,
-            request.submittedMessageId,
-            exc.reason,
-        )
-        repaired_data = _request_json_completion(
-            resolved_settings,
-            system_prompt=_inner_thought_repair_system_prompt(),
-            user_prompt=_inner_thought_repair_user_prompt(request, data, exc),
-            max_tokens=256,
-        )
-        inner_thought = _parse_inner_thought_candidate(repaired_data, request)
+    data = _request_recoverable_json_completion(
+        settings or Settings(),
+        system_prompt=_inner_thought_system_prompt(),
+        user_prompt=_inner_thought_user_prompt(request),
+        max_tokens=256,
+    )
+    inner_thought = _parse_inner_thought_candidate(data, request)
     return InnerThoughtResponse(
         sessionId=request.sessionId,
         messageId=request.submittedMessageId,
@@ -238,24 +246,11 @@ def _parse_inner_thought_fallback(
     request: InnerThoughtRequest,
     evidence_error: ValidationError,
 ) -> InnerThoughtData:
-    allowed_fields = {
-        "answerCoverage",
-        "relationshipTone",
-        "directedAttack",
-        "innerThought",
-        "innerThoughtType",
-    }
-    if set(data) - allowed_fields:
-        raise AiResponseInvalidError("inner_thought_unknown_fields")
+    thought = _response_text(data, "innerThought", "상대의 말을 받아들이고 있다.")
     try:
-        fallback = InnerThoughtData.model_validate(
-            {
-                "innerThought": data.get("innerThought"),
-                "innerThoughtType": data.get("innerThoughtType"),
-            },
-        )
-    except ValidationError as exc:
-        raise AiResponseInvalidError("inner_thought_core_fields_invalid") from exc
+        thought_type = InnerThoughtType(data.get("innerThoughtType"))
+    except (TypeError, ValueError):
+        thought_type = InnerThoughtType.NORMAL
     invalid_fields = sorted(
         {
             str(error["loc"][0])
@@ -270,7 +265,7 @@ def _parse_inner_thought_fallback(
         request.submittedMessageId,
         ",".join(invalid_fields),
     )
-    return fallback
+    return InnerThoughtData(innerThought=thought, innerThoughtType=thought_type)
 
 
 def _inner_thought_type_from_evidence(
@@ -294,9 +289,13 @@ def generate_closing_message(
     request: ClosingMessageRequest,
     settings: Settings | None = None,
 ) -> ClosingMessageResponse:
-    response = _generate_closing_message_candidate(request, settings or Settings())
-    _validate_closing_message_policy(response)
-    return response
+    data = _request_recoverable_json_completion(
+        settings or Settings(),
+        system_prompt=_closing_message_system_prompt(),
+        user_prompt=_closing_message_user_prompt(request),
+        max_tokens=320,
+    )
+    return _recover_closing_message_response(data)
 
 
 def _generate_closing_message_candidate(
@@ -310,9 +309,44 @@ def _generate_closing_message_candidate(
         max_tokens=320,
     )
     try:
-        response = ClosingMessageResponse.model_validate(data)
+        return ClosingMessageResponse.model_validate(data)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
+
+
+def _recover_closing_message_response(
+    data: dict[str, Any],
+) -> ClosingMessageResponse:
+    has_messages = all(
+        isinstance(data.get(key), str) and data[key].strip()
+        for key in ("aiMessage", "translatedMessage")
+    )
+    ai_message = _response_text(data, "aiMessage", "Okay.") if has_messages else "Okay."
+    translated_message = (
+        _response_text(data, "translatedMessage", "알겠어.")
+        if has_messages
+        else "알겠어."
+    )
+    try:
+        thought_type = InnerThoughtType(data.get("innerThoughtType"))
+    except (TypeError, ValueError):
+        thought_type = InnerThoughtType.NORMAL
+    response = ClosingMessageResponse(
+        aiMessage=ai_message,
+        translatedMessage=translated_message,
+        innerThought=_response_text(
+            data,
+            "innerThought",
+            "상대의 말을 받아들이고 있다.",
+        ),
+        innerThoughtType=thought_type,
+    )
+    try:
+        _validate_closing_message_policy(response)
+    except AiResponseInvalidError:
+        return response.model_copy(
+            update={"aiMessage": "Okay.", "translatedMessage": "알겠어."},
+        )
     return response
 
 
@@ -321,51 +355,65 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    (
-        candidate,
-        score_evidence,
-        detected_patterns,
-        candidate_was_repaired,
-    ) = _generate_message_feedback_candidate(
-        request,
-        resolved_settings,
-    )
-    copy_was_repaired = False
-    copy_was_fallback = False
     try:
-        feedback, detected_patterns, copy_was_repaired = _review_message_feedback_copy(
-            request,
+        (
             candidate,
             score_evidence,
             detected_patterns,
+            candidate_was_repaired,
+        ) = _generate_message_feedback_candidate(
+            request,
             resolved_settings,
+        )
+        copy_was_repaired = False
+        copy_was_fallback = False
+        try:
+            feedback, detected_patterns, copy_was_repaired = _review_message_feedback_copy(
+                request,
+                candidate,
+                score_evidence,
+                detected_patterns,
+                resolved_settings,
+            )
+        except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+            logger.warning(
+                "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
+                "workflow=message_feedback_copy_fallback reason=%s "
+                "sessionId=%s messageId=%s",
+                getattr(exc, "reason", type(exc).__name__),
+                request.sessionId,
+                request.messageId,
+            )
+            feedback = candidate
+            copy_was_fallback = True
+        feedback = _postprocess_message_feedback_benchmark(
+            feedback,
+            detected_patterns,
+            request.userMessage,
+        )
+
+        _store_message_feedback(
+            request.sessionId,
+            feedback,
+            score_evidence=score_evidence,
+            user_message=request.userMessage,
+            candidate_was_repaired=candidate_was_repaired,
+            copy_was_repaired=copy_was_repaired,
+            copy_was_fallback=copy_was_fallback,
         )
     except (AiGenerationFailedError, AiResponseInvalidError) as exc:
         logger.warning(
-            "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
-            "workflow=message_feedback_copy_fallback reason=%s "
-            "sessionId=%s messageId=%s",
+            "AI 메시지별 피드백 생성에 실패해 실패 상태를 반환합니다. "
+            "workflow=message_feedback_failed reason=%s sessionId=%s messageId=%s",
             getattr(exc, "reason", type(exc).__name__),
             request.sessionId,
             request.messageId,
         )
-        feedback = candidate
-        copy_was_fallback = True
-    feedback = _postprocess_message_feedback_benchmark(
-        feedback,
-        detected_patterns,
-        request.userMessage,
-    )
-
-    _store_message_feedback(
-        request.sessionId,
-        feedback,
-        score_evidence=score_evidence,
-        user_message=request.userMessage,
-        candidate_was_repaired=candidate_was_repaired,
-        copy_was_repaired=copy_was_repaired,
-        copy_was_fallback=copy_was_fallback,
-    )
+        return MessageFeedbackResponse(
+            sessionId=request.sessionId,
+            messageId=request.messageId,
+            feedbackStatus=FeedbackStatus.FAILED,
+        )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
         messageId=request.messageId,
@@ -393,6 +441,8 @@ def _generate_message_feedback_candidate(
         )
         return feedback, score_evidence, detected_patterns, False
     except AiResponseInvalidError as exc:
+        if candidate_data is None:
+            raise
         logger.warning(
             "AI 메시지별 피드백 생성 결과를 구조 복구합니다. "
             "workflow=message_feedback_candidate_repair sessionId=%s messageId=%s",
@@ -447,6 +497,8 @@ def _review_message_feedback_copy(
         )
         return feedback, reviewed_patterns, False
     except AiResponseInvalidError as exc:
+        if reviewed_data is None:
+            raise
         logger.warning(
             "AI 메시지별 피드백 문구 검수 결과를 구조 복구합니다. "
             "workflow=message_feedback_copy_repair sessionId=%s messageId=%s",
@@ -730,19 +782,13 @@ def generate_session_feedback(
         request.expectedMessageIds,
     )
     message_feedbacks = [entry.feedback for entry in feedback_entries]
-    data = _request_json_completion(
+    data = _request_recoverable_json_completion(
         settings or Settings(),
         system_prompt=_session_feedback_system_prompt(),
         user_prompt=_session_feedback_user_prompt(request, feedback_entries),
         max_tokens=512,
     )
-    try:
-        summary = SessionFeedbackSummary.model_validate(data)
-    except ValidationError as exc:
-        raise AiResponseInvalidError from exc
-
-    if summary.sessionId != request.sessionId:
-        raise AiResponseInvalidError
+    summary = _recover_session_feedback_summary(data, request.sessionId)
 
     native_score = _native_score_from_message_feedback_entries(feedback_entries)
     response = SessionFeedbackResponse(
@@ -755,6 +801,25 @@ def generate_session_feedback(
     )
     _delete_message_feedback_cache(request.sessionId)
     return response
+
+
+def _recover_session_feedback_summary(
+    data: dict[str, Any],
+    session_id: int,
+) -> SessionFeedbackSummary:
+    return SessionFeedbackSummary(
+        sessionId=session_id,
+        highlightMessage=_response_text(
+            data,
+            "highlightMessage",
+            "이번 대화에서 영어로 자신의 생각을 표현했어요.",
+        ),
+        summaryMessage=_response_text(
+            data,
+            "summaryMessage",
+            "메시지별 피드백을 참고해 다음 대화에서 한 문장씩 더 구체적으로 말해 보세요.",
+        ),
+    )
 
 
 def clear_message_feedback_cache() -> None:
@@ -837,6 +902,24 @@ def _request_json_completion(
     except Exception as exc:
         raise AiGenerationFailedError from exc
     return _parse_json_object(_extract_message_content(completion))
+
+
+def _request_recoverable_json_completion(
+    settings: Settings,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+) -> dict[str, Any]:
+    try:
+        return _request_json_completion(
+            settings,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=max_tokens,
+        )
+    except AiResponseInvalidError as exc:
+        raise AiGenerationFailedError from exc
 
 
 def _required_openrouter_model(settings: Settings) -> str:
@@ -1306,40 +1389,6 @@ def _inner_thought_user_prompt(request: InnerThoughtRequest) -> str:
         f"Service audience: {request.scenario.serviceAudience}\n\n"
         f"Conversation history:\n{history}\n\n"
         f"Last user message: {_conversation_history_line(last_user_message)}"
-    )
-
-
-def _inner_thought_repair_system_prompt() -> str:
-    return "\n\n".join([
-        _inner_thought_system_prompt(),
-        (
-            "Structure Repair Task:\n"
-            "The previous response did not contain usable innerThought and "
-            "innerThoughtType fields. Return one complete replacement JSON object."
-        ),
-    ])
-
-
-def _inner_thought_repair_user_prompt(
-    request: InnerThoughtRequest,
-    invalid_candidate: dict[str, Any] | None,
-    error: AiResponseInvalidError,
-) -> str:
-    invalid_candidate_json = (
-        json.dumps(
-            invalid_candidate,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        if invalid_candidate is not None
-        else "null"
-    )
-    return (
-        f"{_inner_thought_user_prompt(request)}\n\n"
-        "Invalid candidate JSON:\n"
-        f"{invalid_candidate_json}\n\n"
-        "Validation failure:\n"
-        f"{error.reason}"
     )
 
 
