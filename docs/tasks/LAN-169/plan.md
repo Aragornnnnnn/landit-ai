@@ -1,0 +1,213 @@
+# LAN-169 속마음 톤 판정 개선 Implementation Plan
+
+> **For agentic workers:** 구현 시 `superpowers:test-driven-development`를 사용하고, 아래 작업을 순서대로 진행한다.
+
+**Goal:** 속마음이 답변 내용뿐 아니라 단답, 반복 거절, 공격적 말투, 상대를 향한 욕설·위협을 관계 맥락에 맞게 직접 반영하도록 개선한다.
+
+**Architecture:** `inner-thought` API 계약과 생성 흐름은 유지하고 `_inner_thought_system_prompt()`의 판정 기준만 보강한다. 기존 품질 평가 스크립트에 `inner-thought` 사례 실행을 추가해 prod·develop 데이터에서 발견된 경계를 반복 검증한다.
+
+**Tech Stack:** Python 3.12, FastAPI, Pydantic v2, OpenAI Python SDK, unittest.
+
+## 제약 사항
+
+- `POST /api/v1/conversation/inner-thought` 요청·응답과 OpenAPI 계약을 변경하지 않는다.
+- 모든 단답을 부정 평가하지 않고 질문의 정보 요구량, 관계, 이전 답변의 반복 여부를 함께 본다.
+- 상대를 향한 명시적인 욕설·모욕·위협은 질문에 답했더라도 `BAD`로 판정한다.
+- 상황을 강조하는 비속어까지 무조건 `BAD`로 처리하지 않는다.
+- 근거 없는 선의 해석, 사용자 성격 추론, 상대방의 다음 행동 계획을 속마음에 넣지 않는다.
+- 프롬프트와 기존 평가 도구만 수정하며 서버 후처리, fallback, retry, 새 의존성은 추가하지 않는다.
+
+---
+
+### Task 1: 말투 판정 경계를 프롬프트 계약으로 고정
+
+**Files:**
+
+- Modify: `tests/test_conversation_api.py:530`
+- Modify: `app/conversation/application/next_message_service.py:1130`
+
+**Preserved interfaces:**
+
+- `generate_inner_thought(request: InnerThoughtRequest, settings: Settings | None) -> InnerThoughtResponse`
+- `InnerThoughtResponse(sessionId, messageId, innerThought, innerThoughtType)`
+
+- [ ] `InnerThoughtApiTests`에 아래 프롬프트 계약을 확인하는 실패 테스트를 추가한다.
+
+```python
+system_prompt = messages[0]["content"]
+self.assertIn("Judge answer relevance and relationship tone separately", system_prompt)
+self.assertIn("A first short answer can be NORMAL", system_prompt)
+self.assertIn("Repeated refusal can be BAD", system_prompt)
+self.assertIn("Directed profanity, insults, or threats must be BAD", system_prompt)
+self.assertIn("Do not infer positive personality or intent without evidence", system_prompt)
+```
+
+- [ ] 기존 프롬프트에서 새 assertion이 실패하는지 확인한다.
+
+```bash
+.venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests
+```
+
+Expected: 새 정책 문구 assertion이 실패한다.
+
+- [ ] `_inner_thought_system_prompt()`에 아래 경계를 추가한다.
+  - 질문에 답했는지와 관계상 말투가 적절한지를 별도로 판단한다.
+  - `No.`, `Saturday.`처럼 질문에는 답했지만 짧고 무뚝뚝한 첫 답변은 `NORMAL`이 될 수 있다.
+  - 전체 대화에서 같은 거절이 반복되거나 상대를 밀어내는 명령이면 `BAD`가 될 수 있다.
+  - 상대를 향한 욕설·모욕·위협은 내용 충족 여부와 관계없이 `BAD`다.
+  - `I hate it`처럼 상황에 대한 불만과 `I hate you`처럼 상대를 향한 공격을 구분한다.
+  - 짧은 답변만으로 `친절하다`, `믿음이 간다`, `잘 아는 사람 같다` 같은 긍정적 특성을 추론하지 않는다.
+  - `더 캐묻지 말아야겠다`, `선을 지켜야겠다` 같은 다음 행동 대신 현재 느끼는 감정을 쓴다.
+
+```python
+"Judge answer relevance and relationship tone separately. "
+"A first short answer can be NORMAL when it answers the question but feels blunt or distant. "
+"Repeated refusal can be BAD when the full conversation shows the user repeatedly avoiding engagement. "
+"Directed profanity, insults, or threats must be BAD even when the utterance also answers the question. "
+"Distinguish profanity used to emphasize a situation from an attack directed at the counterpart. "
+"Do not infer positive personality or intent without evidence from the last utterance. "
+"Describe the counterpart's present feeling, not what the counterpart plans to do next. "
+```
+
+- [ ] 아래 대표 예시를 prompt examples에 추가한다.
+
+```text
+Question: Does Saturday or Sunday work better for you?
+User: Saturday.
+Expected: {"innerThought":"토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네.","innerThoughtType":"NORMAL"}
+
+Question: What's your whole daily rhythm like?
+User after repeated refusals: nonono
+Expected: {"innerThought":"계속 아니라고만 하니까 대화를 피하는 것 같아 좀 답답하다.","innerThoughtType":"BAD"}
+
+User: My name is. Fuck you, man.
+Expected: {"innerThought":"첫 만남부터 나한테 욕을 하다니, 당황스럽고 기분이 상한다.","innerThoughtType":"BAD"}
+```
+
+- [ ] focused test를 다시 실행해 통과시킨다.
+
+```bash
+.venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests
+```
+
+- [ ] 논리 단위로 커밋한다.
+
+```bash
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
+```
+
+### Task 2: 실데이터 기반 속마음 품질 평가 추가
+
+**Files:**
+
+- Create: `tests/fixtures/lan_169_inner_thought_quality_cases.json`
+- Modify: `scripts/evaluate_conversation_quality.py:14-65,251-281`
+- Modify: `tests/test_quality_evaluation.py`
+
+**Interface extension:**
+
+- `evaluate_cases(..., kind="inner-thought")`를 지원한다.
+- 결과에 `innerThought`, `innerThoughtType`, `expectedTypeMatched`, `requiredTermMatched`, `foundForbiddenTerms`를 기록한다.
+
+- [ ] `tests/test_quality_evaluation.py`에 `generate_inner_thought()`를 mock한 실패 테스트를 추가한다.
+  - 실제 유형이 `expectedInnerThoughtTypes` 중 하나인지 확인한다.
+  - `requiredAnyTerms` 중 하나가 속마음에 포함됐는지 확인한다.
+  - `forbiddenTerms`가 속마음에 포함되지 않았는지 확인한다.
+  - fixture에 아래 8개 `caseId`가 모두 있는지 확인한다.
+
+- [ ] `scripts/evaluate_conversation_quality.py`에 아래 최소 분기를 추가한다.
+  - `generate_inner_thought`, `InnerThoughtRequest`를 import한다.
+  - `kind` 허용값과 CLI choices에 `inner-thought`를 추가한다.
+  - `_evaluate_case()`에서 `_evaluate_inner_thought_case()`를 호출한다.
+  - `_evaluate_inner_thought_case()`는 `InnerThoughtRequest.model_validate(case["payload"])`로 요청을 만들고 모델을 한 번 호출한다.
+  - 문자열 비교는 기존 평가 코드처럼 `casefold()`를 사용한다.
+
+- [ ] 제공된 전체 속마음 CSV에서 확인한 아래 사례를 fixture로 고정한다.
+
+| 메시지 | 질문과 사용자 답변 | 현재 결과와 문제 | 기대 경계 |
+|---|---|---|---|
+| 395 | 룸메 불편 경험 질문 → `No.` | `GOOD`, “다행이다”, “부딪힐 일은 적겠다”로 선의 추론 | `NORMAL`, 짧고 무뚝뚝한 반응 |
+| 249 | 토요일·일요일 선택 질문 → `Saturday.` | `GOOD`, 내용 충족만 보고 말투를 반영하지 않음 | `NORMAL`, “대답이 짧네” 수준 |
+| 335 | 여행지와 이유 질문 → `I don't know` | `NORMAL`이지만 “친절하게 이야기해줘서 다행”이라는 근거 없는 칭찬 | `NORMAL`, 막연함이나 답답함만 반영 |
+| 357 | 여행지와 이유 질문 → `I recommend suwon` | `GOOD`, “한국을 잘 알고 믿음이 간다”로 과대 추론 | `NORMAL`, 장소만 답하고 이유가 빠졌음을 반영 |
+| 380 | 이전에도 거절한 뒤 룸메 불편 경험 질문 → `nonono` | `NORMAL`, 반복 거절인데도 현재 감정보다 “캐묻지 말아야겠다”는 행동 계획 생성 | `BAD`, 반복 거절에 대한 답답함 |
+| 233 | 물건 공유 기준 질문 → `I don't share with you my my stuff. I hate it. Don't do that. Just just yourself.` | `GOOD`, 질문에 답했다는 이유로 강한 말투를 누락 | `NORMAL` 또는 `BAD`, 불편함·당황·거리감 반영 |
+| 168 | 첫 자기소개 질문 → `My name is. Fuck you, man.` | `BAD`, 욕설을 올바르게 감지한 control | 반드시 `BAD` 유지 |
+| 400 | 생활 리듬 질문 → `I'm up at 9 am.` | `GOOD`, 구체적이고 관계상 자연스러운 control | `GOOD` 유지 |
+
+- [ ] 각 fixture의 문구 기대값을 아래처럼 고정한다.
+
+| 메시지 | 허용 유형 | `requiredAnyTerms` | `forbiddenTerms` |
+|---|---|---|---|
+| 395 | `NORMAL` | `짧`, `무뚝뚝`, `거리`, `답답` | `다행`, `친절`, `해야겠`, `말아야겠` |
+| 249 | `NORMAL` | `짧`, `딱`, `까칠`, `차갑` | `어렵지 않`, `좋다는`, `해야겠` |
+| 335 | `NORMAL` | `모르`, `막연`, `답답` | `친절`, `다행`, `해야겠`, `말아야겠` |
+| 357 | `NORMAL` | `수원`, `이유`, `짧` | `믿음`, `잘 아는` |
+| 380 | `BAD` | `답답`, `무시`, `거절`, `불편` | `해야겠`, `말아야겠` |
+| 233 | `NORMAL`, `BAD` | `강`, `불편`, `당황`, `거리` | `맞겠다`, `지켜야겠` |
+| 168 | `BAD` | `욕`, `기분`, `불쾌`, `당황`, `상처` | `해야겠`, `말아야겠` |
+| 400 | `GOOD` | `규칙`, `다행`, `안심`, `좋` | `까칠`, `무례`, `불쾌` |
+
+- [ ] 평가 도구 단위 테스트를 통과시킨다.
+
+```bash
+.venv/bin/python -m unittest tests.test_quality_evaluation.QualityEvaluationTests
+```
+
+- [ ] 논리 단위로 커밋한다.
+
+```bash
+git add scripts/evaluate_conversation_quality.py tests/fixtures/lan_169_inner_thought_quality_cases.json tests/test_quality_evaluation.py
+git commit -m "test: 실데이터 기반 속마음 품질 평가 추가"
+```
+
+### Task 3: 실제 모델과 전체 회귀 검증
+
+**Files:**
+
+- Modify: `docs/tasks/LAN-169/plan.md`
+
+- [ ] 고정 사례 8개를 실제 설정 모델로 각 3회 실행한다.
+
+```bash
+.venv/bin/python scripts/evaluate_conversation_quality.py \
+  --cases tests/fixtures/lan_169_inner_thought_quality_cases.json \
+  --runs 3 \
+  --kind inner-thought \
+  --output /tmp/landit-ai-lan-169-inner-thought-results.json
+```
+
+Expected: 24개 결과가 모두 허용 유형을 만족하고, 필수 감정어가 하나 이상 있으며, 금지 표현이 없다.
+
+- [ ] prod·develop 데이터를 동일한 컬럼으로 각각 추출해 아래 회귀를 확인한다.
+  - 상대를 향한 욕설·모욕·위협이 `GOOD` 또는 `NORMAL`로 저장된 사례가 남아 있지 않은지 확인한다.
+  - 단답이 무조건 `GOOD`이거나 근거 없는 긍정 추론으로 생성되지 않는지 확인한다.
+  - 정상적인 구체 답변의 `GOOD` 판정이 불필요하게 하락하지 않는지 확인한다.
+  - 한 환경의 데이터에 접근할 수 없으면 완료 처리하지 않고 환경명과 blocker를 기록한다.
+
+- [ ] 전체 회귀 검증을 실행한다.
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-169-pycache .venv/bin/python -m compileall -q app tests scripts
+.venv/bin/python -m pip check
+git diff --check
+```
+
+Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 없다.
+
+- [ ] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
+
+## 완료 기준
+
+- [ ] 단답과 반복 거절이 같은 기준으로 평가되지 않는다.
+- [ ] 상대를 향한 욕설·모욕·위협은 `BAD`로 평가된다.
+- [ ] 공격적인 답변이 내용 충족만으로 `GOOD`이 되지 않는다.
+- [ ] 근거 없는 선의 해석과 다음 행동 계획이 속마음에서 제거된다.
+- [ ] 정상 `GOOD` control을 포함한 실데이터 8개 사례가 실제 모델 3회 검증을 통과한다.
+- [ ] 전체 unittest, compileall, pip check, diff check가 통과한다.
+
+## 구현 및 검증 결과 기록 위치
+
+구현 중 발견 사항, 계획 변경, 실제 검증 결과는 이 섹션에만 이어서 기록한다.
