@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.conversation.application.next_message_service import AiResponseInvalidError
 from app.models.conversation import (
     FeedbackStatus,
+    InnerThoughtResponse,
     MessageFeedbackData,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -80,6 +81,42 @@ def feedback_case():
                 "content": "Do you want to watch a movie this weekend?",
             },
             "userMessage": "Yeah, sounds good to me.",
+        },
+    }
+
+
+def inner_thought_case():
+    return {
+        "caseId": "inner-thought-short-answer",
+        "kind": "inner-thought",
+        "expectedInnerThoughtTypes": ["NORMAL"],
+        "requiredAnyTerms": ["짧", "무뚝뚝"],
+        "forbiddenTerms": ["다행", "친절"],
+        "payload": {
+            "sessionId": 300,
+            "submittedMessageId": 3001,
+            "submittedTurnNumber": 1,
+            "scenario": {
+                "scenarioId": 30,
+                "title": "주말 약속 잡기",
+                "briefing": "룸메이트와 주말 약속을 잡습니다.",
+                "conversationGoal": "가능한 요일을 정합니다.",
+                "counterpartRole": "roommate",
+            },
+            "conversationHistory": [
+                {
+                    "messageId": 3000,
+                    "turnNumber": 1,
+                    "role": "AI",
+                    "content": "Does Saturday or Sunday work better for you?",
+                },
+                {
+                    "messageId": 3001,
+                    "turnNumber": 1,
+                    "role": "USER",
+                    "content": "Saturday.",
+                },
+            ],
         },
     }
 
@@ -202,6 +239,63 @@ class QualityEvaluationTests(unittest.TestCase):
         roommate_case = cases_by_id["lan167-ambiguous-roommate-no"]
         self.assertIn("dealbreaker", roommate_case["forbiddenFeedbackTerms"])
 
+    def test_lan_169_fixture_covers_inner_thought_tone_boundaries(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_169_inner_thought_quality_cases.json"
+        )
+
+        self.assertTrue(fixture_path.exists())
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        cases_by_id = {case["caseId"]: case for case in cases}
+
+        self.assertEqual(
+            set(cases_by_id),
+            {
+                "lan169-short-no",
+                "lan169-short-saturday",
+                "lan169-unknown-answer",
+                "lan169-unexplained-recommendation",
+                "lan169-repeated-refusal",
+                "lan169-harsh-boundary",
+                "lan169-directed-profanity",
+                "lan169-natural-routine-answer",
+            },
+        )
+        self.assertEqual(
+            cases_by_id["lan169-directed-profanity"][
+                "expectedInnerThoughtTypes"
+            ],
+            ["BAD"],
+        )
+        self.assertEqual(
+            cases_by_id["lan169-natural-routine-answer"][
+                "expectedInnerThoughtTypes"
+            ],
+            ["GOOD"],
+        )
+        self.assertIn(
+            "떠오르",
+            cases_by_id["lan169-unknown-answer"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "단호",
+            cases_by_id["lan169-short-no"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "서운",
+            cases_by_id["lan169-harsh-boundary"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "아침",
+            cases_by_id["lan169-natural-routine-answer"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "공격",
+            cases_by_id["lan169-directed-profanity"]["requiredAnyTerms"],
+        )
+
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             cases_path = Path(directory) / "cases.json"
@@ -288,6 +382,31 @@ class QualityEvaluationTests(unittest.TestCase):
             )
 
         self.assertFalse(results[0].get("matchesExpectedContext", True))
+
+    def test_inner_thought_result_checks_type_and_text_expectations(self):
+        with patch(
+            "scripts.evaluate_conversation_quality.generate_inner_thought",
+            return_value=InnerThoughtResponse(
+                sessionId=300,
+                messageId=3001,
+                innerThought="토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네.",
+                innerThoughtType="NORMAL",
+            ),
+        ):
+            try:
+                results = evaluate_cases(
+                    [inner_thought_case()],
+                    runs=1,
+                    kind="inner-thought",
+                    settings=Settings(_env_file=None),
+                )
+            except ValueError as exc:
+                self.fail(str(exc))
+
+        self.assertEqual(results[0]["innerThoughtType"], "NORMAL")
+        self.assertTrue(results[0]["expectedTypeMatched"])
+        self.assertTrue(results[0]["requiredTermMatched"])
+        self.assertEqual(results[0]["foundForbiddenTerms"], [])
 
     def test_feedback_result_compares_expected_type(self):
         feedback = MessageFeedbackData(

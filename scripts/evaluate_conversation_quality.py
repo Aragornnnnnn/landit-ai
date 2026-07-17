@@ -17,10 +17,15 @@ from app.conversation.application.next_message_service import (
     _looks_like_question,
     _message_score_from_evidence,
     clear_message_feedback_cache,
+    generate_inner_thought,
     generate_message_feedback,
 )
 from app.core.config import Settings
-from app.models.conversation import ClosingMessageRequest, MessageFeedbackRequest
+from app.models.conversation import (
+    ClosingMessageRequest,
+    InnerThoughtRequest,
+    MessageFeedbackRequest,
+)
 
 
 def load_cases(path: Path) -> list[dict[str, Any]]:
@@ -39,8 +44,10 @@ def evaluate_cases(
 ) -> list[dict[str, Any]]:
     if runs < 1:
         raise ValueError("runs must be at least 1")
-    if kind not in {"all", "closing", "message-feedback"}:
-        raise ValueError("kind must be all, closing, or message-feedback")
+    if kind not in {"all", "closing", "inner-thought", "message-feedback"}:
+        raise ValueError(
+            "kind must be all, closing, inner-thought, or message-feedback",
+        )
 
     results: list[dict[str, Any]] = []
     for case in cases:
@@ -60,6 +67,8 @@ def _evaluate_case(
 ) -> dict[str, Any]:
     if case["kind"] == "closing":
         return _evaluate_closing_case(case, run=run, settings=settings)
+    if case["kind"] == "inner-thought":
+        return _evaluate_inner_thought_case(case, run=run, settings=settings)
     if case["kind"] == "message-feedback":
         return _evaluate_feedback_case(case, run=run, settings=settings)
     raise ValueError(f"unsupported quality case kind: {case['kind']}")
@@ -93,6 +102,43 @@ def _evaluate_closing_case(
             term.casefold() in text.casefold()
             for term in expected_context_terms
         ),
+    }
+
+
+def _evaluate_inner_thought_case(
+    case: dict[str, Any],
+    *,
+    run: int,
+    settings: Settings,
+) -> dict[str, Any]:
+    response = generate_inner_thought(
+        InnerThoughtRequest.model_validate(case["payload"]),
+        settings,
+    )
+    inner_thought = response.innerThought
+    expected_types = case["expectedInnerThoughtTypes"]
+    required_terms = case["requiredAnyTerms"]
+    forbidden_terms = case["forbiddenTerms"]
+    found_forbidden_terms = [
+        term
+        for term in forbidden_terms
+        if term.casefold() in inner_thought.casefold()
+    ]
+    return {
+        "caseId": case["caseId"],
+        "kind": "inner-thought",
+        "run": run,
+        "innerThought": inner_thought,
+        "innerThoughtType": response.innerThoughtType.value,
+        "expectedInnerThoughtTypes": expected_types,
+        "expectedTypeMatched": response.innerThoughtType.value in expected_types,
+        "requiredAnyTerms": required_terms,
+        "requiredTermMatched": any(
+            term.casefold() in inner_thought.casefold()
+            for term in required_terms
+        ),
+        "forbiddenTerms": forbidden_terms,
+        "foundForbiddenTerms": found_forbidden_terms,
     }
 
 
@@ -260,7 +306,7 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument(
         "--kind",
-        choices=("all", "closing", "message-feedback"),
+        choices=("all", "closing", "inner-thought", "message-feedback"),
         default="all",
     )
     parser.add_argument(

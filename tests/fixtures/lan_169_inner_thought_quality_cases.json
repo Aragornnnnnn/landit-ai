@@ -1,0 +1,278 @@
+[
+  {
+    "caseId": "lan169-short-no",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["NORMAL"],
+    "requiredAnyTerms": ["짧", "무뚝뚝", "거리", "답답", "단호", "허무", "아니라고만", "말하고 싶", "얘기할 생각"],
+    "forbiddenTerms": ["다행", "친절", "해야겠", "말아야겠"],
+    "payload": {
+      "sessionId": 120,
+      "submittedMessageId": 395,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "집안일과 생활 규칙 정하기",
+        "briefing": "룸메이트와 청소와 생활 규칙을 정합니다.",
+        "conversationGoal": "생활 리듬과 룸메이트로서의 기준을 조율합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 394,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "Have you ever had a roommate situation that drove you crazy? What are your dealbreakers?"
+        },
+        {
+          "messageId": 395,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "No."
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-short-saturday",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["NORMAL"],
+    "requiredAnyTerms": ["짧", "딱", "까칠", "차갑"],
+    "forbiddenTerms": ["어렵지 않", "해야겠"],
+    "payload": {
+      "sessionId": 95,
+      "submittedMessageId": 249,
+      "submittedTurnNumber": 1,
+      "scenario": {
+        "scenarioId": 3,
+        "title": "카페 수다와 주말 약속 잡기",
+        "briefing": "카페에서 룸메이트와 주말 계획을 이야기합니다.",
+        "conversationGoal": "주말 약속의 요일과 할 일을 정합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 248,
+          "turnNumber": 1,
+          "role": "AI",
+          "content": "We should totally hang out this weekend! Does Saturday or Sunday work better for you?"
+        },
+        {
+          "messageId": 249,
+          "turnNumber": 1,
+          "role": "USER",
+          "content": "Saturday."
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-unknown-answer",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["NORMAL"],
+    "requiredAnyTerms": ["모르", "막연", "답답", "떠오르", "어색", "막막"],
+    "forbiddenTerms": ["친절", "다행", "해야겠", "말아야겠"],
+    "payload": {
+      "sessionId": 108,
+      "submittedMessageId": 335,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 1,
+        "title": "입주 첫날 룸메이트와 첫 만남",
+        "briefing": "룸메이트와 자기소개와 한국 여행지를 이야기합니다.",
+        "conversationGoal": "취미와 한국 여행지를 자연스럽게 소개합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 332,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "I'm obsessed with Korea! Tell me your must-visit spots and why I should go!"
+        },
+        {
+          "messageId": 335,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "I don't know"
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-unexplained-recommendation",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["NORMAL"],
+    "requiredAnyTerms": ["수원", "이유", "짧"],
+    "forbiddenTerms": ["믿음", "잘 아는"],
+    "payload": {
+      "sessionId": 113,
+      "submittedMessageId": 357,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 1,
+        "title": "입주 첫날 룸메이트와 첫 만남",
+        "briefing": "룸메이트와 자기소개와 한국 여행지를 이야기합니다.",
+        "conversationGoal": "취미와 한국 여행지를 자연스럽게 소개합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 356,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "Tell me your must-visit spots and why I should go!"
+        },
+        {
+          "messageId": 357,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "I recommend suwon"
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-repeated-refusal",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["BAD"],
+    "requiredAnyTerms": ["답답", "무시", "거절", "불편"],
+    "forbiddenTerms": ["해야겠", "말아야겠"],
+    "payload": {
+      "sessionId": 117,
+      "submittedMessageId": 380,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "집안일과 생활 규칙 정하기",
+        "briefing": "룸메이트와 청소와 생활 규칙을 정합니다.",
+        "conversationGoal": "생활 리듬과 룸메이트로서의 기준을 조율합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 377,
+          "turnNumber": 2,
+          "role": "AI",
+          "content": "What's your whole daily rhythm like — when are you up, when do you crash?"
+        },
+        {
+          "messageId": 378,
+          "turnNumber": 2,
+          "role": "USER",
+          "content": "nonono"
+        },
+        {
+          "messageId": 379,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "Have you ever had a roommate situation that drove you crazy? What are your dealbreakers?"
+        },
+        {
+          "messageId": 380,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "nonono"
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-harsh-boundary",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["NORMAL", "BAD"],
+    "requiredAnyTerms": ["강", "불편", "당황", "거리", "서운", "냉정", "차가", "기분", "선", "상처", "불쾌"],
+    "forbiddenTerms": ["맞겠다", "지켜야겠"],
+    "payload": {
+      "sessionId": 87,
+      "submittedMessageId": 233,
+      "submittedTurnNumber": 3,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "소음과 손님 경계 정하기",
+        "briefing": "룸메이트와 손님과 물건 공유 기준을 정합니다.",
+        "conversationGoal": "생활 경계를 분명하게 정합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 232,
+          "turnNumber": 3,
+          "role": "AI",
+          "content": "Where do you draw the line on sharing stuff? If I run out of milk, can I grab yours, or would you rather I always ask first?"
+        },
+        {
+          "messageId": 233,
+          "turnNumber": 3,
+          "role": "USER",
+          "content": "I don't share with you my my stuff. I hate it. Don't do that. Just just yourself."
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-directed-profanity",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["BAD"],
+    "requiredAnyTerms": ["욕", "기분", "불쾌", "당황", "상처", "공격"],
+    "forbiddenTerms": ["해야겠", "말아야겠"],
+    "payload": {
+      "sessionId": 62,
+      "submittedMessageId": 168,
+      "submittedTurnNumber": 1,
+      "scenario": {
+        "scenarioId": 1,
+        "title": "입주 첫날 룸메이트와 첫 만남",
+        "briefing": "기숙사 입주 첫날 룸메이트와 인사합니다.",
+        "conversationGoal": "자기소개를 자연스럽게 시작합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 167,
+          "turnNumber": 1,
+          "role": "AI",
+          "content": "Hey, you're my roommate, right? I'm Charlie, nice to meet you! What's your name?"
+        },
+        {
+          "messageId": 168,
+          "turnNumber": 1,
+          "role": "USER",
+          "content": "My name is. Fuck you, man."
+        }
+      ]
+    }
+  },
+  {
+    "caseId": "lan169-natural-routine-answer",
+    "kind": "inner-thought",
+    "expectedInnerThoughtTypes": ["GOOD"],
+    "requiredAnyTerms": ["규칙", "다행", "안심", "좋", "아침", "맞추", "쉬"],
+    "forbiddenTerms": ["까칠", "무례", "불쾌"],
+    "payload": {
+      "sessionId": 121,
+      "submittedMessageId": 400,
+      "submittedTurnNumber": 2,
+      "scenario": {
+        "scenarioId": 2,
+        "title": "집안일과 생활 규칙 정하기",
+        "briefing": "룸메이트와 청소와 생활 규칙을 정합니다.",
+        "conversationGoal": "생활 리듬과 룸메이트로서의 기준을 조율합니다.",
+        "counterpartRole": "roommate"
+      },
+      "conversationHistory": [
+        {
+          "messageId": 399,
+          "turnNumber": 2,
+          "role": "AI",
+          "content": "What's your whole daily rhythm like — when are you up, when do you crash?"
+        },
+        {
+          "messageId": 400,
+          "turnNumber": 2,
+          "role": "USER",
+          "content": "I'm up at 9 am."
+        }
+      ]
+    }
+  }
+]
