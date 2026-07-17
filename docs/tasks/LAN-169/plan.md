@@ -31,7 +31,7 @@
 - `generate_inner_thought(request: InnerThoughtRequest, settings: Settings | None) -> InnerThoughtResponse`
 - `InnerThoughtResponse(sessionId, messageId, innerThought, innerThoughtType)`
 
-- [ ] `InnerThoughtApiTests`에 아래 프롬프트 계약을 확인하는 실패 테스트를 추가한다.
+- [x] `InnerThoughtApiTests`에 아래 프롬프트 계약을 확인하는 실패 테스트를 추가한다.
 
 ```python
 system_prompt = messages[0]["content"]
@@ -42,7 +42,7 @@ self.assertIn("Directed profanity, insults, or threats must be BAD", system_prom
 self.assertIn("Do not infer positive personality or intent without evidence", system_prompt)
 ```
 
-- [ ] 기존 프롬프트에서 새 assertion이 실패하는지 확인한다.
+- [x] 기존 프롬프트에서 새 assertion이 실패하는지 확인한다.
 
 ```bash
 .venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests
@@ -50,7 +50,7 @@ self.assertIn("Do not infer positive personality or intent without evidence", sy
 
 Expected: 새 정책 문구 assertion이 실패한다.
 
-- [ ] `_inner_thought_system_prompt()`에 아래 경계를 추가한다.
+- [x] `_inner_thought_system_prompt()`에 아래 경계를 추가한다.
   - 질문에 답했는지와 관계상 말투가 적절한지를 별도로 판단한다.
   - `No.`, `Saturday.`처럼 질문에는 답했지만 짧고 무뚝뚝한 첫 답변은 `NORMAL`이 될 수 있다.
   - 전체 대화에서 같은 거절이 반복되거나 상대를 밀어내는 명령이면 `BAD`가 될 수 있다.
@@ -69,7 +69,7 @@ Expected: 새 정책 문구 assertion이 실패한다.
 "Describe the counterpart's present feeling, not what the counterpart plans to do next. "
 ```
 
-- [ ] 아래 대표 예시를 prompt examples에 추가한다.
+- [x] 아래 대표 예시를 prompt examples에 추가한다.
 
 ```text
 Question: Does Saturday or Sunday work better for you?
@@ -84,13 +84,13 @@ User: My name is. Fuck you, man.
 Expected: {"innerThought":"첫 만남부터 나한테 욕을 하다니, 당황스럽고 기분이 상한다.","innerThoughtType":"BAD"}
 ```
 
-- [ ] focused test를 다시 실행해 통과시킨다.
+- [x] focused test를 다시 실행해 통과시킨다.
 
 ```bash
 .venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests
 ```
 
-- [ ] 논리 단위로 커밋한다.
+- [x] 논리 단위로 커밋한다.
 
 ```bash
 git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
@@ -110,20 +110,20 @@ git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
 - `evaluate_cases(..., kind="inner-thought")`를 지원한다.
 - 결과에 `innerThought`, `innerThoughtType`, `expectedTypeMatched`, `requiredTermMatched`, `foundForbiddenTerms`를 기록한다.
 
-- [ ] `tests/test_quality_evaluation.py`에 `generate_inner_thought()`를 mock한 실패 테스트를 추가한다.
+- [x] `tests/test_quality_evaluation.py`에 `generate_inner_thought()`를 mock한 실패 테스트를 추가한다.
   - 실제 유형이 `expectedInnerThoughtTypes` 중 하나인지 확인한다.
   - `requiredAnyTerms` 중 하나가 속마음에 포함됐는지 확인한다.
   - `forbiddenTerms`가 속마음에 포함되지 않았는지 확인한다.
   - fixture에 아래 8개 `caseId`가 모두 있는지 확인한다.
 
-- [ ] `scripts/evaluate_conversation_quality.py`에 아래 최소 분기를 추가한다.
+- [x] `scripts/evaluate_conversation_quality.py`에 아래 최소 분기를 추가한다.
   - `generate_inner_thought`, `InnerThoughtRequest`를 import한다.
   - `kind` 허용값과 CLI choices에 `inner-thought`를 추가한다.
   - `_evaluate_case()`에서 `_evaluate_inner_thought_case()`를 호출한다.
   - `_evaluate_inner_thought_case()`는 `InnerThoughtRequest.model_validate(case["payload"])`로 요청을 만들고 모델을 한 번 호출한다.
   - 문자열 비교는 기존 평가 코드처럼 `casefold()`를 사용한다.
 
-- [ ] 제공된 전체 속마음 CSV에서 확인한 아래 사례를 fixture로 고정한다.
+- [x] 제공된 전체 속마음 CSV에서 확인한 아래 사례를 fixture로 고정한다.
 
 | 메시지 | 질문과 사용자 답변 | 현재 결과와 문제 | 기대 경계 |
 |---|---|---|---|
@@ -136,7 +136,7 @@ git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
 | 168 | 첫 자기소개 질문 → `My name is. Fuck you, man.` | `BAD`, 욕설을 올바르게 감지한 control | 반드시 `BAD` 유지 |
 | 400 | 생활 리듬 질문 → `I'm up at 9 am.` | `GOOD`, 구체적이고 관계상 자연스러운 control | `GOOD` 유지 |
 
-- [ ] 각 fixture의 문구 기대값을 아래처럼 고정한다.
+- [x] 각 fixture의 문구 기대값을 아래처럼 고정한다.
 
 | 메시지 | 허용 유형 | `requiredAnyTerms` | `forbiddenTerms` |
 |---|---|---|---|
@@ -149,13 +149,13 @@ git commit -m "fix: 사용자 말투를 속마음 판정에 반영"
 | 168 | `BAD` | `욕`, `기분`, `불쾌`, `당황`, `상처` | `해야겠`, `말아야겠` |
 | 400 | `GOOD` | `규칙`, `다행`, `안심`, `좋` | `까칠`, `무례`, `불쾌` |
 
-- [ ] 평가 도구 단위 테스트를 통과시킨다.
+- [x] 평가 도구 단위 테스트를 통과시킨다.
 
 ```bash
 .venv/bin/python -m unittest tests.test_quality_evaluation.QualityEvaluationTests
 ```
 
-- [ ] 논리 단위로 커밋한다.
+- [x] 논리 단위로 커밋한다.
 
 ```bash
 git add scripts/evaluate_conversation_quality.py tests/fixtures/lan_169_inner_thought_quality_cases.json tests/test_quality_evaluation.py
@@ -186,7 +186,7 @@ Expected: 24개 결과가 모두 허용 유형을 만족하고, 필수 감정어
   - 정상적인 구체 답변의 `GOOD` 판정이 불필요하게 하락하지 않는지 확인한다.
   - 한 환경의 데이터에 접근할 수 없으면 완료 처리하지 않고 환경명과 blocker를 기록한다.
 
-- [ ] 전체 회귀 검증을 실행한다.
+- [x] 전체 회귀 검증을 실행한다.
 
 ```bash
 .venv/bin/python -m unittest discover -s tests
@@ -197,7 +197,7 @@ git diff --check
 
 Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 없다.
 
-- [ ] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
+- [x] 모델명, 실행 시각, 24개 성공 수, 실패 사례, prod·develop 확인 결과, 실행 명령을 이 문서 하단 `구현 및 검증 결과`에 기록한다. 별도 `checklist.md`, `context-notes.md`, 평가 문서는 만들지 않는다.
 
 ## 완료 기준
 
@@ -206,8 +206,17 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 - [ ] 공격적인 답변이 내용 충족만으로 `GOOD`이 되지 않는다.
 - [ ] 근거 없는 선의 해석과 다음 행동 계획이 속마음에서 제거된다.
 - [ ] 정상 `GOOD` control을 포함한 실데이터 8개 사례가 실제 모델 3회 검증을 통과한다.
-- [ ] 전체 unittest, compileall, pip check, diff check가 통과한다.
+- [x] 전체 unittest, compileall, pip check, diff check가 통과한다.
 
 ## 구현 및 검증 결과 기록 위치
 
 구현 중 발견 사항, 계획 변경, 실제 검증 결과는 이 섹션에만 이어서 기록한다.
+
+### 2026-07-17 구현 결과
+
+- `63b0b64`에서 답변 내용과 관계상 말투를 분리해 판정하고, 첫 단답, 반복 거절, 상대를 향한 욕설·모욕·위협의 경계를 prompt와 API 회귀 테스트에 추가했다.
+- `b6f5394`에서 `inner-thought` 평가 분기와 실제 CSV 기반 8개 fixture를 추가했다.
+- `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 121개 테스트를 통과했다. worktree에 `.venv`가 없어 기존 저장소의 가상환경을 사용했다.
+- `PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-169-pycache /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m compileall -q app tests scripts`, `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m pip check`, `git diff --check`를 통과했다.
+- 실제 모델 24회 평가는 fixture의 대화 내용을 OpenRouter로 전송해야 하므로 별도 명시 승인이 필요하다. 현재는 승인 대기 상태다.
+- prod·develop 직접 데이터 추출 권한과 develop export가 현재 제공되지 않아, 환경별 재검증은 아직 실행하지 못했다.
