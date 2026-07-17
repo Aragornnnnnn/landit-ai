@@ -2,10 +2,19 @@ name: Deploy prod worker
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: '배포 버전. 예시 1.2.0'
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+
+concurrency:
+  group: prod-worker-deploy
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ap-northeast-2
@@ -38,6 +47,25 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must use MAJOR.MINOR.PATCH format"
+            exit 1
+          fi
+
+          release_tag="ai-v$RELEASE_VERSION"
+          if git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null; then
+            echo "$release_tag already exists"
+            exit 1
+          fi
+
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -143,3 +171,17 @@ jobs:
           else
             echo "desired count is 0; skipping services-stable wait"
           fi
+
+      - name: Publish Git tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "$RELEASE_TAG 프로덕션 배포"
+          git push origin "$RELEASE_TAG"
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --generate-notes
