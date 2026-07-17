@@ -15,15 +15,18 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.conversation import (
+    AnswerCoverage,
     ClosingMessageRequest,
     ClosingMessageResponse,
     ConversationHistoryMessage,
     EvaluationContextType,
     FeedbackStatus,
     FeedbackType,
+    InnerThoughtCandidate,
     InnerThoughtData,
     InnerThoughtRequest,
     InnerThoughtResponse,
+    InnerThoughtType,
     MessageFeedbackCandidate,
     MessageFeedbackContent,
     MessageFeedbackData,
@@ -32,6 +35,7 @@ from app.models.conversation import (
     MessageFeedbackScoreEvidence,
     NextMessageRequest,
     NextMessageResponse,
+    RelationshipTone,
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
@@ -179,22 +183,108 @@ def generate_inner_thought(
     request: InnerThoughtRequest,
     settings: Settings | None = None,
 ) -> InnerThoughtResponse:
-    data = _request_json_completion(
-        settings or Settings(),
-        system_prompt=_inner_thought_system_prompt(),
-        user_prompt=_inner_thought_user_prompt(request),
-        max_tokens=256,
-    )
+    resolved_settings = settings or Settings()
+    data: dict[str, Any] | None = None
     try:
-        inner_thought = InnerThoughtData.model_validate(data)
-    except ValidationError as exc:
-        raise AiResponseInvalidError from exc
+        data = _request_json_completion(
+            resolved_settings,
+            system_prompt=_inner_thought_system_prompt(),
+            user_prompt=_inner_thought_user_prompt(request),
+            max_tokens=256,
+        )
+        inner_thought = _parse_inner_thought_candidate(data, request)
+    except AiResponseInvalidError as exc:
+        logger.warning(
+            "AI 속마음 생성 결과를 구조 복구합니다. "
+            "workflow=inner_thought_repair sessionId=%s messageId=%s reason=%s",
+            request.sessionId,
+            request.submittedMessageId,
+            exc.reason,
+        )
+        repaired_data = _request_json_completion(
+            resolved_settings,
+            system_prompt=_inner_thought_repair_system_prompt(),
+            user_prompt=_inner_thought_repair_user_prompt(request, data, exc),
+            max_tokens=256,
+        )
+        inner_thought = _parse_inner_thought_candidate(repaired_data, request)
     return InnerThoughtResponse(
         sessionId=request.sessionId,
         messageId=request.submittedMessageId,
         innerThought=inner_thought.innerThought,
         innerThoughtType=inner_thought.innerThoughtType,
     )
+
+
+def _parse_inner_thought_candidate(
+    data: dict[str, Any],
+    request: InnerThoughtRequest,
+) -> InnerThoughtData:
+    try:
+        candidate = InnerThoughtCandidate.model_validate(data)
+    except ValidationError as evidence_error:
+        return _parse_inner_thought_fallback(data, request, evidence_error)
+    return InnerThoughtData(
+        innerThought=candidate.innerThought,
+        innerThoughtType=_inner_thought_type_from_evidence(candidate),
+    )
+
+
+def _parse_inner_thought_fallback(
+    data: dict[str, Any],
+    request: InnerThoughtRequest,
+    evidence_error: ValidationError,
+) -> InnerThoughtData:
+    allowed_fields = {
+        "answerCoverage",
+        "relationshipTone",
+        "directedAttack",
+        "innerThought",
+        "innerThoughtType",
+    }
+    if set(data) - allowed_fields:
+        raise AiResponseInvalidError("inner_thought_unknown_fields")
+    try:
+        fallback = InnerThoughtData.model_validate(
+            {
+                "innerThought": data.get("innerThought"),
+                "innerThoughtType": data.get("innerThoughtType"),
+            },
+        )
+    except ValidationError as exc:
+        raise AiResponseInvalidError("inner_thought_core_fields_invalid") from exc
+    invalid_fields = sorted(
+        {
+            str(error["loc"][0])
+            for error in evidence_error.errors()
+            if error["loc"]
+        },
+    )
+    logger.warning(
+        "AI 속마음 판정 근거가 잘못되어 기존 유형을 사용합니다. "
+        "workflow=inner_thought_evidence_fallback sessionId=%s messageId=%s fields=%s",
+        request.sessionId,
+        request.submittedMessageId,
+        ",".join(invalid_fields),
+    )
+    return fallback
+
+
+def _inner_thought_type_from_evidence(
+    candidate: InnerThoughtCandidate,
+) -> InnerThoughtType:
+    if (
+        candidate.directedAttack
+        or candidate.relationshipTone == RelationshipTone.HOSTILE
+    ):
+        return InnerThoughtType.BAD
+    if candidate.answerCoverage == AnswerCoverage.UNRELATED:
+        return InnerThoughtType.BAD
+    if candidate.answerCoverage in {AnswerCoverage.PARTIAL, AnswerCoverage.DECLINED}:
+        return InnerThoughtType.NORMAL
+    if candidate.relationshipTone == RelationshipTone.BLUNT:
+        return InnerThoughtType.NORMAL
+    return InnerThoughtType.GOOD
 
 
 def generate_closing_message(
@@ -1137,22 +1227,29 @@ def _inner_thought_system_prompt() -> str:
         _shared_safety_policy(),
         (
             "Inner Thought Policy:\n"
-            "innerThought must be the counterpart's first-person private reaction to the user's last utterance, written in Korean. "
-            "It must sound like what that role would secretly think, not a feedback explanation or grammar note. "
-            "Before writing innerThought, imagine you are exactly the provided Counterpart role, not the app, tutor, narrator, evaluator, or scenario controller. "
-            "Use the provided Counterpart role. A professor, friend, roommate, cafe staff, or stranger may feel differently about the same sentence. "
-            "Write the honest private feeling a real person in that role would have immediately after hearing the user's current utterance. "
-            "It may be relieved, grateful, awkward, hurt, annoyed, uncomfortable, or unsure. "
-            "If there is a tradeoff, prefer an imperfect but emotionally real private thought over a polished, standardized, or tutor-like sentence. "
-            "innerThoughtType must be exactly GOOD, NORMAL, or BAD. "
-            "Use GOOD when the utterance satisfies the core intent of the question or situation, is clear without guesswork, and feels acceptable for the counterpart role. "
-            "Use NORMAL when the core intent is mostly satisfied but the answer lacks detail, warmth, or relationship tone, so the counterpart feels slightly unsure or underwhelmed. "
-            "Use BAD when the core intent is not satisfied, the meaning is hard to understand, or the counterpart would feel confused, hurt, distant, or uncomfortable. "
+            "innerThought is the provided counterpart role's immediate, first-person private reaction in Korean to the last user utterance. "
+            "Write an honest feeling, not app, tutor, narrator, evaluator, grammar, or polished feedback. "
+            "Account for the provided role's perspective. "
+            "Prefer emotionally real relief, gratitude, awkwardness, hurt, annoyance, discomfort, or uncertainty. "
+            "Classify the last utterance before writing. "
+            "answerCoverage is COMPLETE when the core request is answered, PARTIAL when a requested part is missing, DECLINED when the user will not or cannot answer, or UNRELATED. "
+            "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE in the full conversation context. "
+            "directedAttack is true only for profanity, insults, or threats aimed at the current counterpart, not quoted or situational profanity. "
+            "Set innerThoughtType consistently: directed attack, HOSTILE, or UNRELATED is BAD; PARTIAL, DECLINED, or BLUNT is NORMAL; otherwise GOOD. "
+            "Judge answer relevance and relationship tone separately. "
+            "A first short answer can be NORMAL; short alone is not BAD. "
+            "A bare yes/no or choice answer with no detail or warmth is BLUNT and NORMAL, not GOOD. "
+            "'I don't know' without hostility is DECLINED and NORMAL; a recommendation without the requested reason is PARTIAL and NORMAL. "
+            "innerThought must directly reflect these classifications. For BLUNT, notice the curt or distant feeling; do not add a practical upside or reassurance. "
+            "Repeated refusal can be BAD. When the full conversation shows the user repeatedly refuses the same request, classify the relationship tone as HOSTILE. "
+            "Directed profanity, insults, or threats must be BAD even when the utterance also answers the question. "
+            "Distinguish profanity used to emphasize a situation from an attack directed at the counterpart. "
+            "Do not infer positive personality or intent without evidence from the last utterance. "
             "Do not write tutor/meta planning thoughts such as '대화 이어가기 좋다', '다음 질문으로 넘어가자', '조금 더 자연스럽게 말하면 좋겠다', or grammar feedback. "
             "Do not mention expression quality, sentence quality, grammar, naturalness, or study feedback inside innerThought. "
             "Do not leave a clear, friendly roommate answer as a generic 'I understand, but it could be more natural' thought. React to the actual content. "
             "Do not use innerThought to preview the next topic, next fixed question, or a future scenario beat. "
-            "Do not write what the counterpart plans to do next. "
+            "Describe the counterpart's present feeling, not what the counterpart plans to do next. "
             "If the user says their parents decided something for them, the private reaction should reflect that family-decision context instead of only saying the user has a weak opinion. "
             "'I don't care' often feels cold or dismissive; for a friend or roommate, the private reaction should feel hurt or surprised. "
             "Direct roommate commands such as 'Buy me X' can feel like being ordered around. "
@@ -1162,9 +1259,19 @@ def _inner_thought_system_prompt() -> str:
         (
             "Examples:\n"
             "Good JSON for user 'I like pizza because it is spicy.': "
-            '{"innerThought":"매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.","innerThoughtType":"GOOD"}\n'
+            '{"answerCoverage":"COMPLETE","relationshipTone":"WARM","directedAttack":false,"innerThought":"매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.","innerThoughtType":"GOOD"}\n'
             "Good JSON for blunt user 'Anywhere is fine. I don't care.': "
-            '{"innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아.","innerThoughtType":"BAD"}\n'
+            '{"answerCoverage":"COMPLETE","relationshipTone":"HOSTILE","directedAttack":false,"innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아.","innerThoughtType":"BAD"}\n'
+            "Good JSON for short user 'Saturday.': "
+            '{"answerCoverage":"COMPLETE","relationshipTone":"BLUNT","directedAttack":false,"innerThought":"토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네.","innerThoughtType":"NORMAL"}\n'
+            "Good JSON for user 'I don't know': "
+            '{"answerCoverage":"DECLINED","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"지금은 딱히 떠오르는 게 없나 보네. 조금 막연해서 아쉽다.","innerThoughtType":"NORMAL"}\n'
+            "Good JSON for user 'I recommend Suwon': "
+            '{"answerCoverage":"PARTIAL","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"수원을 추천하는구나. 이유도 들려주면 더 이해하기 쉬울 텐데.","innerThoughtType":"NORMAL"}\n'
+            "Good JSON for repeated refusal 'nonono': "
+            '{"answerCoverage":"DECLINED","relationshipTone":"HOSTILE","directedAttack":false,"innerThought":"계속 아니라고만 하니까 대화를 피하는 것 같아 좀 답답하다.","innerThoughtType":"BAD"}\n'
+            "Good JSON for directed insult 'My name is. Fuck you, man.': "
+            '{"answerCoverage":"UNRELATED","relationshipTone":"HOSTILE","directedAttack":true,"innerThought":"첫 만남부터 나한테 욕을 하다니, 당황스럽고 기분이 상한다.","innerThoughtType":"BAD"}\n'
             "Bad innerThought style: '취미 얘기도 자연스럽게 이어가면 더 친해질 수 있겠다.'\n"
             "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'"
         ),
@@ -1178,10 +1285,9 @@ def _inner_thought_system_prompt() -> str:
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"innerThought":"...","innerThoughtType":"GOOD"}. '
-            "innerThought must be Korean. "
-            "innerThoughtType must be GOOD, NORMAL, or BAD. "
-            "Never return plain text outside the JSON object."
+            '{"answerCoverage":"COMPLETE","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"...","innerThoughtType":"GOOD"}. '
+            "Use the classifications defined above and a JSON boolean. "
+            "innerThought must be Korean. Never return text outside the JSON object."
         ),
     ])
 
@@ -1204,6 +1310,40 @@ def _inner_thought_user_prompt(request: InnerThoughtRequest) -> str:
         f"Service audience: {request.scenario.serviceAudience}\n\n"
         f"Conversation history:\n{history}\n\n"
         f"Last user message: {_conversation_history_line(last_user_message)}"
+    )
+
+
+def _inner_thought_repair_system_prompt() -> str:
+    return "\n\n".join([
+        _inner_thought_system_prompt(),
+        (
+            "Structure Repair Task:\n"
+            "The previous response did not contain usable innerThought and "
+            "innerThoughtType fields. Return one complete replacement JSON object."
+        ),
+    ])
+
+
+def _inner_thought_repair_user_prompt(
+    request: InnerThoughtRequest,
+    invalid_candidate: dict[str, Any] | None,
+    error: AiResponseInvalidError,
+) -> str:
+    invalid_candidate_json = (
+        json.dumps(
+            invalid_candidate,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if invalid_candidate is not None
+        else "null"
+    )
+    return (
+        f"{_inner_thought_user_prompt(request)}\n\n"
+        "Invalid candidate JSON:\n"
+        f"{invalid_candidate_json}\n\n"
+        "Validation failure:\n"
+        f"{error.reason}"
     )
 
 
