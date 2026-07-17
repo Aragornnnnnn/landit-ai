@@ -226,6 +226,26 @@ def message_feedback_copy(feedback):
     return message_feedback_candidate(feedback)
 
 
+def message_feedback_candidate_with_evidence(
+    feedback,
+    *,
+    coverage_evidence=None,
+    ignored_speech_artifacts=None,
+    actionable_issues=None,
+):
+    candidate = message_feedback_candidate(feedback)
+    candidate["coverageEvidence"] = coverage_evidence or [
+        {
+            "requestExcerpt": "Can I have your phone number?",
+            "answerExcerpt": "why do you wanna know that?",
+            "status": "ANSWERED",
+        },
+    ]
+    candidate["ignoredSpeechArtifacts"] = ignored_speech_artifacts or []
+    candidate["actionableIssues"] = actionable_issues or []
+    return candidate
+
+
 def partial_hobby_feedback(message_id=1001):
     return {
         "messageId": message_id,
@@ -251,6 +271,50 @@ def message_feedback_responses(feedback, user_message):
     candidate.pop("messageId", None)
     candidate.pop("feedbackType", None)
     return [json.dumps(candidate), json.dumps(candidate)]
+
+
+def add_default_message_feedback_evidence(content, user_prompt):
+    try:
+        candidate = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return content
+    if not isinstance(candidate, dict) or "scoreEvidence" not in candidate:
+        return content
+    if "coverageEvidence" in candidate:
+        return content
+
+    evaluation_context = user_prompt.split(
+        "Evaluation context content: ",
+        maxsplit=1,
+    )[-1].splitlines()[0]
+    user_message = user_prompt.split(
+        "User utterance: ",
+        maxsplit=1,
+    )[-1].splitlines()[0]
+    scores = candidate["scoreEvidence"]
+    context_is_complete = scores.get("contextFit") == 2
+    candidate["coverageEvidence"] = [
+        {
+            "requestExcerpt": evaluation_context,
+            "answerExcerpt": user_message if context_is_complete else None,
+            "status": "ANSWERED" if context_is_complete else "MISSING",
+        },
+    ]
+    candidate["ignoredSpeechArtifacts"] = []
+    candidate["actionableIssues"] = [
+        {
+            "dimension": dimension,
+            "sourceExcerpt": user_message,
+            "correctionExcerpt": candidate.get("correctionExpression") or user_message,
+            "rule": "The utterance has an actionable issue in this dimension.",
+        }
+        for score_name, dimension in (
+            ("clarity", "CLARITY"),
+            ("languageAccuracy", "LANGUAGE_ACCURACY"),
+        )
+        if scores.get(score_name) in (0, 1)
+    ]
+    return json.dumps(candidate)
 
 
 def multiple_hobby_questions_payload():
@@ -300,6 +364,10 @@ class FakeCompletions:
             content = feedback_contents[min(index, len(feedback_contents) - 1)]
         else:
             content = self.contents[index] if index < len(self.contents) else self.contents[-1]
+        content = add_default_message_feedback_evidence(
+            content,
+            kwargs["messages"][1]["content"],
+        )
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -853,6 +921,162 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
+    def test_message_feedback_rejects_score_without_matching_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_language_accuracy_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_non_source_coverage_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Tell me about your hobby.",
+                    "answerExcerpt": "why do you wanna know that?",
+                    "status": "ANSWERED",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_request_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_non_source_answer_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Can I have your phone number?",
+                    "answerExcerpt": "My number is 010-0000-0000.",
+                    "status": "ANSWERED",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_answer_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_context_score_without_coverage_support(self):
+        candidate = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Can I have your phone number?",
+                    "answerExcerpt": None,
+                    "status": "MISSING",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_context_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_ignored_artifact_as_actionable_issue(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            ignored_speech_artifacts=["wanna"],
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "want to",
+                    "rule": "Use a different spoken form.",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_ignored_issue_overlap",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_low_context_score_without_missing_coverage(self):
+        candidate = message_feedback_candidate_with_evidence(
+            partial_hobby_feedback(1001),
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_context_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_duplicate_issue_dimensions(self):
+        issue = {
+            "dimension": "LANGUAGE_ACCURACY",
+            "sourceExcerpt": "wanna",
+            "correctionExcerpt": "want to",
+            "rule": "Use an accurate spoken expression.",
+        }
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[issue, dict(issue)],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "actionable issue dimensions must be unique",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
     def test_message_feedback_rejects_written_form_feedback_reason(self):
         payload = needs_improvement_message_feedback(1001)
         payload.pop("scoreEvidence")
@@ -1244,8 +1468,29 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIsNotNone(entry.feedback.positiveFeedback)
 
     def test_message_feedback_uses_neutral_positive_feedback_for_unclear_needs_candidate(self):
-        candidate = message_feedback_candidate(
+        candidate = message_feedback_candidate_with_evidence(
             needs_improvement_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Can I have your phone number?",
+                    "answerExcerpt": None,
+                    "status": "MISSING",
+                },
+            ],
+            actionable_issues=[
+                {
+                    "dimension": "CLARITY",
+                    "sourceExcerpt": "why do you wanna know that?",
+                    "correctionExcerpt": "I cannot answer that clearly.",
+                    "rule": "The intended meaning is unclear.",
+                },
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "why do you wanna know that?",
+                    "correctionExcerpt": "Why do you want to know that?",
+                    "rule": "Use an accurate spoken expression.",
+                },
+            ],
         )
         candidate["scoreEvidence"] = {
             "contextFit": 0,

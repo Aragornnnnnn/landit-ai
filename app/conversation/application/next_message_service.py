@@ -29,9 +29,12 @@ from app.models.conversation import (
     InnerThoughtRequest,
     InnerThoughtResponse,
     InnerThoughtType,
+    MessageFeedbackAdjudicationEvidence,
     MessageFeedbackCandidate,
     MessageFeedbackContent,
     MessageFeedbackData,
+    MessageFeedbackCoverageStatus,
+    MessageFeedbackIssueDimension,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -549,6 +552,7 @@ def _parse_message_feedback_candidate(
     candidate_data = _normalize_message_feedback_placeholders(candidate_data)
     try:
         candidate = MessageFeedbackCandidate.model_validate(candidate_data)
+        _validate_message_feedback_adjudication(candidate, request)
         candidate = _complete_candidate_fallback_content(candidate)
         candidate, score_evidence = _normalize_preference_only_candidate(
             candidate,
@@ -567,6 +571,71 @@ def _parse_message_feedback_candidate(
         reject_generic_placeholder=reject_generic_placeholder,
     )
     return feedback, score_evidence, detected_patterns
+
+
+def _message_feedback_adjudication_evidence(
+    candidate: MessageFeedbackCandidate,
+) -> MessageFeedbackAdjudicationEvidence:
+    return MessageFeedbackAdjudicationEvidence(
+        coverageEvidence=candidate.coverageEvidence,
+        ignoredSpeechArtifacts=candidate.ignoredSpeechArtifacts,
+        actionableIssues=candidate.actionableIssues,
+    )
+
+
+def _validate_message_feedback_adjudication(
+    candidate: MessageFeedbackCandidate,
+    request: MessageFeedbackRequest,
+) -> None:
+    evidence = _message_feedback_adjudication_evidence(candidate)
+    for coverage in evidence.coverageEvidence:
+        if coverage.requestExcerpt not in request.evaluationContext.content:
+            raise AiResponseInvalidError("message_feedback_request_evidence")
+        if (
+            coverage.answerExcerpt is not None
+            and coverage.answerExcerpt not in request.userMessage
+        ):
+            raise AiResponseInvalidError("message_feedback_answer_evidence")
+
+    for artifact in evidence.ignoredSpeechArtifacts:
+        if artifact not in request.userMessage:
+            raise AiResponseInvalidError(
+                "message_feedback_speech_artifact_evidence",
+            )
+    for issue in evidence.actionableIssues:
+        if issue.sourceExcerpt not in request.userMessage:
+            raise AiResponseInvalidError(
+                "message_feedback_actionable_issue_evidence",
+            )
+        if issue.sourceExcerpt in evidence.ignoredSpeechArtifacts:
+            raise AiResponseInvalidError("message_feedback_ignored_issue_overlap")
+
+    missing_coverage = any(
+        item.status == MessageFeedbackCoverageStatus.MISSING
+        for item in evidence.coverageEvidence
+    )
+    if (candidate.scoreEvidence.contextFit == 2) == missing_coverage:
+        raise AiResponseInvalidError("message_feedback_context_evidence")
+
+    issue_dimensions = {
+        issue.dimension
+        for issue in evidence.actionableIssues
+    }
+    score_dimensions = (
+        (
+            candidate.scoreEvidence.clarity,
+            MessageFeedbackIssueDimension.CLARITY,
+            "message_feedback_clarity_evidence",
+        ),
+        (
+            candidate.scoreEvidence.languageAccuracy,
+            MessageFeedbackIssueDimension.LANGUAGE_ACCURACY,
+            "message_feedback_language_accuracy_evidence",
+        ),
+    )
+    for score, dimension, reason in score_dimensions:
+        if (score == 2) == (dimension in issue_dimensions):
+            raise AiResponseInvalidError(reason)
 
 
 def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, Any]:
@@ -682,7 +751,14 @@ def _assemble_message_feedback(
     message_id: int,
     score_evidence: MessageFeedbackScoreEvidence,
 ) -> MessageFeedbackData:
-    feedback_values = content.model_dump(exclude={"scoreEvidence"})
+    feedback_values = content.model_dump(
+        exclude={
+            "scoreEvidence",
+            "coverageEvidence",
+            "ignoredSpeechArtifacts",
+            "actionableIssues",
+        },
+    )
     feedback_type = _feedback_type_from_score_evidence(score_evidence)
     if feedback_type == FeedbackType.GOOD:
         feedback_values.update(
