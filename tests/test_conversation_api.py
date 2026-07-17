@@ -528,6 +528,48 @@ class NextMessageApiTests(unittest.TestCase):
 
 
 class InnerThoughtApiTests(unittest.TestCase):
+    def test_inner_thought_type_is_derived_from_structured_evidence(self):
+        cases = [
+            ("COMPLETE", "NEUTRAL", False, "GOOD"),
+            ("COMPLETE", "BLUNT", False, "NORMAL"),
+            ("PARTIAL", "NEUTRAL", False, "NORMAL"),
+            ("DECLINED", "NEUTRAL", False, "NORMAL"),
+            ("UNRELATED", "NEUTRAL", False, "BAD"),
+            ("COMPLETE", "HOSTILE", False, "BAD"),
+            ("COMPLETE", "WARM", True, "BAD"),
+        ]
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        for answer_coverage, relationship_tone, directed_attack, expected in cases:
+            with self.subTest(
+                answer_coverage=answer_coverage,
+                relationship_tone=relationship_tone,
+                directed_attack=directed_attack,
+            ):
+                ai_response = {
+                    "answerCoverage": answer_coverage,
+                    "relationshipTone": relationship_tone,
+                    "directedAttack": directed_attack,
+                    "innerThought": "현재 발화에 대한 솔직한 속마음이다.",
+                    "innerThoughtType": "GOOD",
+                }
+                fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+
+                with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                    response = make_client(app).post(
+                        "/api/v1/conversation/inner-thought",
+                        json=valid_inner_thought_payload(),
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"]["innerThoughtType"], expected)
+                self.assertEqual(len(fake_openai.completions.calls), 1)
+
     def test_inner_thought_returns_request_identifiers_and_private_reaction(self):
         ai_response = {
             "innerThought": "매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.",
@@ -615,6 +657,89 @@ class InnerThoughtApiTests(unittest.TestCase):
             "Do not infer positive personality or intent without evidence",
             messages[0]["content"],
         )
+        self.assertIn('"answerCoverage":"COMPLETE"', messages[0]["content"])
+        self.assertIn('"relationshipTone":"NEUTRAL"', messages[0]["content"])
+        self.assertIn('"directedAttack":false', messages[0]["content"])
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_inner_thought_uses_legacy_fields_when_evidence_is_invalid(self):
+        ai_response = {
+            "answerCoverage": "INVALID",
+            "relationshipTone": "NEUTRAL",
+            "directedAttack": False,
+            "innerThought": "형식이 일부 잘못됐지만 기존 속마음은 유효하다.",
+            "innerThoughtType": "NORMAL",
+        }
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
+                json=valid_inner_thought_payload(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_inner_thought_repairs_invalid_legacy_fields_once(self):
+        invalid_response = {
+            "innerThought": "유형이 누락된 속마음이다.",
+        }
+        repaired_response = {
+            "answerCoverage": "COMPLETE",
+            "relationshipTone": "BLUNT",
+            "directedAttack": False,
+            "innerThought": "대답이 꽤 짧아서 조금 무뚝뚝하게 느껴진다.",
+            "innerThoughtType": "NORMAL",
+        }
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(invalid_response), json.dumps(repaired_response)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
+                json=valid_inner_thought_payload(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        repair_prompt = fake_openai.completions.calls[1]["messages"][0]["content"]
+        self.assertIn("Structure Repair Task", repair_prompt)
+
+    def test_inner_thought_repair_failure_returns_502_after_two_calls(self):
+        invalid_response = json.dumps({"innerThought": "유형이 누락됐다."})
+        fake_openai = FakeOpenAI(contents=[invalid_response, invalid_response])
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/inner-thought",
+                json=valid_inner_thought_payload(),
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_inner_thought_invalid_ai_response_returns_502(self):
         invalid_responses = [

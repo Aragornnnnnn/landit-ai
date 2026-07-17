@@ -94,6 +94,20 @@ class InnerThoughtType(StrEnum):
     BAD = "BAD"
 
 
+class AnswerCoverage(StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    DECLINED = "DECLINED"
+    UNRELATED = "UNRELATED"
+
+
+class RelationshipTone(StrEnum):
+    WARM = "WARM"
+    NEUTRAL = "NEUTRAL"
+    BLUNT = "BLUNT"
+    HOSTILE = "HOSTILE"
+
+
 class GoalCompletionStatus(StrEnum):
     NOT_STARTED = "NOT_STARTED"
     PARTIAL = "PARTIAL"
@@ -165,6 +179,12 @@ class InnerThoughtData(BaseModel):
     @classmethod
     def inner_thought_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+class InnerThoughtCandidate(InnerThoughtData):
+    answerCoverage: AnswerCoverage
+    relationshipTone: RelationshipTone
+    directedAttack: bool
 
 
 class InnerThoughtResponse(BaseModel):
