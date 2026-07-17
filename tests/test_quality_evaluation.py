@@ -399,7 +399,10 @@ class QualityEvaluationTests(unittest.TestCase):
         feedback = MessageFeedbackData(
             messageId=2001,
             feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="질문에 맞는 증빙을 말해야 하는 상황이에요.",
+            baseLocaleAnalogy=(
+                '"필요한 증빙이 무엇인지는 말하지 않았어요"라고 '
+                "질문의 일부만 답하는 것과 같아요."
+            ),
             positiveFeedback="문장을 끝까지 말한 점은 좋아요.",
             correctionExpression="I have [your travel document].",
             correctionReason="여행 계획을 보여 줄 수 있는 자료를 넣어 답해 보세요.",
