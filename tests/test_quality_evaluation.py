@@ -10,13 +10,17 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import Settings
-from app.conversation.application.next_message_service import AiResponseInvalidError
+from app.conversation.application.next_message_service import (
+    AiGenerationFailedError,
+    AiResponseInvalidError,
+)
 from app.models.conversation import (
     FeedbackStatus,
     InnerThoughtResponse,
     MessageFeedbackData,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
+    SessionFeedbackResponse,
 )
 from scripts.evaluate_conversation_quality import evaluate_cases, main
 
@@ -121,7 +125,196 @@ def inner_thought_case():
     }
 
 
+def feedback_session_case():
+    fixture_path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "lan_175_feedback_session_case.json"
+    )
+    return json.loads(fixture_path.read_text(encoding="utf-8"))[0]
+
+
 class QualityEvaluationTests(unittest.TestCase):
+    def test_lan_175_session_fixture_preserves_supplied_messages(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_175_feedback_session_case.json"
+        )
+
+        self.assertTrue(fixture_path.exists())
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(cases), 1)
+        case = cases[0]
+        self.assertEqual(case["kind"], "feedback-session")
+        self.assertEqual(
+            [payload["messageId"] for payload in case["messageFeedbackPayloads"]],
+            [60, 62, 64],
+        )
+        self.assertEqual(
+            [
+                (
+                    payload["evaluationContext"]["content"],
+                    payload["userMessage"],
+                )
+                for payload in case["messageFeedbackPayloads"]
+            ],
+            [
+                (
+                    "Hey, you're my roommate, right?! I'm Charlie, nice to meet you! "
+                    "What's your name? Tell me a little about yourself!",
+                    "Hello, Charlie. Nice to meet you. I am Sunny, and I'm from Korea, "
+                    "South Korea. And, yeah, nice to meet you.",
+                ),
+                (
+                    "Nice to meet you, Sunny. What are you into? What do you love about it?",
+                    "I'm into reading books and sometimes I take a picture and draw pictures "
+                    "So, yeah, I love these because I really love creating something, and I I "
+                    "really like reading something.",
+                ),
+                (
+                    "That sounds really creative. I'm obsessed with Korea! Tell me your "
+                    "must-visit spots and why I should go!",
+                    "Oh, you are interested in Korea. I live in Busan, and then I just yeah. "
+                    "Came here. And I think Haeundae and Kijang and Kwangwala Beach is is so "
+                    "really good. So yeah. And if you wanna go to city city views, I think "
+                    "it's really good for Seoul because it's so it's so so many hotspot places "
+                    "in there and but Busan is so really unique and so really fantastic. City "
+                    "in Korea.",
+                ),
+            ],
+        )
+        self.assertEqual(
+            [boundary["expectedFeedbackType"] for boundary in case["expectedMessages"]],
+            ["GOOD", "GOOD", "NEEDS_IMPROVEMENT"],
+        )
+        self.assertEqual(case["expectedNativeScoreRange"], [83, 87])
+        self.assertEqual(case["expectedStarRating"], 2.5)
+
+    def test_feedback_session_result_records_messages_summary_and_latency(self):
+        feedbacks = [
+            MessageFeedbackData(
+                messageId=60,
+                feedbackType="GOOD",
+                baseLocaleAnalogy='"이름과 출신을 소개했어요"라고 말하는 것과 같아요.',
+                feedbackDetail="이름과 출신을 자연스럽게 소개했어요.",
+            ),
+            MessageFeedbackData(
+                messageId=62,
+                feedbackType="GOOD",
+                baseLocaleAnalogy='"취미와 이유를 말했어요"라고 답하는 것과 같아요.',
+                feedbackDetail="취미와 좋아하는 이유를 모두 전달했어요.",
+            ),
+            MessageFeedbackData(
+                messageId=64,
+                feedbackType="NEEDS_IMPROVEMENT",
+                baseLocaleAnalogy='"여러 장소를 추천했어요"라고 말하는 것과 같아요.',
+                positiveFeedback="여행지와 이유를 여러 개 말했어요.",
+                correctionExpression=(
+                    "Haeundae, Kijang, and Gwangalli Beach are really good."
+                ),
+                correctionReason="복수 주어에는 is 대신 are를 사용해요.",
+            ),
+        ]
+        evidences = [
+            MessageFeedbackScoreEvidence(
+                contextFit=2,
+                clarity=2,
+                languageAccuracy=2,
+            ),
+            MessageFeedbackScoreEvidence(
+                contextFit=2,
+                clarity=2,
+                languageAccuracy=2,
+            ),
+            MessageFeedbackScoreEvidence(
+                contextFit=2,
+                clarity=2,
+                languageAccuracy=1,
+            ),
+        ]
+        entries = [
+            SimpleNamespace(
+                feedback=feedback,
+                score_evidence=evidence,
+                candidate_was_repaired=False,
+                copy_was_repaired=False,
+                copy_was_fallback=False,
+            )
+            for feedback, evidence in zip(feedbacks, evidences, strict=True)
+        ]
+        session_response = SessionFeedbackResponse(
+            sessionId=14,
+            nativeScore=87,
+            starRating=2.5,
+            highlightMessage="자기소개와 취미를 자연스럽게 이어 간 사람",
+            summaryMessage="자기소개와 취미는 자연스러웠고 수 일치를 다듬으면 좋아요.",
+            messageFeedbacks=feedbacks,
+        )
+
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=MessageFeedbackResponse(
+                    sessionId=14,
+                    messageId=60,
+                    feedbackStatus=FeedbackStatus.PREPARING,
+                ),
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=entries,
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality.generate_session_feedback",
+                return_value=session_response,
+            ),
+        ):
+            results = evaluate_cases(
+                [feedback_session_case()],
+                runs=1,
+                kind="feedback-session",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(len(results), 1)
+        result = results[0]
+        self.assertEqual(
+            [message["feedbackType"] for message in result["messageResults"]],
+            ["GOOD", "GOOD", "NEEDS_IMPROVEMENT"],
+        )
+        self.assertEqual(
+            [message["messageScore"] for message in result["messageResults"]],
+            [100, 100, 85],
+        )
+        self.assertTrue(result["messageExpectationsMatched"])
+        self.assertEqual(result["nativeScore"], 87)
+        self.assertTrue(result["nativeScoreWithinExpectation"])
+        self.assertTrue(result["starRatingMatchesExpectation"])
+        self.assertEqual(result["foundForbiddenSessionTerms"], [])
+        self.assertEqual(len(result["messageLatenciesMs"]), 3)
+        self.assertTrue(all(value >= 0 for value in result["messageLatenciesMs"]))
+        self.assertGreaterEqual(result["sessionFeedbackLatencyMs"], 0)
+        self.assertGreaterEqual(result["totalLatencyMs"], 0)
+        self.assertIsNone(result["validationError"])
+
+    def test_feedback_session_result_records_generation_error(self):
+        with patch(
+            "scripts.evaluate_conversation_quality.generate_message_feedback",
+            side_effect=AiGenerationFailedError("test failure"),
+        ):
+            results = evaluate_cases(
+                [feedback_session_case()],
+                runs=1,
+                kind="feedback-session",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["validationError"], "AiGenerationFailedError")
+        self.assertEqual(results[0]["validationReason"], "test failure")
+        self.assertGreaterEqual(results[0]["totalLatencyMs"], 0)
+
     def test_lan_166_scoring_fixture_covers_reported_score_boundaries(self):
         fixture_path = (
             Path(__file__).parent

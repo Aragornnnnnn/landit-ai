@@ -1,0 +1,104 @@
+[
+  {
+    "caseId": "lan175-supplied-session-18",
+    "kind": "feedback-session",
+    "messageFeedbackPayloads": [
+      {
+        "sessionId": 14,
+        "messageId": 60,
+        "turnNumber": 1,
+        "messageSequence": 2,
+        "scenario": {
+          "scenarioId": 5,
+          "title": "새 룸메이트와 자기소개하기",
+          "briefing": "처음 만난 룸메이트와 서로를 소개합니다.",
+          "conversationGoal": "이름과 자신에 관한 정보를 자연스럽게 소개하고 취미와 여행지를 이야기합니다.",
+          "counterpartRole": "roommate",
+          "serviceAudience": "KOREAN_LEARNER"
+        },
+        "evaluationContext": {
+          "type": "AI_MESSAGE",
+          "content": "Hey, you're my roommate, right?! I'm Charlie, nice to meet you! What's your name? Tell me a little about yourself!",
+          "translatedContent": "안녕 너 내 룸메이트지?! 난 Charlie야. 만나서 반가워. 넌 이름이 뭐야? 너에 대해 소개해주라."
+        },
+        "userMessage": "Hello, Charlie. Nice to meet you. I am Sunny, and I'm from Korea, South Korea. And, yeah, nice to meet you."
+      },
+      {
+        "sessionId": 14,
+        "messageId": 62,
+        "turnNumber": 2,
+        "messageSequence": 4,
+        "scenario": {
+          "scenarioId": 5,
+          "title": "새 룸메이트와 자기소개하기",
+          "briefing": "처음 만난 룸메이트와 서로를 소개합니다.",
+          "conversationGoal": "이름과 자신에 관한 정보를 자연스럽게 소개하고 취미와 여행지를 이야기합니다.",
+          "counterpartRole": "roommate",
+          "serviceAudience": "KOREAN_LEARNER"
+        },
+        "evaluationContext": {
+          "type": "AI_MESSAGE",
+          "content": "Nice to meet you, Sunny. What are you into? What do you love about it?",
+          "translatedContent": "만나서 반가워, Sunny. 취미는 뭐야? 그게 어떤 매력이 있어?"
+        },
+        "userMessage": "I'm into reading books and sometimes I take a picture and draw pictures So, yeah, I love these because I really love creating something, and I I really like reading something."
+      },
+      {
+        "sessionId": 14,
+        "messageId": 64,
+        "turnNumber": 3,
+        "messageSequence": 6,
+        "scenario": {
+          "scenarioId": 5,
+          "title": "새 룸메이트와 자기소개하기",
+          "briefing": "처음 만난 룸메이트와 서로를 소개합니다.",
+          "conversationGoal": "이름과 자신에 관한 정보를 자연스럽게 소개하고 취미와 여행지를 이야기합니다.",
+          "counterpartRole": "roommate",
+          "serviceAudience": "KOREAN_LEARNER"
+        },
+        "evaluationContext": {
+          "type": "AI_MESSAGE",
+          "content": "That sounds really creative. I'm obsessed with Korea! Tell me your must-visit spots and why I should go!",
+          "translatedContent": "그거 정말 창의적이네. 나 한국 엄청 좋아하는데, 추천할 만한 관광지와 그 이유를 알려줘!"
+        },
+        "userMessage": "Oh, you are interested in Korea. I live in Busan, and then I just yeah. Came here. And I think Haeundae and Kijang and Kwangwala Beach is is so really good. So yeah. And if you wanna go to city city views, I think it's really good for Seoul because it's so it's so so many hotspot places in there and but Busan is so really unique and so really fantastic. City in Korea."
+      }
+    ],
+    "sessionFeedbackPayload": {
+      "sessionId": 14,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "새 룸메이트와 자기소개하기",
+        "briefing": "처음 만난 룸메이트와 서로를 소개합니다.",
+        "conversationGoal": "이름과 자신에 관한 정보를 자연스럽게 소개하고 취미와 여행지를 이야기합니다.",
+        "counterpartRole": "roommate",
+        "serviceAudience": "KOREAN_LEARNER"
+      },
+      "expectedMessageIds": [60, 62, 64]
+    },
+    "expectedMessages": [
+      {
+        "messageId": 60,
+        "expectedFeedbackType": "GOOD",
+        "expectedMessageScoreRange": [100, 100],
+        "forbiddenFeedbackTerms": ["[your hobby]", "취미에 대한 내용이 빠져"]
+      },
+      {
+        "messageId": 62,
+        "expectedFeedbackType": "GOOD",
+        "expectedMessageScoreRange": [100, 100],
+        "forbiddenFeedbackTerms": ["I I", "반복", "중복", "하나만"]
+      },
+      {
+        "messageId": 64,
+        "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+        "expectedMessageScoreRange": [70, 85],
+        "requiredAnyFeedbackTerms": ["복수 주어", "주어-동사", "수 일치", "are"],
+        "forbiddenFeedbackTerms": ["be동사를 넣어서", "be동사를 넣어"]
+      }
+    ],
+    "expectedNativeScoreRange": [83, 87],
+    "expectedStarRating": 2.5,
+    "forbiddenSessionTerms": ["모두 자연스럽게", "전부 자연스럽게", "완벽하게", "모든 답변이 자연"]
+  }
+]
