@@ -431,3 +431,104 @@ If any run fails, do not add another prompt example or runtime exception. Report
 Run: `git status --short --branch && git log --oneline origin/main..HEAD && git diff --stat origin/main...HEAD && git diff --check`
 
 Expected: clean worktree, only LAN-175 files changed, reviewable semantic commits, and no whitespace errors.
+
+---
+
+### Task 6: Make material errors the prompt's decision boundary
+
+**Files:**
+- Modify: `app/conversation/application/next_message_service.py:1683-1892`
+- Test: `tests/test_conversation_api.py`
+
+**Interfaces:**
+- Changes: `_message_feedback_evidence_policy() -> str` to require proof before lowering a score.
+- Changes: `_message_feedback_system_prompt(...) -> str` to evaluate coverage across the whole utterance and remove question-specific examples.
+- Changes: `_message_feedback_review_system_prompt(...) -> str` to apply the same decision order when review is enabled.
+- Preserves: output schema, server validation, score formula, public API, repair behavior, and configured call count.
+
+- [ ] **Step 1: Write the failing prompt-contract test**
+
+Add one focused test that requires both candidate and review prompts to state that the evaluator must begin from full scores, lower a score only after proving a material issue, find answers anywhere in the full utterance, and ignore preference-only alternatives. Assert that the candidate prompt no longer contains the cleaning, daily-rhythm, or roommate-specific examples.
+
+```python
+def test_message_feedback_prompts_require_material_issue_before_deduction(self):
+    prompts = (
+        next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        ),
+        next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        ),
+    )
+
+    for prompt in prompts:
+        self.assertIn("Begin with all score dimensions at 2", prompt)
+        self.assertIn("Only lower a score after identifying", prompt)
+        self.assertIn("anywhere in the full user utterance", prompt)
+        self.assertIn("When uncertain between an error and an acceptable variation", prompt)
+
+    self.assertNotIn("cleaning-preference question", prompts[0])
+    self.assertNotIn("daily-rhythm question", prompts[0])
+    self.assertNotIn("roommate question about a bad experience", prompts[0])
+```
+
+- [ ] **Step 2: Run the test and verify RED**
+
+Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_prompts_require_material_issue_before_deduction`
+
+Expected: FAIL because the current prompts do not express the decision order and the candidate still contains the scenario-specific examples.
+
+- [ ] **Step 3: Rewrite the shared decision boundary and both prompts**
+
+Put the material-error gate before score definitions. Narrow `languageAccuracy` to material grammar and word-choice errors. State that coverage can be supported by any exact excerpt anywhere in the complete utterance and that a scattered or simply worded reason still counts. Remove the three question-specific examples and keep the general placeholder rule for genuinely missing information.
+
+- [ ] **Step 4: Run the focused and message-feedback tests GREEN**
+
+Run:
+
+```bash
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest \
+  tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_prompts_require_material_issue_before_deduction \
+  tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_prompt_rechecks_score_and_feedback \
+  tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_prompts_do_not_penalize_complete_spoken_answers \
+  tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_prompt_is_compact_and_evidence_first
+```
+
+Expected: all four tests PASS.
+
+- [ ] **Step 5: Run full local verification**
+
+```bash
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m compileall app tests scripts
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m pip check
+git diff --check
+```
+
+Expected: all tests PASS, compileall exits 0, pip reports no broken requirements, and diff check exits 0.
+
+- [ ] **Step 6: Run the GPT-5.4 single-pass quality gate**
+
+```bash
+OPENROUTER_MODEL=openai/gpt-5.4 \
+MESSAGE_FEEDBACK_REVIEW_ENABLED=false \
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python \
+  scripts/evaluate_conversation_quality.py \
+  --cases tests/fixtures/lan_175_feedback_session_case.json \
+  --runs 3 \
+  --kind feedback-session \
+  --output /tmp/landit-ai-lan-175-prompt-rewrite-results.json
+```
+
+Expected: all three runs produce `GOOD`, `GOOD`, `NEEDS_IMPROVEMENT`; message scores 100, 100, and 70-85; session score 83-87; star rating 2.5; no hard failure.
+
+- [ ] **Step 7: Commit the prompt rewrite**
+
+```bash
+git add \
+  app/conversation/application/next_message_service.py \
+  tests/test_conversation_api.py \
+  docs/superpowers/specs/2026-07-17-lan-175-two-pass-feedback-adjudication-design.md \
+  docs/superpowers/plans/2026-07-17-lan-175-two-pass-feedback-adjudication.md
+git commit -m "fix: 메시지 피드백의 실질적 오류 판정 경계 강화"
+```

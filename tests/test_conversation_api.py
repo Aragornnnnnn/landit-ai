@@ -2143,6 +2143,41 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 prompt,
             )
 
+    def test_message_feedback_prompts_require_material_issue_before_deduction(self):
+        prompts = (
+            next_message_service._message_feedback_system_prompt(
+                EvaluationContextType.AI_MESSAGE,
+            ),
+            next_message_service._message_feedback_review_system_prompt(
+                EvaluationContextType.AI_MESSAGE,
+            ),
+        )
+
+        for prompt in prompts:
+            self.assertIn("Begin with all score dimensions at 2", prompt)
+            self.assertIn("Only lower a score after identifying", prompt)
+            self.assertIn("anywhere in the full user utterance", prompt)
+            self.assertIn(
+                "When uncertain between an error and an acceptable variation",
+                prompt,
+            )
+
+        self.assertLess(
+            prompts[0].index("Decision Order and Evidence Contract"),
+            prompts[0].index("Feedback Task:"),
+        )
+        self.assertLess(
+            prompts[1].index("Decision Order and Evidence Contract"),
+            prompts[1].index("Review Task:"),
+        )
+
+        self.assertNotIn("cleaning-preference question", prompts[0])
+        self.assertNotIn("daily-rhythm question", prompts[0])
+        self.assertNotIn(
+            "roommate question about a bad experience",
+            prompts[0],
+        )
+
     def test_message_feedback_review_prompt_is_compact_and_evidence_first(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
@@ -2170,7 +2205,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             review_prompt,
         )
 
-    def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
+    def test_message_feedback_prompts_keep_one_improvement_for_missing_answers(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
         )
@@ -2179,7 +2214,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "score contextFit as 2 only when every independent requested part is answered",
+            "score contextFit as 2 when each explicitly requested core part is answered",
             candidate_prompt,
         )
         self.assertIn(
@@ -2188,18 +2223,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertIn("one most important improvement", candidate_prompt)
         self.assertIn("one most important improvement", copy_prompt)
-        for prompt in (candidate_prompt,):
-            self.assertIn("I'm not sure yet. I prefer to split the cleaning [your preferred way].", prompt)
-            self.assertIn("I'm up at 9am, and I go to bed at [your bedtime].", prompt)
-            self.assertIn(
-                "No, I haven't. My dealbreakers are [your dealbreakers].",
-                prompt,
-            )
-            self.assertIn(
-                "the missing dealbreakers answer",
-                prompt,
-            )
-            self.assertIn("Do not make a punctuation or spacing change", prompt)
+        self.assertIn("Do not make a punctuation or spacing change", candidate_prompt)
+        self.assertNotIn("cleaning-preference question", candidate_prompt)
+        self.assertNotIn("daily-rhythm question", candidate_prompt)
+        self.assertNotIn("roommate question about a bad experience", candidate_prompt)
         self.assertIn("MISSING coverage", copy_prompt)
         self.assertIn("[your ...] placeholder", copy_prompt)
 

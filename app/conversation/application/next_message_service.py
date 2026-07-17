@@ -1682,8 +1682,13 @@ def _contains_quantitative_hook(value: str) -> bool:
 
 def _message_feedback_evidence_policy() -> str:
     return (
-        "Evidence Contract:\n"
-        "coverageEvidence must contain every independent request in the current evaluation context. "
+        "Decision Order and Evidence Contract:\n"
+        "Begin with all score dimensions at 2. "
+        "First map the core requested information to answers anywhere in the full user utterance, even when the answers are scattered or appear in a different order. "
+        "Only lower a score after identifying a material missing answer or a definite actionable issue supported by exact evidence. "
+        "When uncertain between an error and an acceptable variation, treat it as an acceptable variation and keep the relevant score at 2. "
+        "Write learner-facing feedback only after the evidence and scores are settled. "
+        "coverageEvidence must contain the core requested information in the current evaluation context. "
         "Every requestExcerpt is an exact substring of the evaluation context. "
         "ANSWERED requires an answerExcerpt that is an exact substring of the user utterance; MISSING requires answerExcerpt null. "
         "Every ignoredSpeechArtifacts item and actionableIssues.sourceExcerpt is an exact substring of the user utterance. "
@@ -1723,13 +1728,18 @@ def _message_feedback_system_prompt(
             "You evaluate a Korean learner's English utterance and write learner-facing feedback."
         ),
         _shared_safety_policy(),
+        _message_feedback_evidence_policy(),
         (
             "Feedback Task:\n"
             "Evaluate only the current evaluation context with the scenario and conversation as supporting context. "
-            "contextFit is 2 when the user answers the context completely, 1 when an important part is missing, and 0 when the utterance does not answer it. "
-            "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
+            "Follow the Decision Order before writing scores or feedback. "
+            "contextFit is 2 when the user answers the core requested information in substance, 1 when an important requested part is genuinely absent, and 0 when the utterance does not answer the context. "
+            "Judge coverage across the complete utterance instead of requiring each answer to align clause-by-clause with the question. "
+            "Do not split a broad conversational prompt into extra requirements that were not explicitly requested. "
+            "Do not lower contextFit because a relevant reason is simple, vague, indirect, or spread across sentences; lower it only when a core requested part is absent from the whole utterance. "
             "clarity is 2 when meaning is understandable without guesswork, 1 when inference is needed, and 0 when meaning is hard to understand. "
-            "languageAccuracy is 2 when there is no actionable grammar, word-choice, nuance, or politeness issue, 1 for one minor issue with clear meaning, and 0 for a major issue. "
+            "languageAccuracy is 2 when there is no definite grammar or lexical error that the learner should correct, 1 for a definite but limited error with clear overall meaning, and 0 when errors materially distort the meaning. "
+            "Do not use style, concision, register, politeness, idiomaticity, or frequency preferences as languageAccuracy issues. "
             "Do not lower a score only for capitalization, punctuation, a meaning-neutral filler, answer length, advanced vocabulary, or a natural grammar alternative. "
             "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
             "I like reading a book and I like reading books are also both acceptable; do not correct one to the other as a preference. "
@@ -1746,13 +1756,10 @@ def _message_feedback_system_prompt(
             "After ignoring an immediate repetition, do not mention the ignored repetition in learner-facing feedback or use it to lower a score. "
             "If the remaining utterance is grammatically acceptable and understandable, keep languageAccuracy at 2 even when another expression is more idiomatic, concise, frequent, or natural. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
-            "For any multi-part question, score contextFit as 2 only when every independent requested part is answered. "
+            "For a multi-part question, score contextFit as 2 when each explicitly requested core part is answered in substance anywhere in the utterance. "
             "A yes-or-no answer to one question does not answer a separate open-ended question. "
             "For a multi-part question, improve only one missing core part and do not list other missing parts in correctionReason. "
             "Do not make a punctuation or spacing change the only correction. "
-            "For a cleaning-preference question, if the user says I don't know, a natural correction is I'm not sure yet. I prefer to split the cleaning [your preferred way]. "
-            "For a daily-rhythm question, if the user says I'm up at 9am, do not change 9am formatting; a natural correction is I'm up at 9am, and I go to bed at [your bedtime]. "
-            "For a roommate question about a bad experience and dealbreakers, No answers only the experience question, so contextFit is 1. A natural correction is No, I haven't. My dealbreakers are [your dealbreakers]. This uses a placeholder for the missing dealbreakers answer instead of inventing it. "
             "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
             "When the utterance is irrelevant or unclear, show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
@@ -1771,7 +1778,6 @@ def _message_feedback_system_prompt(
             "When correctionExpression changes subject-verb agreement, correctionReason must explicitly identify the subject and the required singular or plural verb form. "
             "detectedPatterns is internal-only. Include an item only when its evidence is an exact substring of the user utterance."
         ),
-        _message_feedback_evidence_policy(),
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
@@ -1856,10 +1862,11 @@ def _message_feedback_review_system_prompt(
             "Read the original request first and rebuild the evidence independently before comparing it with the candidate. "
             "Return one complete replacement candidate. Re-evaluate scoreEvidence instead of accepting the candidate scores. "
             "The server derives feedbackType from your final scoreEvidence, so do not return feedbackType. "
+            "Follow the Decision Order before comparing or rewriting any candidate field. "
             "Distinguish fillers, self-corrections, and immediate repeated words from real issues, then evaluate the remaining utterance. "
             "Do not preserve a candidate field merely because it is present. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
-            "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
+            "Do not lower contextFit because a relevant reason is simple, vague, indirect, or spread across sentences; lower it only when a core requested part is absent from the whole utterance. "
             "An open self-introduction is complete when the learner gives a name and at least one concrete personal detail; do not require a hobby specifically. "
             "A country or nationality counts as a concrete personal detail. When the learner provides a name plus one such detail, do not lower contextFit merely because more details could be added. "
             "After ignoring an immediate repetition, do not mention the ignored repetition in learner-facing feedback or use it to lower a score. "
