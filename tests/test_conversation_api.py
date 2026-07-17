@@ -223,9 +223,27 @@ def message_feedback_candidate(feedback):
 
 
 def message_feedback_copy(feedback):
-    copy = message_feedback_candidate(feedback)
-    copy.pop("scoreEvidence", None)
-    return copy
+    return message_feedback_candidate(feedback)
+
+
+def message_feedback_candidate_with_evidence(
+    feedback,
+    *,
+    coverage_evidence=None,
+    ignored_speech_artifacts=None,
+    actionable_issues=None,
+):
+    candidate = message_feedback_candidate(feedback)
+    candidate["coverageEvidence"] = coverage_evidence or [
+        {
+            "requestExcerpt": "Can I have your phone number?",
+            "answerExcerpt": "why do you wanna know that?",
+            "status": "ANSWERED",
+        },
+    ]
+    candidate["ignoredSpeechArtifacts"] = ignored_speech_artifacts or []
+    candidate["actionableIssues"] = actionable_issues or []
+    return candidate
 
 
 def partial_hobby_feedback(message_id=1001):
@@ -252,9 +270,51 @@ def message_feedback_responses(feedback, user_message):
     candidate = dict(feedback)
     candidate.pop("messageId", None)
     candidate.pop("feedbackType", None)
-    copy = dict(candidate)
-    copy.pop("scoreEvidence", None)
-    return [json.dumps(candidate), json.dumps(copy)]
+    return [json.dumps(candidate), json.dumps(candidate)]
+
+
+def add_default_message_feedback_evidence(content, user_prompt):
+    try:
+        candidate = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return content
+    if not isinstance(candidate, dict) or "scoreEvidence" not in candidate:
+        return content
+    if "coverageEvidence" in candidate:
+        return content
+
+    evaluation_context = user_prompt.split(
+        "Evaluation context content: ",
+        maxsplit=1,
+    )[-1].splitlines()[0]
+    user_message = user_prompt.split(
+        "User utterance: ",
+        maxsplit=1,
+    )[-1].splitlines()[0]
+    scores = candidate["scoreEvidence"]
+    context_is_complete = scores.get("contextFit") == 2
+    candidate["coverageEvidence"] = [
+        {
+            "requestExcerpt": evaluation_context,
+            "answerExcerpt": user_message if context_is_complete else None,
+            "status": "ANSWERED" if context_is_complete else "MISSING",
+        },
+    ]
+    candidate["ignoredSpeechArtifacts"] = []
+    candidate["actionableIssues"] = [
+        {
+            "dimension": dimension,
+            "sourceExcerpt": user_message,
+            "correctionExcerpt": candidate.get("correctionExpression") or user_message,
+            "rule": "The utterance has an actionable issue in this dimension.",
+        }
+        for score_name, dimension in (
+            ("clarity", "CLARITY"),
+            ("languageAccuracy", "LANGUAGE_ACCURACY"),
+        )
+        if scores.get(score_name) in (0, 1)
+    ]
+    return json.dumps(candidate)
 
 
 def multiple_hobby_questions_payload():
@@ -304,6 +364,10 @@ class FakeCompletions:
             content = feedback_contents[min(index, len(feedback_contents) - 1)]
         else:
             content = self.contents[index] if index < len(self.contents) else self.contents[-1]
+        content = add_default_message_feedback_evidence(
+            content,
+            kwargs["messages"][1]["content"],
+        )
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -857,6 +921,162 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
+    def test_message_feedback_rejects_score_without_matching_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_language_accuracy_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_non_source_coverage_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Tell me about your hobby.",
+                    "answerExcerpt": "why do you wanna know that?",
+                    "status": "ANSWERED",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_request_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_non_source_answer_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Can I have your phone number?",
+                    "answerExcerpt": "My number is 010-0000-0000.",
+                    "status": "ANSWERED",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_answer_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_context_score_without_coverage_support(self):
+        candidate = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Can I have your phone number?",
+                    "answerExcerpt": None,
+                    "status": "MISSING",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_context_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_ignored_artifact_as_actionable_issue(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            ignored_speech_artifacts=["wanna"],
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "want to",
+                    "rule": "Use a different spoken form.",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_ignored_issue_overlap",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_low_context_score_without_missing_coverage(self):
+        candidate = message_feedback_candidate_with_evidence(
+            partial_hobby_feedback(1001),
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_context_evidence",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
+    def test_message_feedback_rejects_duplicate_issue_dimensions(self):
+        issue = {
+            "dimension": "LANGUAGE_ACCURACY",
+            "sourceExcerpt": "wanna",
+            "correctionExcerpt": "want to",
+            "rule": "Use an accurate spoken expression.",
+        }
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[issue, dict(issue)],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "actionable issue dimensions must be unique",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
     def test_message_feedback_rejects_written_form_feedback_reason(self):
         payload = needs_improvement_message_feedback(1001)
         payload.pop("scoreEvidence")
@@ -973,6 +1193,14 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIsNone(entry.feedback.correctionExpression)
         self.assertIsNone(entry.feedback.correctionReason)
         self.assertFalse(entry.candidate_was_repaired)
+
+    def test_message_feedback_has_no_preference_specific_runtime_override(self):
+        for name in (
+            "_normalize_preference_only_candidate",
+            "_is_like_infinitive_gerund_alternative",
+            "_gerund_forms",
+        ):
+            self.assertFalse(hasattr(next_message_service, name))
 
     def test_message_feedback_keeps_prefixed_placeholder_unchanged(self):
         normalized = next_message_service._normalize_message_feedback_placeholders(
@@ -1248,8 +1476,29 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIsNotNone(entry.feedback.positiveFeedback)
 
     def test_message_feedback_uses_neutral_positive_feedback_for_unclear_needs_candidate(self):
-        candidate = message_feedback_candidate(
+        candidate = message_feedback_candidate_with_evidence(
             needs_improvement_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "Can I have your phone number?",
+                    "answerExcerpt": None,
+                    "status": "MISSING",
+                },
+            ],
+            actionable_issues=[
+                {
+                    "dimension": "CLARITY",
+                    "sourceExcerpt": "why do you wanna know that?",
+                    "correctionExcerpt": "I cannot answer that clearly.",
+                    "rule": "The intended meaning is unclear.",
+                },
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "why do you wanna know that?",
+                    "correctionExcerpt": "Why do you want to know that?",
+                    "rule": "Use an accurate spoken expression.",
+                },
+            ],
         )
         candidate["scoreEvidence"] = {
             "contextFit": 0,
@@ -1261,7 +1510,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             valid_message_feedback_payload(),
         )
 
-        feedback, _, _ = next_message_service._parse_message_feedback_candidate(
+        feedback, _, _, _ = next_message_service._parse_message_feedback_candidate(
             candidate,
             request,
         )
@@ -1428,6 +1677,160 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertFalse(entry.copy_was_repaired)
         self.assertFalse(entry.copy_was_fallback)
 
+    def test_message_feedback_review_can_upgrade_candidate_score(self):
+        candidate = message_feedback_candidate(
+            needs_improvement_message_feedback(1001),
+        )
+        candidate["scoreEvidence"] = {
+            "contextFit": 1,
+            "clarity": 2,
+            "languageAccuracy": 2,
+        }
+        reviewed = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(reviewed)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(entry.feedback.feedbackType.value, "GOOD")
+        self.assertEqual(
+            entry.score_evidence.model_dump(),
+            {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
+        )
+
+    def test_message_feedback_stores_reviewed_adjudication_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "want to",
+                    "rule": "Use an accurate spoken expression.",
+                },
+            ],
+        )
+        reviewed = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+        )
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(reviewed)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(entry.adjudication_evidence.actionableIssues, [])
+        self.assertEqual(
+            entry.adjudication_evidence.coverageEvidence[0].status.value,
+            "ANSWERED",
+        )
+
+    def test_message_feedback_fallback_stores_candidate_adjudication_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "want to",
+                    "rule": "Use an accurate spoken expression.",
+                },
+            ],
+        )
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate)],
+            errors=[None, RuntimeError("review unavailable")],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(entry.copy_was_fallback)
+        self.assertEqual(
+            entry.adjudication_evidence.actionableIssues[0].sourceExcerpt,
+            "wanna",
+        )
+
+    def test_message_feedback_review_can_downgrade_candidate_score(self):
+        candidate = message_feedback_candidate(good_message_feedback(1001))
+        reviewed = message_feedback_candidate(
+            needs_improvement_message_feedback(1001),
+        )
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(reviewed)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            entry.feedback.feedbackType.value,
+            "NEEDS_IMPROVEMENT",
+        )
+        self.assertEqual(
+            entry.score_evidence.model_dump(),
+            {"contextFit": 2, "clarity": 2, "languageAccuracy": 1},
+        )
+
     def test_message_feedback_normalizes_type_only_candidate_fields_without_repair(self):
         candidate = message_feedback_candidate(good_message_feedback(1001))
         candidate["positiveFeedback"] = "이 값은 서버가 제거해요."
@@ -1487,6 +1890,45 @@ class MessageFeedbackApiTests(unittest.TestCase):
             .candidate_was_repaired,
         )
 
+    def test_message_feedback_single_pass_repairs_invalid_candidate_once(self):
+        invalid_candidate = message_feedback_candidate(good_message_feedback(1001))
+        invalid_candidate.pop("feedbackDetail")
+        valid_candidate = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(invalid_candidate),
+                json.dumps(valid_candidate),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-mini-model",
+                message_feedback_model="message-feedback-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            ["message-feedback-model", "message-feedback-model"],
+        )
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertTrue(entry.candidate_was_repaired)
+        self.assertFalse(entry.copy_was_repaired)
+        self.assertFalse(entry.copy_was_fallback)
+
     def test_message_feedback_candidate_repair_failure_returns_failed_without_cache(self):
         invalid_candidate = message_feedback_candidate(good_message_feedback(1001))
         invalid_candidate.pop("feedbackDetail")
@@ -1527,6 +1969,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             make_settings(
                 openrouter_api_key="test-openrouter-key",
                 openrouter_model="openrouter-test-model",
+                openrouter_review_model="openrouter-review-model",
             ),
         )
 
@@ -1538,6 +1981,14 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            [
+                "openrouter-test-model",
+                "openrouter-review-model",
+                "openrouter-review-model",
+            ],
+        )
         self.assertTrue(
             next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
             .copy_was_repaired,
@@ -1571,6 +2022,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 3)
         entry = next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
         self.assertEqual(entry.feedback.feedbackType.value, "GOOD")
+        self.assertEqual(
+            entry.score_evidence.model_dump(),
+            {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
+        )
         self.assertTrue(entry.copy_was_fallback)
 
     def test_message_feedback_uses_candidate_after_copy_generation_fails(self):
@@ -1596,6 +2051,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 2)
         entry = next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
         self.assertEqual(entry.feedback.feedbackType.value, "GOOD")
+        self.assertEqual(
+            entry.score_evidence.model_dump(),
+            {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
+        )
         self.assertTrue(entry.copy_was_fallback)
 
     def test_message_feedback_first_generation_failure_returns_failed_without_cache(self):
@@ -1618,7 +2077,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 1)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_message_feedback_prompts_lock_score_and_type_to_server(self):
+    def test_message_feedback_review_prompt_rechecks_score_and_feedback(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
         )
@@ -1631,7 +2090,13 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn('"scoreEvidence"', candidate_prompt)
         self.assertNotIn('"messageId":1', copy_prompt)
         self.assertNotIn('"feedbackType":"GOOD or NEEDS_IMPROVEMENT"', copy_prompt)
-        self.assertNotIn('"scoreEvidence"', copy_prompt)
+        self.assertIn('"scoreEvidence"', copy_prompt)
+        self.assertIn("Re-evaluate scoreEvidence", copy_prompt)
+        self.assertIn("immediate repeated words", copy_prompt)
+        self.assertIn("remaining utterance", copy_prompt)
+        self.assertIn("actual change in correctionExpression", copy_prompt)
+        self.assertNotIn("locked by the server", copy_prompt)
+        self.assertNotIn("do not return or change them", copy_prompt)
         self.assertIn("Do not make capitalization, punctuation", copy_prompt)
         self.assertIn("Do not mention capitalization, commas, periods", copy_prompt)
         self.assertIn("[your travel document]", candidate_prompt)
@@ -1653,7 +2118,99 @@ class MessageFeedbackApiTests(unittest.TestCase):
             copy_prompt,
         )
 
-    def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
+    def test_message_feedback_prompts_do_not_penalize_complete_spoken_answers(self):
+        candidate_prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+        review_prompt = next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        for prompt in (candidate_prompt, review_prompt):
+            self.assertIn(
+                "A country or nationality counts as a concrete personal detail",
+                prompt,
+            )
+            self.assertIn(
+                "do not lower contextFit merely because more details could be added",
+                prompt,
+            )
+            self.assertIn(
+                "more idiomatic, concise, frequent, or natural",
+                prompt,
+            )
+            self.assertIn(
+                "do not mention the ignored repetition in learner-facing feedback",
+                prompt,
+            )
+            self.assertIn(
+                "correctionReason must explicitly identify the subject",
+                prompt,
+            )
+
+    def test_message_feedback_prompts_require_material_issue_before_deduction(self):
+        prompts = (
+            next_message_service._message_feedback_system_prompt(
+                EvaluationContextType.AI_MESSAGE,
+            ),
+            next_message_service._message_feedback_review_system_prompt(
+                EvaluationContextType.AI_MESSAGE,
+            ),
+        )
+
+        for prompt in prompts:
+            self.assertIn("Begin with all score dimensions at 2", prompt)
+            self.assertIn("Only lower a score after identifying", prompt)
+            self.assertIn("anywhere in the full user utterance", prompt)
+            self.assertIn(
+                "When uncertain between an error and an acceptable variation",
+                prompt,
+            )
+
+        self.assertLess(
+            prompts[0].index("Decision Order and Evidence Contract"),
+            prompts[0].index("Feedback Task:"),
+        )
+        self.assertLess(
+            prompts[1].index("Decision Order and Evidence Contract"),
+            prompts[1].index("Review Task:"),
+        )
+
+        self.assertNotIn("cleaning-preference question", prompts[0])
+        self.assertNotIn("daily-rhythm question", prompts[0])
+        self.assertNotIn(
+            "roommate question about a bad experience",
+            prompts[0],
+        )
+
+    def test_message_feedback_review_prompt_is_compact_and_evidence_first(self):
+        candidate_prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+        review_prompt = next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        for prompt in (candidate_prompt, review_prompt):
+            self.assertIn('"coverageEvidence"', prompt)
+            self.assertIn('"ignoredSpeechArtifacts"', prompt)
+            self.assertIn('"actionableIssues"', prompt)
+            self.assertIn("exact substring", prompt)
+            self.assertIn("contextFit below 2 requires MISSING coverage", prompt)
+            self.assertIn(
+                "languageAccuracy below 2 requires a LANGUAGE_ACCURACY issue",
+                prompt,
+            )
+
+        self.assertIn("rebuild the evidence independently", review_prompt)
+        self.assertNotIn("cleaning-preference question", review_prompt)
+        self.assertNotIn("daily-rhythm question", review_prompt)
+        self.assertNotIn(
+            "roommate question about a bad experience",
+            review_prompt,
+        )
+
+    def test_message_feedback_prompts_keep_one_improvement_for_missing_answers(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,
         )
@@ -1662,30 +2219,21 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "score contextFit as 2 only when every independent requested part is answered",
+            "score contextFit as 2 when each explicitly requested core part is answered",
             candidate_prompt,
         )
         self.assertIn(
             "A yes-or-no answer to one question does not answer a separate open-ended question.",
             candidate_prompt,
         )
-        self.assertIn(
-            "When the locked type is NEEDS_IMPROVEMENT because only part",
-            copy_prompt,
-        )
-        for prompt in (candidate_prompt, copy_prompt):
-            self.assertIn("one most important improvement", prompt)
-            self.assertIn("I'm not sure yet. I prefer to split the cleaning [your preferred way].", prompt)
-            self.assertIn("I'm up at 9am, and I go to bed at [your bedtime].", prompt)
-            self.assertIn(
-                "No, I haven't. My dealbreakers are [your dealbreakers].",
-                prompt,
-            )
-            self.assertIn(
-                "the missing dealbreakers answer",
-                prompt,
-            )
-            self.assertIn("Do not make a punctuation or spacing change", prompt)
+        self.assertIn("one most important improvement", candidate_prompt)
+        self.assertIn("one most important improvement", copy_prompt)
+        self.assertIn("Do not make a punctuation or spacing change", candidate_prompt)
+        self.assertNotIn("cleaning-preference question", candidate_prompt)
+        self.assertNotIn("daily-rhythm question", candidate_prompt)
+        self.assertNotIn("roommate question about a bad experience", candidate_prompt)
+        self.assertIn("MISSING coverage", copy_prompt)
+        self.assertIn("[your ...] placeholder", copy_prompt)
 
     def test_message_feedback_repair_prompt_explains_generic_placeholder(self):
         request = conversation_models.MessageFeedbackRequest.model_validate(
@@ -1710,6 +2258,17 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 contextFit=2,
                 clarity=2,
                 languageAccuracy=2,
+            ),
+            conversation_models.MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "Can I have your phone number?",
+                        "answerExcerpt": "why do you wanna know that?",
+                        "status": "ANSWERED",
+                    },
+                ],
+                ignoredSpeechArtifacts=[],
+                actionableIssues=[],
             ),
             [],
             {"correctionExpression": "I enjoy [your information]."},
@@ -1811,6 +2370,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             make_settings(
                 openrouter_api_key="test-openrouter-key",
                 openrouter_model="openrouter-test-model",
+                openrouter_review_model="openrouter-review-model",
             ),
         )
 
@@ -1840,12 +2400,70 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("Counterpart role: friend", candidate_messages[1]["content"])
         self.assertIn("User utterance: why do you wanna know that?", candidate_messages[1]["content"])
         self.assertIn("Review Task", review_messages[0]["content"])
-        self.assertIn("scoreEvidence and feedbackType are locked by the server", review_messages[0]["content"])
+        self.assertIn(
+            "Re-evaluate scoreEvidence instead of accepting the candidate scores",
+            review_messages[0]["content"],
+        )
         self.assertIn("Candidate JSON", review_messages[1]["content"])
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            ["openrouter-test-model", "openrouter-review-model"],
+        )
         cached_feedback = get_cached_message_feedback(100, 1001)
         self.assertIsNotNone(cached_feedback)
         self.assertEqual(cached_feedback.feedbackType, "GOOD")
         self.assertIsNone(cached_feedback.correctionExpression)
+
+    def test_message_feedback_single_pass_uses_only_candidate(self):
+        candidate = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(content=json.dumps(candidate))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertFalse(entry.candidate_was_repaired)
+        self.assertFalse(entry.copy_was_repaired)
+        self.assertFalse(entry.copy_was_fallback)
+
+    def test_message_feedback_single_pass_uses_dedicated_candidate_model(self):
+        candidate = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(content=json.dumps(candidate))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-mini-model",
+                message_feedback_model="message-feedback-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            ["message-feedback-model"],
+        )
 
     def test_message_feedback_accepts_user_opening_instruction(self):
         ai_response = {
@@ -2655,6 +3273,15 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
         self.assertIn("GOOD=0", prompt)
         self.assertIn("do not say the learner did well overall", prompt)
+
+    def test_session_feedback_prompt_rejects_absolute_praise_for_mixed_feedback(self):
+        prompt = next_message_service._session_feedback_system_prompt()
+
+        self.assertIn("NEEDS_IMPROVEMENT count is greater than 0", prompt)
+        self.assertIn(
+            "do not claim that every answer was natural or perfect",
+            prompt,
+        )
 
     def test_session_feedback_rejects_invalid_expected_message_ids(self):
         payload = valid_session_feedback_payload()

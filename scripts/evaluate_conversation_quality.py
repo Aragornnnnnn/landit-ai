@@ -2,15 +2,22 @@
 import argparse
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
+
+_REPOSITORY_ROOT = str(Path(__file__).resolve().parents[1])
+if sys.path[0] != _REPOSITORY_ROOT:
+    sys.path.insert(0, _REPOSITORY_ROOT)
 
 from pydantic import ValidationError
 
 from app.conversation.application.next_message_service import (
     AiGenerationFailedError,
     AiResponseInvalidError,
+    MessageFeedbackNotReadyError,
     _get_expected_message_feedback_entries,
     _generate_closing_message_candidate,
     _looks_like_meta_closing,
@@ -19,12 +26,14 @@ from app.conversation.application.next_message_service import (
     clear_message_feedback_cache,
     generate_inner_thought,
     generate_message_feedback,
+    generate_session_feedback,
 )
 from app.core.config import Settings
 from app.models.conversation import (
     ClosingMessageRequest,
     InnerThoughtRequest,
     MessageFeedbackRequest,
+    SessionFeedbackRequest,
 )
 
 
@@ -44,9 +53,16 @@ def evaluate_cases(
 ) -> list[dict[str, Any]]:
     if runs < 1:
         raise ValueError("runs must be at least 1")
-    if kind not in {"all", "closing", "inner-thought", "message-feedback"}:
+    if kind not in {
+        "all",
+        "closing",
+        "inner-thought",
+        "message-feedback",
+        "feedback-session",
+    }:
         raise ValueError(
-            "kind must be all, closing, inner-thought, or message-feedback",
+            "kind must be all, closing, inner-thought, message-feedback, "
+            "or feedback-session",
         )
 
     results: list[dict[str, Any]] = []
@@ -71,6 +87,8 @@ def _evaluate_case(
         return _evaluate_inner_thought_case(case, run=run, settings=settings)
     if case["kind"] == "message-feedback":
         return _evaluate_feedback_case(case, run=run, settings=settings)
+    if case["kind"] == "feedback-session":
+        return _evaluate_feedback_session_case(case, run=run, settings=settings)
     raise ValueError(f"unsupported quality case kind: {case['kind']}")
 
 
@@ -300,13 +318,301 @@ def _feedback_evaluation_error_result(
     }
 
 
+def _evaluate_feedback_session_case(
+    case: dict[str, Any],
+    *,
+    run: int,
+    settings: Settings,
+) -> dict[str, Any]:
+    started_at = perf_counter()
+    message_latencies_ms: list[float] = []
+    clear_message_feedback_cache()
+    try:
+        message_requests = [
+            MessageFeedbackRequest.model_validate(payload)
+            for payload in case["messageFeedbackPayloads"]
+        ]
+        for request in message_requests:
+            message_started_at = perf_counter()
+            response = generate_message_feedback(request, settings)
+            message_latencies_ms.append(
+                round((perf_counter() - message_started_at) * 1000, 1),
+            )
+            if response.feedbackStatus.value == "FAILED":
+                raise AiGenerationFailedError("message_feedback_failed")
+
+        message_ids = [request.messageId for request in message_requests]
+        entries = _get_expected_message_feedback_entries(
+            message_requests[0].sessionId,
+            message_ids,
+        )
+        expected_messages = {
+            boundary["messageId"]: boundary
+            for boundary in case["expectedMessages"]
+        }
+        message_results = [
+            _feedback_session_message_result(
+                entry,
+                expected_messages[entry.feedback.messageId],
+            )
+            for entry in entries
+        ]
+
+        session_started_at = perf_counter()
+        session_feedback = generate_session_feedback(
+            SessionFeedbackRequest.model_validate(case["sessionFeedbackPayload"]),
+            settings,
+        )
+        session_latency_ms = round(
+            (perf_counter() - session_started_at) * 1000,
+            1,
+        )
+        session_text = (
+            f"{session_feedback.highlightMessage}\n"
+            f"{session_feedback.summaryMessage}"
+        )
+        found_forbidden_session_terms = [
+            term
+            for term in case.get("forbiddenSessionTerms", [])
+            if term.casefold() in session_text.casefold()
+        ]
+        expected_native_score_range = case["expectedNativeScoreRange"]
+        return {
+            "caseId": case["caseId"],
+            "kind": "feedback-session",
+            "run": run,
+            "messageResults": message_results,
+            "messageExpectationsMatched": all(
+                result["expectationMatched"]
+                for result in message_results
+            ),
+            "nativeScore": session_feedback.nativeScore,
+            "expectedNativeScoreRange": expected_native_score_range,
+            "nativeScoreWithinExpectation": (
+                expected_native_score_range[0]
+                <= session_feedback.nativeScore
+                <= expected_native_score_range[1]
+            ),
+            "starRating": session_feedback.starRating,
+            "expectedStarRating": case["expectedStarRating"],
+            "starRatingMatchesExpectation": (
+                session_feedback.starRating == case["expectedStarRating"]
+            ),
+            "highlightMessage": session_feedback.highlightMessage,
+            "summaryMessage": session_feedback.summaryMessage,
+            "messageFeedbacks": [
+                feedback.model_dump(mode="json")
+                for feedback in session_feedback.messageFeedbacks
+            ],
+            "foundForbiddenSessionTerms": found_forbidden_session_terms,
+            "messageLatenciesMs": message_latencies_ms,
+            "sessionFeedbackLatencyMs": session_latency_ms,
+            "totalLatencyMs": round(
+                (perf_counter() - started_at) * 1000,
+                1,
+            ),
+            "validationError": None,
+            "validationReason": None,
+        }
+    except (
+        AiGenerationFailedError,
+        AiResponseInvalidError,
+        MessageFeedbackNotReadyError,
+        ValidationError,
+    ) as exc:
+        reason = getattr(exc, "reason", None) or str(exc) or type(exc).__name__
+        return {
+            "caseId": case["caseId"],
+            "kind": "feedback-session",
+            "run": run,
+            "messageResults": [],
+            "messageExpectationsMatched": False,
+            "nativeScore": None,
+            "nativeScoreWithinExpectation": False,
+            "starRating": None,
+            "starRatingMatchesExpectation": False,
+            "foundForbiddenSessionTerms": [],
+            "messageLatenciesMs": message_latencies_ms,
+            "sessionFeedbackLatencyMs": None,
+            "totalLatencyMs": round(
+                (perf_counter() - started_at) * 1000,
+                1,
+            ),
+            "validationError": type(exc).__name__,
+            "validationReason": reason,
+        }
+    finally:
+        clear_message_feedback_cache()
+
+
+def _feedback_session_message_result(
+    entry: Any,
+    expected: dict[str, Any],
+) -> dict[str, Any]:
+    feedback = entry.feedback
+    adjudication_evidence = entry.adjudication_evidence
+    feedback_text = "\n".join(
+        value
+        for value in (
+            feedback.baseLocaleAnalogy,
+            feedback.positiveFeedback,
+            feedback.feedbackDetail,
+            feedback.correctionExpression,
+            feedback.correctionReason,
+        )
+        if value is not None
+    )
+    forbidden_terms = expected.get("forbiddenFeedbackTerms", [])
+    found_forbidden_terms = [
+        term
+        for term in forbidden_terms
+        if term.casefold() in feedback_text.casefold()
+    ]
+    required_any_terms = expected.get("requiredAnyFeedbackTerms", [])
+    required_any_term_matched = not required_any_terms or any(
+        term.casefold() in feedback_text.casefold()
+        for term in required_any_terms
+    )
+    required_any_correction_reason_terms = expected.get(
+        "requiredAnyCorrectionReasonTerms",
+        [],
+    )
+    correction_reason = feedback.correctionReason or ""
+    required_any_correction_reason_term_matched = (
+        not required_any_correction_reason_terms
+        or any(
+            term.casefold() in correction_reason.casefold()
+            for term in required_any_correction_reason_terms
+        )
+    )
+    missing_coverage_count = sum(
+        item.status.value == "MISSING"
+        for item in adjudication_evidence.coverageEvidence
+    )
+    expected_missing_coverage_count = expected.get(
+        "expectedMissingCoverageCount",
+    )
+    missing_coverage_count_matches = (
+        expected_missing_coverage_count is None
+        or missing_coverage_count == expected_missing_coverage_count
+    )
+    actionable_issue_dimensions = sorted(
+        issue.dimension.value
+        for issue in adjudication_evidence.actionableIssues
+    )
+    expected_actionable_issue_dimensions = expected.get(
+        "expectedActionableIssueDimensions",
+    )
+    actionable_issue_dimensions_match = (
+        expected_actionable_issue_dimensions is None
+        or actionable_issue_dimensions
+        == sorted(expected_actionable_issue_dimensions)
+    )
+    forbidden_actionable_source_terms = expected.get(
+        "forbiddenActionableSourceTerms",
+        [],
+    )
+    actionable_source_text = "\n".join(
+        issue.sourceExcerpt
+        for issue in adjudication_evidence.actionableIssues
+    )
+    found_forbidden_actionable_source_terms = [
+        term
+        for term in forbidden_actionable_source_terms
+        if term.casefold() in actionable_source_text.casefold()
+    ]
+    required_any_actionable_rule_terms = expected.get(
+        "requiredAnyActionableRuleTerms",
+        [],
+    )
+    actionable_rule_text = "\n".join(
+        issue.rule
+        for issue in adjudication_evidence.actionableIssues
+    )
+    required_any_actionable_rule_term_matched = (
+        not required_any_actionable_rule_terms
+        or any(
+            term.casefold() in actionable_rule_text.casefold()
+            for term in required_any_actionable_rule_terms
+        )
+    )
+    message_score = _message_score_from_evidence(entry.score_evidence)
+    expected_score_range = expected["expectedMessageScoreRange"]
+    feedback_type_matches = (
+        feedback.feedbackType.value == expected["expectedFeedbackType"]
+    )
+    score_matches = (
+        expected_score_range[0]
+        <= message_score
+        <= expected_score_range[1]
+    )
+    return {
+        "messageId": feedback.messageId,
+        "feedbackType": feedback.feedbackType.value,
+        "expectedFeedbackType": expected["expectedFeedbackType"],
+        "feedbackTypeMatchesExpectation": feedback_type_matches,
+        "scoreEvidence": entry.score_evidence.model_dump(),
+        "adjudicationEvidence": adjudication_evidence.model_dump(mode="json"),
+        "messageScore": message_score,
+        "expectedMessageScoreRange": expected_score_range,
+        "messageScoreWithinExpectation": score_matches,
+        "candidateWasRepaired": entry.candidate_was_repaired,
+        "copyWasRepaired": entry.copy_was_repaired,
+        "copyWasFallback": entry.copy_was_fallback,
+        "finalFeedback": feedback.model_dump(mode="json"),
+        "foundForbiddenFeedbackTerms": found_forbidden_terms,
+        "requiredAnyFeedbackTerms": required_any_terms,
+        "requiredAnyFeedbackTermMatched": required_any_term_matched,
+        "requiredAnyCorrectionReasonTerms": required_any_correction_reason_terms,
+        "requiredAnyCorrectionReasonTermMatched": (
+            required_any_correction_reason_term_matched
+        ),
+        "missingCoverageCount": missing_coverage_count,
+        "expectedMissingCoverageCount": expected_missing_coverage_count,
+        "missingCoverageCountMatchesExpectation": (
+            missing_coverage_count_matches
+        ),
+        "actionableIssueDimensions": actionable_issue_dimensions,
+        "expectedActionableIssueDimensions": (
+            expected_actionable_issue_dimensions
+        ),
+        "actionableIssueDimensionsMatchExpectation": (
+            actionable_issue_dimensions_match
+        ),
+        "foundForbiddenActionableSourceTerms": (
+            found_forbidden_actionable_source_terms
+        ),
+        "requiredAnyActionableRuleTerms": required_any_actionable_rule_terms,
+        "requiredAnyActionableRuleTermMatched": (
+            required_any_actionable_rule_term_matched
+        ),
+        "expectationMatched": (
+            feedback_type_matches
+            and score_matches
+            and not found_forbidden_terms
+            and required_any_term_matched
+            and required_any_correction_reason_term_matched
+            and missing_coverage_count_matches
+            and actionable_issue_dimensions_match
+            and not found_forbidden_actionable_source_terms
+            and required_any_actionable_rule_term_matched
+        ),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument(
         "--kind",
-        choices=("all", "closing", "inner-thought", "message-feedback"),
+        choices=(
+            "all",
+            "closing",
+            "inner-thought",
+            "message-feedback",
+            "feedback-session",
+        ),
         default="all",
     )
     parser.add_argument(
@@ -326,6 +632,15 @@ def main() -> None:
     report = {
         "evaluatedAt": datetime.now(timezone.utc).isoformat(),
         "model": settings.openrouter_model,
+        "messageFeedbackModel": (
+            settings.message_feedback_model or settings.openrouter_model
+        ),
+        "reviewModel": (
+            settings.openrouter_review_model or settings.openrouter_model
+        ),
+        "messageFeedbackReviewEnabled": (
+            settings.message_feedback_review_enabled
+        ),
         "casesFile": str(args.cases),
         "casesSha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "runs": args.runs,
