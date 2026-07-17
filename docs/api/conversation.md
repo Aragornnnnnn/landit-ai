@@ -83,6 +83,7 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 
 저장되는 피드백은 `GOOD`, `NEEDS_IMPROVEMENT` 조건부 필드 정책을 지켜야 합니다.
 
+- `baseLocaleAnalogy`는 사용자의 영어 발화와 같은 자연스러움 또는 같은 문제를 가진 한국어 발화를 인용해 비교합니다. 부족한 점을 직접 설명하거나 행동을 지시하지 않습니다.
 - `GOOD`이면 `feedbackDetail`을 채우고 개선 필드는 `null`로 둡니다.
 - `NEEDS_IMPROVEMENT`이면 개선 표현과 이유를 채우고 `feedbackDetail`은 `null`로 둡니다.
 - 한 메시지에서 개선 표현은 최대 1개만 생성합니다.
