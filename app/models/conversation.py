@@ -224,6 +224,8 @@ def _strip_base_locale_analogy_framing(value: str) -> str:
         "한국어로 비유하자면",
         "한국어로 비유하면",
         "한국어로 치면",
+        "한국어로는",
+        "한국어로도",
     )
     for prefix in framing_prefixes:
         if stripped.startswith(prefix):
@@ -298,7 +300,20 @@ class MessageFeedbackContent(BaseModel):
     @field_validator("baseLocaleAnalogy")
     @classmethod
     def base_locale_analogy_must_not_be_blank_or_framed(cls, value: str) -> str:
-        return _validate_not_blank(_strip_base_locale_analogy_framing(value))
+        normalized = _validate_not_blank(_strip_base_locale_analogy_framing(value))
+        has_quoted_utterance = re.search(
+            r'(?:"[^"]*[가-힣][^"]*"|“[^”]*[가-힣][^”]*”|‘[^’]*[가-힣][^’]*’)',
+            normalized,
+        )
+        has_analogy_comparison = "라고" in normalized and any(
+            marker in normalized
+            for marker in ("것과 같", "것과 비슷")
+        )
+        if has_quoted_utterance is None or not has_analogy_comparison:
+            raise ValueError(
+                "baseLocaleAnalogy must compare a quoted Korean utterance",
+            )
+        return normalized
 
     @field_validator(
         "positiveFeedback",

@@ -6,6 +6,8 @@ import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from app.conversation.application import next_message_service
 from app.conversation.application.next_message_service import (
     MessageFeedbackNotReadyError,
@@ -744,7 +746,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "clarity": 2,
             "languageAccuracy": 1,
         }
-        candidate["baseLocaleAnalogy"] = "표현은 맞지만 다른 형태를 권한 상황이에요."
+        candidate["baseLocaleAnalogy"] = (
+            '"저는 포뮬러 원 보는 걸 좋아해요"라고 '
+            "자연스럽게 취미를 말하는 것과 같아요."
+        )
         candidate["correctionExpression"] = "I like watching Formula One."
         candidate["correctionReason"] = "like watching이 더 자연스럽게 들릴 수 있어요."
         copy = message_feedback_copy(good_message_feedback(1001))
@@ -969,10 +974,56 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "I no like pizza",
         )
 
+    def test_message_feedback_rejects_explanation_only_base_locale_analogy(self):
+        with self.assertRaisesRegex(
+            ValidationError,
+            "baseLocaleAnalogy must compare a quoted Korean utterance",
+        ):
+            conversation_models.MessageFeedbackContent.model_validate(
+                {
+                    "baseLocaleAnalogy": (
+                        "질문에 답하지 않고 엉뚱한 반응만 하면, "
+                        "대화 흐름에 맞는 내용을 말해줘야 해요."
+                    ),
+                },
+            )
+
+    def test_message_feedback_rejects_non_korean_base_locale_analogy(self):
+        with self.assertRaisesRegex(
+            ValidationError,
+            "baseLocaleAnalogy must compare a quoted Korean utterance",
+        ):
+            conversation_models.MessageFeedbackContent.model_validate(
+                {
+                    "baseLocaleAnalogy": (
+                        '"I like reading books"라고 취미는 말했지만 '
+                        "이유는 말하지 않은 것과 같아요."
+                    ),
+                },
+            )
+
+    def test_message_feedback_strips_base_locale_meta_framing(self):
+        content = conversation_models.MessageFeedbackContent.model_validate(
+            {
+                "baseLocaleAnalogy": (
+                    '한국어로는, "이름만 말하고 자기소개를 멈춘 것 같아요"라고 '
+                    "답하는 것과 같아요."
+                ),
+            },
+        )
+
+        self.assertEqual(
+            content.baseLocaleAnalogy,
+            '"이름만 말하고 자기소개를 멈춘 것 같아요"라고 답하는 것과 같아요.',
+        )
+
     def test_message_feedback_assembles_good_from_score_and_discards_needs_fields(self):
         content = conversation_models.MessageFeedbackContent.model_validate(
             {
-                "baseLocaleAnalogy": "질문에 맞게 자연스럽게 답했어요.",
+                "baseLocaleAnalogy": (
+                    '"좋아하는 음식을 이유와 함께 말했어요"라고 '
+                    "질문에 맞게 답하는 것과 같아요."
+                ),
                 "positiveFeedback": "이 값은 제거되어야 해요.",
                 "feedbackDetail": "핵심을 자연스럽게 전달했어요.",
                 "correctionExpression": "Written-only correction.",
@@ -1001,7 +1052,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def test_message_feedback_assembles_needs_from_score_and_discards_good_fields(self):
         content = conversation_models.MessageFeedbackContent.model_validate(
             {
-                "baseLocaleAnalogy": "질문의 일부만 답한 상황이에요.",
+                "baseLocaleAnalogy": (
+                    '"좋아하는 활동만 말하고 이유는 생략했어요"라고 '
+                    "질문의 일부만 답하는 것과 같아요."
+                ),
                 "positiveFeedback": "핵심 단어를 말한 점은 좋아요.",
                 "feedbackDetail": "이 값은 제거되어야 해요.",
                 "correctionExpression": "I like [your hobby] because [your reason].",
@@ -1264,6 +1318,38 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("[your travel document]", copy_prompt)
         self.assertIn("I like reading a book", candidate_prompt)
         self.assertIn("This is so cool", candidate_prompt)
+        self.assertIn("quoted Korean utterance", candidate_prompt)
+        self.assertIn("not direct feedback or advice", candidate_prompt)
+        self.assertIn("quoted Korean utterance", copy_prompt)
+        self.assertIn("not direct feedback or advice", copy_prompt)
+        self.assertIn("Do not claim the user stated missing information", candidate_prompt)
+        self.assertIn("Do not claim the user stated missing information", copy_prompt)
+
+    def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
+        candidate_prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+        copy_prompt = next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        for prompt in (candidate_prompt, copy_prompt):
+            self.assertIn("one most important improvement", prompt)
+            self.assertIn("I'm not sure yet. I prefer to split the cleaning [your preferred way].", prompt)
+            self.assertIn("I'm up at 9am, and I go to bed at [your bedtime].", prompt)
+            self.assertIn(
+                "No, I haven't had a roommate situation that drove me crazy.",
+                prompt,
+            )
+            self.assertIn(
+                "Do not add an answer to the second question in that correction.",
+                prompt,
+            )
+            self.assertIn(
+                "Do not use [your dealbreaker] or mention dealbreakers in correctionReason.",
+                prompt,
+            )
+            self.assertIn("Do not make a punctuation or spacing change", prompt)
 
     def test_message_feedback_repair_prompt_explains_generic_placeholder(self):
         request = conversation_models.MessageFeedbackRequest.model_validate(
@@ -2182,6 +2268,12 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Expected message IDs: [1001, 1003]", messages[1]["content"])
         self.assertIn("Cached message feedback counts: GOOD=1, NEEDS_IMPROVEMENT=1", messages[1]["content"])
         self.assertIn("summaryMessage", messages[0]["content"])
+
+    def test_session_feedback_prompt_avoids_overpraising_when_all_messages_need_improvement(self):
+        prompt = next_message_service._session_feedback_system_prompt()
+
+        self.assertIn("GOOD=0", prompt)
+        self.assertIn("do not say the learner did well overall", prompt)
 
     def test_session_feedback_rejects_invalid_expected_message_ids(self):
         payload = valid_session_feedback_payload()

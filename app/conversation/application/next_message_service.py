@@ -470,7 +470,10 @@ def _normalize_preference_only_candidate(
         return candidate, score_evidence
     normalized_candidate = candidate.model_copy(
         update={
-            "baseLocaleAnalogy": "좋아하는 활동을 자연스럽게 말한 상황이에요.",
+            "baseLocaleAnalogy": (
+                '"저는 포뮬러 원 보는 걸 좋아해요"라고 '
+                "좋아하는 활동을 자연스럽게 말하는 것과 같아요."
+            ),
             "feedbackDetail": "질문에 맞는 핵심을 자연스럽게 전달했어요.",
         },
     )
@@ -1338,6 +1341,8 @@ def _session_feedback_system_prompt() -> str:
             "summaryMessage must be written in Korean. "
             "It must summarize the session as a whole in one or two natural sentences. "
             "Mention what the learner did well and, if needed, one broad improvement direction based only on cached feedback. "
+            "When Cached message feedback counts has GOOD=0, do not say the learner did well overall or completed the questions well. "
+            "In that case, acknowledge only a concrete strength present in cached feedback, such as responding to the question or being understandable, and focus the summary on one improvement direction. "
             "Do not introduce corrections or examples that are not present in cached message feedback."
         ),
         (
@@ -1459,6 +1464,11 @@ def _message_feedback_system_prompt(
             "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
             "When a self-introduction question asks for a name and more information, and the user gives only a name, use [your hobby] for the missing detail. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
+            "For a multi-part question, improve only one missing core part and do not list other missing parts in correctionReason. "
+            "Do not make a punctuation or spacing change the only correction. "
+            "For a cleaning-preference question, if the user says I don't know, a natural correction is I'm not sure yet. I prefer to split the cleaning [your preferred way]. "
+            "For a daily-rhythm question, if the user says I'm up at 9am, do not change 9am formatting; a natural correction is I'm up at 9am, and I go to bed at [your bedtime]. "
+            "For a roommate question, if the user says No, do not infer a dealbreaker; a natural correction that clarifies only the first question is No, I haven't had a roommate situation that drove me crazy. Do not add an answer to the second question in that correction. Do not use [your dealbreaker] or mention dealbreakers in correctionReason. "
             "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
             "Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
             "When the utterance is irrelevant or unclear, show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
@@ -1467,7 +1477,10 @@ def _message_feedback_system_prompt(
         (
             "Field Policy:\n"
             "All three scoreEvidence values are integers from 0 to 2. The server derives feedbackType from scoreEvidence, so do not return feedbackType. "
-            "baseLocaleAnalogy is a Korean analogy for the same issue. "
+            "baseLocaleAnalogy is required and must compare the user's English with one quoted Korean utterance using the form \"<Korean utterance>\"라고 ... 것과 같아요. Preserve the same naturalness or the same issue. "
+            "It is not direct feedback or advice: do not explain what is missing or tell the learner what to say. Do not include 한국어로 치면, 한국어로는, or 한국어로도. "
+            "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
+            "For an incomplete self-introduction, write \"안녕하세요, 제 이름은 상민이에요\"라고 이름만 말하고 자기소개를 멈춘 것과 같아요, not 자기소개가 부족하니 내용을 더 말해야 해요. "
             "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
             "correctionReason is natural Korean. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
@@ -1476,7 +1489,7 @@ def _message_feedback_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         "Detected Pattern Catalog:\n"
@@ -1558,14 +1571,23 @@ def _message_feedback_review_system_prompt(
             "Do not make capitalization, punctuation, or a meaning-neutral filler the only improvement. Do not replace a natural grammar alternative only because you prefer another form. "
             "Do not mention capitalization, commas, periods, uppercase, lowercase, or punctuation as a learner-facing improvement reason. "
             "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
-            "When the user answers only part of a multi-part question, help them complete the most important missing part. When the utterance is irrelevant or unclear, do not merely polish its grammar; show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
+            "For NEEDS_IMPROVEMENT, give one most important improvement. "
+            "When the user answers only part of a multi-part question, help them complete the one most important missing part and do not list other missing parts in correctionReason. "
+            "Do not make a punctuation or spacing change the only correction. "
+            "For a cleaning-preference question, if the user says I don't know, a natural correction is I'm not sure yet. I prefer to split the cleaning [your preferred way]. "
+            "For a daily-rhythm question, if the user says I'm up at 9am, do not change 9am formatting; a natural correction is I'm up at 9am, and I go to bed at [your bedtime]. "
+            "For a roommate question, if the user says No, do not infer a dealbreaker; a natural correction that clarifies only the first question is No, I haven't had a roommate situation that drove me crazy. Do not add an answer to the second question in that correction. Do not use [your dealbreaker] or mention dealbreakers in correctionReason. "
+            "When the utterance is irrelevant or unclear, do not merely polish its grammar; show a relevant answer structure and use a [your ...] placeholder in correctionExpression for missing information. "
             "Keep positive feedback factual and avoid formal praise for hostile, irrelevant, or unintelligible utterances. "
             "Keep baseLocaleAnalogy, positiveFeedback, feedbackDetail, correctionExpression, and correctionReason focused on the same improvement. "
             "Do not expose internal-policy language such as 없는 사실, 사실을 만들지, or 임의로 추측."
         ),
         (
             "Field Policy:\n"
-            "baseLocaleAnalogy is required and explains how the English sounds through one Korean analogy. "
+            "baseLocaleAnalogy is required and must compare the user's English with one quoted Korean utterance using the form \"<Korean utterance>\"라고 ... 것과 같아요. Preserve the same naturalness or the same issue. "
+            "It is not direct feedback or advice: do not explain what is missing or tell the learner what to say. Do not include 한국어로 치면, 한국어로는, or 한국어로도. "
+            "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
+            "For an incomplete self-introduction, write \"안녕하세요, 제 이름은 상민이에요\"라고 이름만 말하고 자기소개를 멈춘 것과 같아요, not 자기소개가 부족하니 내용을 더 말해야 해요. "
             "For GOOD, positiveFeedback, correctionExpression, and correctionReason are null, feedbackDetail is required, and benchmarkMessage is a short non-quantitative Korean message or null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required, feedbackDetail and benchmarkMessage are null. "
             "correctionExpression contains one English expression only. "
@@ -1583,7 +1605,7 @@ def _message_feedback_review_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         f"Evaluation context type: {evaluation_context_type}",

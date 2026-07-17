@@ -135,6 +135,9 @@ class QualityEvaluationTests(unittest.TestCase):
                 "lan167-off-topic-answer",
                 "lan167-partial-hobby-reason",
                 "lan167-preserve-unknown-reason",
+                "lan167-cleaning-unknown-answer",
+                "lan167-daily-rhythm-one-missing-part",
+                "lan167-ambiguous-roommate-no",
             },
         )
         written_form_case = cases_by_id["lan167-capitalization-and-period-only"]
@@ -181,8 +184,23 @@ class QualityEvaluationTests(unittest.TestCase):
                 "lan167-off-topic-answer": 0,
                 "lan167-partial-hobby-reason": 1,
                 "lan167-preserve-unknown-reason": 2,
+                "lan167-cleaning-unknown-answer": 1,
+                "lan167-daily-rhythm-one-missing-part": 1,
+                "lan167-ambiguous-roommate-no": 1,
             },
         )
+        cleaning_case = cases_by_id["lan167-cleaning-unknown-answer"]
+        self.assertEqual(
+            cleaning_case["requiredCorrectionPlaceholders"],
+            ["[your preferred way]"],
+        )
+        daily_rhythm_case = cases_by_id["lan167-daily-rhythm-one-missing-part"]
+        self.assertEqual(
+            daily_rhythm_case["requiredCorrectionPlaceholders"],
+            ["[your bedtime]"],
+        )
+        roommate_case = cases_by_id["lan167-ambiguous-roommate-no"]
+        self.assertIn("dealbreaker", roommate_case["forbiddenFeedbackTerms"])
 
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -399,7 +417,10 @@ class QualityEvaluationTests(unittest.TestCase):
         feedback = MessageFeedbackData(
             messageId=2001,
             feedbackType="NEEDS_IMPROVEMENT",
-            baseLocaleAnalogy="질문에 맞는 증빙을 말해야 하는 상황이에요.",
+            baseLocaleAnalogy=(
+                '"필요한 증빙이 무엇인지는 말하지 않았어요"라고 '
+                "질문의 일부만 답하는 것과 같아요."
+            ),
             positiveFeedback="문장을 끝까지 말한 점은 좋아요.",
             correctionExpression="I have [your travel document].",
             correctionReason="여행 계획을 보여 줄 수 있는 자료를 넣어 답해 보세요.",
