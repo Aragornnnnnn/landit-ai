@@ -2,10 +2,15 @@
 import argparse
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any
+
+_REPOSITORY_ROOT = str(Path(__file__).resolve().parents[1])
+if sys.path[0] != _REPOSITORY_ROOT:
+    sys.path.insert(0, _REPOSITORY_ROOT)
 
 from pydantic import ValidationError
 

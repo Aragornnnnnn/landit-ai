@@ -1,6 +1,7 @@
 # LAN-138 실제 모델 평가 도구의 결과 요약을 검증하는 unittest 모듈
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -714,6 +715,34 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(report["kind"], "closing")
         self.assertEqual(report["results"], [])
         datetime.fromisoformat(report["evaluatedAt"])
+
+    def test_direct_script_imports_app_from_its_own_repository(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import evaluate_conversation_quality\n"
+                    "from app.conversation.application import "
+                    "next_message_service\n"
+                    "print(next_message_service.__file__)"
+                ),
+            ],
+            cwd=repository_root / "scripts",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(
+            Path(completed.stdout.strip()).resolve(),
+            repository_root
+            / "app"
+            / "conversation"
+            / "application"
+            / "next_message_service.py",
+        )
 
     def test_closing_result_detects_meta_wrap_up_through_real_generation_path(self):
         with patch(
