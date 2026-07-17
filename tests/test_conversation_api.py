@@ -1194,6 +1194,14 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIsNone(entry.feedback.correctionReason)
         self.assertFalse(entry.candidate_was_repaired)
 
+    def test_message_feedback_has_no_preference_specific_runtime_override(self):
+        for name in (
+            "_normalize_preference_only_candidate",
+            "_is_like_infinitive_gerund_alternative",
+            "_gerund_forms",
+        ):
+            self.assertFalse(hasattr(next_message_service, name))
+
     def test_message_feedback_keeps_prefixed_placeholder_unchanged(self):
         normalized = next_message_service._normalize_message_feedback_placeholders(
             {"correctionExpression": "I enjoy [your hobby]."},
@@ -1502,7 +1510,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             valid_message_feedback_payload(),
         )
 
-        feedback, _, _ = next_message_service._parse_message_feedback_candidate(
+        feedback, _, _, _ = next_message_service._parse_message_feedback_candidate(
             candidate,
             request,
         )
@@ -1704,6 +1712,88 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(
             entry.score_evidence.model_dump(),
             {"contextFit": 2, "clarity": 2, "languageAccuracy": 2},
+        )
+
+    def test_message_feedback_stores_reviewed_adjudication_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "want to",
+                    "rule": "Use an accurate spoken expression.",
+                },
+            ],
+        )
+        reviewed = message_feedback_candidate_with_evidence(
+            good_message_feedback(1001),
+        )
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(reviewed)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(entry.adjudication_evidence.actionableIssues, [])
+        self.assertEqual(
+            entry.adjudication_evidence.coverageEvidence[0].status.value,
+            "ANSWERED",
+        )
+
+    def test_message_feedback_fallback_stores_candidate_adjudication_evidence(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "want to",
+                    "rule": "Use an accurate spoken expression.",
+                },
+            ],
+        )
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate)],
+            errors=[None, RuntimeError("review unavailable")],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(entry.copy_was_fallback)
+        self.assertEqual(
+            entry.adjudication_evidence.actionableIssues[0].sourceExcerpt,
+            "wanna",
         )
 
     def test_message_feedback_review_can_downgrade_candidate_score(self):
@@ -2067,6 +2157,17 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 contextFit=2,
                 clarity=2,
                 languageAccuracy=2,
+            ),
+            conversation_models.MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "Can I have your phone number?",
+                        "answerExcerpt": "why do you wanna know that?",
+                        "status": "ANSWERED",
+                    },
+                ],
+                ignoredSpeechArtifacts=[],
+                actionableIssues=[],
             ),
             [],
             {"correctionExpression": "I enjoy [your information]."},

@@ -136,6 +136,7 @@ _WRITTEN_FORM_FEEDBACK_TERMS = (
 class _MessageFeedbackCacheEntry:
     feedback: MessageFeedbackData
     score_evidence: MessageFeedbackScoreEvidence
+    adjudication_evidence: MessageFeedbackAdjudicationEvidence
     user_message: str
     candidate_was_repaired: bool
     copy_was_repaired: bool
@@ -362,6 +363,7 @@ def generate_message_feedback(
         (
             candidate,
             score_evidence,
+            adjudication_evidence,
             detected_patterns,
             candidate_was_repaired,
         ) = _generate_message_feedback_candidate(
@@ -369,18 +371,21 @@ def generate_message_feedback(
             resolved_settings,
         )
         final_score_evidence = score_evidence
+        final_adjudication_evidence = adjudication_evidence
         copy_was_repaired = False
         copy_was_fallback = False
         try:
             (
                 feedback,
                 final_score_evidence,
+                final_adjudication_evidence,
                 detected_patterns,
                 copy_was_repaired,
             ) = _review_message_feedback_candidate(
                 request,
                 candidate,
                 score_evidence,
+                adjudication_evidence,
                 detected_patterns,
                 resolved_settings,
             )
@@ -405,6 +410,7 @@ def generate_message_feedback(
             request.sessionId,
             feedback,
             score_evidence=final_score_evidence,
+            adjudication_evidence=final_adjudication_evidence,
             user_message=request.userMessage,
             candidate_was_repaired=candidate_was_repaired,
             copy_was_repaired=copy_was_repaired,
@@ -433,7 +439,13 @@ def generate_message_feedback(
 def _generate_message_feedback_candidate(
     request: MessageFeedbackRequest,
     settings: Settings,
-) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any, bool]:
+) -> tuple[
+    MessageFeedbackData,
+    MessageFeedbackScoreEvidence,
+    MessageFeedbackAdjudicationEvidence,
+    Any,
+    bool,
+]:
     candidate_data: dict[str, Any] | None = None
     try:
         candidate_data = _request_json_completion(
@@ -444,11 +456,8 @@ def _generate_message_feedback_candidate(
             user_prompt=_message_feedback_user_prompt(request),
             max_tokens=768,
         )
-        feedback, score_evidence, detected_patterns = _parse_message_feedback_candidate(
-            candidate_data,
-            request,
-        )
-        return feedback, score_evidence, detected_patterns, False
+        parsed = _parse_message_feedback_candidate(candidate_data, request)
+        return (*parsed, False)
     except AiResponseInvalidError as exc:
         if candidate_data is None:
             raise
@@ -470,20 +479,24 @@ def _generate_message_feedback_candidate(
             ),
             max_tokens=768,
         )
-        feedback, score_evidence, detected_patterns = _parse_message_feedback_candidate(
-            repaired_data,
-            request,
-        )
-        return feedback, score_evidence, detected_patterns, True
+        parsed = _parse_message_feedback_candidate(repaired_data, request)
+        return (*parsed, True)
 
 
 def _review_message_feedback_candidate(
     request: MessageFeedbackRequest,
     candidate: MessageFeedbackData,
     score_evidence: MessageFeedbackScoreEvidence,
+    adjudication_evidence: MessageFeedbackAdjudicationEvidence,
     detected_patterns: Any,
     settings: Settings,
-) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any, bool]:
+) -> tuple[
+    MessageFeedbackData,
+    MessageFeedbackScoreEvidence,
+    MessageFeedbackAdjudicationEvidence,
+    Any,
+    bool,
+]:
     reviewed_data: dict[str, Any] | None = None
     try:
         reviewed_data = _request_json_completion(
@@ -495,18 +508,28 @@ def _review_message_feedback_candidate(
                 request,
                 candidate,
                 score_evidence,
+                adjudication_evidence,
                 detected_patterns,
             ),
             max_tokens=768,
         )
-        feedback, reviewed_evidence, reviewed_patterns = (
-            _parse_message_feedback_candidate(
-                reviewed_data,
-                request,
-                reject_generic_placeholder=True,
-            )
+        (
+            feedback,
+            reviewed_score_evidence,
+            reviewed_adjudication_evidence,
+            reviewed_patterns,
+        ) = _parse_message_feedback_candidate(
+            reviewed_data,
+            request,
+            reject_generic_placeholder=True,
         )
-        return feedback, reviewed_evidence, reviewed_patterns, False
+        return (
+            feedback,
+            reviewed_score_evidence,
+            reviewed_adjudication_evidence,
+            reviewed_patterns,
+            False,
+        )
     except AiResponseInvalidError as exc:
         if reviewed_data is None:
             raise
@@ -525,20 +548,30 @@ def _review_message_feedback_candidate(
                 request,
                 candidate,
                 score_evidence,
+                adjudication_evidence,
                 detected_patterns,
                 reviewed_data,
                 exc,
             ),
             max_tokens=768,
         )
-        feedback, reviewed_evidence, reviewed_patterns = (
-            _parse_message_feedback_candidate(
-                repaired_data,
-                request,
-                reject_generic_placeholder=True,
-            )
+        (
+            feedback,
+            reviewed_score_evidence,
+            reviewed_adjudication_evidence,
+            reviewed_patterns,
+        ) = _parse_message_feedback_candidate(
+            repaired_data,
+            request,
+            reject_generic_placeholder=True,
         )
-        return feedback, reviewed_evidence, reviewed_patterns, True
+        return (
+            feedback,
+            reviewed_score_evidence,
+            reviewed_adjudication_evidence,
+            reviewed_patterns,
+            True,
+        )
 
 
 def _parse_message_feedback_candidate(
@@ -546,7 +579,12 @@ def _parse_message_feedback_candidate(
     request: MessageFeedbackRequest,
     *,
     reject_generic_placeholder: bool = False,
-) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any]:
+) -> tuple[
+    MessageFeedbackData,
+    MessageFeedbackScoreEvidence,
+    MessageFeedbackAdjudicationEvidence,
+    Any,
+]:
     candidate_data = dict(data)
     detected_patterns = candidate_data.pop("detectedPatterns", None)
     candidate_data = _normalize_message_feedback_placeholders(candidate_data)
@@ -554,10 +592,8 @@ def _parse_message_feedback_candidate(
         candidate = MessageFeedbackCandidate.model_validate(candidate_data)
         _validate_message_feedback_adjudication(candidate, request)
         candidate = _complete_candidate_fallback_content(candidate)
-        candidate, score_evidence = _normalize_preference_only_candidate(
-            candidate,
-            request.userMessage,
-        )
+        score_evidence = candidate.scoreEvidence
+        adjudication_evidence = _message_feedback_adjudication_evidence(candidate)
         feedback = _assemble_message_feedback(
             candidate,
             message_id=request.messageId,
@@ -570,7 +606,7 @@ def _parse_message_feedback_candidate(
         request.userMessage,
         reject_generic_placeholder=reject_generic_placeholder,
     )
-    return feedback, score_evidence, detected_patterns
+    return feedback, score_evidence, adjudication_evidence, detected_patterns
 
 
 def _message_feedback_adjudication_evidence(
@@ -650,37 +686,6 @@ def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, 
     return normalized_data
 
 
-def _normalize_preference_only_candidate(
-    candidate: MessageFeedbackCandidate,
-    user_message: str,
-) -> tuple[MessageFeedbackCandidate, MessageFeedbackScoreEvidence]:
-    score_evidence = candidate.scoreEvidence
-    if (
-        score_evidence.contextFit != 2
-        or score_evidence.clarity != 2
-        or score_evidence.languageAccuracy != 1
-        or candidate.correctionExpression is None
-        or not _is_like_infinitive_gerund_alternative(
-            user_message,
-            candidate.correctionExpression,
-        )
-    ):
-        return candidate, score_evidence
-    normalized_candidate = candidate.model_copy(
-        update={
-            "baseLocaleAnalogy": (
-                '"저는 포뮬러 원 보는 걸 좋아해요"라고 '
-                "좋아하는 활동을 자연스럽게 말하는 것과 같아요."
-            ),
-            "feedbackDetail": "질문에 맞는 핵심을 자연스럽게 전달했어요.",
-        },
-    )
-    normalized_score_evidence = score_evidence.model_copy(
-        update={"languageAccuracy": 2},
-    )
-    return normalized_candidate, normalized_score_evidence
-
-
 def _complete_candidate_fallback_content(
     candidate: MessageFeedbackCandidate,
 ) -> MessageFeedbackCandidate:
@@ -697,39 +702,6 @@ def _complete_candidate_fallback_content(
     return candidate.model_copy(
         update={"positiveFeedback": positive_feedback},
     )
-
-
-def _is_like_infinitive_gerund_alternative(
-    user_message: str,
-    correction_expression: str,
-) -> bool:
-    source_match = re.fullmatch(
-        r"i like to ([a-z]+)(?: (.*))?",
-        _normalize_spoken_form(user_message),
-    )
-    correction_match = re.fullmatch(
-        r"i like ([a-z]+ing)(?: (.*))?",
-        _normalize_spoken_form(correction_expression),
-    )
-    if source_match is None or correction_match is None:
-        return False
-    source_verb, source_object = source_match.groups(default="")
-    correction_verb, correction_object = correction_match.groups(default="")
-    return (
-        source_object == correction_object
-        and correction_verb in _gerund_forms(source_verb)
-    )
-
-
-def _gerund_forms(verb: str) -> set[str]:
-    forms = {f"{verb}ing"}
-    if verb.endswith("ie"):
-        forms.add(f"{verb[:-2]}ying")
-    elif verb.endswith("e") and not verb.endswith("ee"):
-        forms.add(f"{verb[:-1]}ing")
-    if re.search(r"[aeiou][b-df-hj-np-tv-z]$", verb):
-        forms.add(f"{verb}{verb[-1]}ing")
-    return forms
 
 
 def _feedback_type_from_score_evidence(
@@ -1083,6 +1055,7 @@ def _store_message_feedback(
     feedback: MessageFeedbackData,
     *,
     score_evidence: MessageFeedbackScoreEvidence,
+    adjudication_evidence: MessageFeedbackAdjudicationEvidence,
     user_message: str,
     candidate_was_repaired: bool = False,
     copy_was_repaired: bool = False,
@@ -1096,6 +1069,7 @@ def _store_message_feedback(
         session_feedbacks[feedback.messageId] = _MessageFeedbackCacheEntry(
             feedback=feedback,
             score_evidence=score_evidence,
+            adjudication_evidence=adjudication_evidence,
             user_message=user_message,
             candidate_was_repaired=candidate_was_repaired,
             copy_was_repaired=copy_was_repaired,
@@ -1894,6 +1868,7 @@ def _message_feedback_review_user_prompt(
     request: MessageFeedbackRequest,
     candidate: MessageFeedbackData,
     score_evidence: MessageFeedbackScoreEvidence,
+    adjudication_evidence: MessageFeedbackAdjudicationEvidence,
     detected_patterns: Any,
 ) -> str:
     return (
@@ -1902,6 +1877,8 @@ def _message_feedback_review_user_prompt(
         f"{candidate.model_dump_json(by_alias=True)}\n\n"
         "Candidate score evidence:\n"
         f"{score_evidence.model_dump_json()}\n\n"
+        "Candidate adjudication evidence:\n"
+        f"{adjudication_evidence.model_dump_json()}\n\n"
         "Candidate feedback type:\n"
         f"{candidate.feedbackType.value}\n\n"
         "Candidate detected patterns:\n"
@@ -1925,6 +1902,7 @@ def _message_feedback_review_repair_user_prompt(
     request: MessageFeedbackRequest,
     candidate: MessageFeedbackData,
     score_evidence: MessageFeedbackScoreEvidence,
+    adjudication_evidence: MessageFeedbackAdjudicationEvidence,
     detected_patterns: Any,
     invalid_review: dict[str, Any] | None,
     error: Exception,
@@ -1936,7 +1914,7 @@ def _message_feedback_review_repair_user_prompt(
     )
     validation_reason = _message_feedback_repair_instruction(error)
     return (
-        f"{_message_feedback_review_user_prompt(request, candidate, score_evidence, detected_patterns)}\n\n"
+        f"{_message_feedback_review_user_prompt(request, candidate, score_evidence, adjudication_evidence, detected_patterns)}\n\n"
         "Invalid final JSON:\n"
         f"{invalid_review_json}\n\n"
         "Validation failure:\n"
