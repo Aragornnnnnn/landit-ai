@@ -1,8 +1,22 @@
 # 대화 생성 API 요청과 응답 DTO를 정의하는 모듈
+import re
 from enum import StrEnum
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+_CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN = re.compile(
+    r"\[([^\[\]]+)\]",
+)
+_CORRECTION_EXPRESSION_PLACEHOLDER_LINE_BREAK_PATTERN = re.compile(
+    r"[ \t]*[\r\n]+[ \t]*",
+)
+CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE = (
+    "Use [your <specific label>] placeholders only. "
+    "A placeholder label must be non-empty and cannot contain brackets or line breaks. "
+    "Hyphens, uppercase letters, and numbers are allowed."
+)
 
 
 def _validate_not_blank(value: str) -> str:
@@ -15,6 +29,41 @@ def _optional_not_blank(value: str | None) -> str | None:
     if value is None:
         return None
     return _validate_not_blank(value)
+
+
+def correction_expression_placeholder_labels(value: str) -> list[str]:
+    return _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.findall(value)
+
+
+def normalize_correction_expression_placeholders(value: str) -> str:
+    def normalize_placeholder(match: re.Match[str]) -> str:
+        label = _CORRECTION_EXPRESSION_PLACEHOLDER_LINE_BREAK_PATTERN.sub(
+            " ",
+            match.group(1),
+        ).strip()
+        if label.startswith("your "):
+            return f"[{label}]"
+        return f"[your {label}]"
+
+    return _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.sub(
+        normalize_placeholder,
+        value,
+    )
+
+
+def has_supported_correction_expression_placeholders(value: str) -> bool:
+    labels = correction_expression_placeholder_labels(value)
+    unparsed_value = _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.sub("", value)
+    return (
+        "[" not in unparsed_value
+        and "]" not in unparsed_value
+        and all(
+            label.startswith("your ") and label.removeprefix("your ").strip()
+            and "\r" not in label
+            and "\n" not in label
+            for label in labels
+        )
+    )
 
 
 class ScenarioContext(BaseModel):
@@ -93,6 +142,20 @@ class InnerThoughtType(StrEnum):
     BAD = "BAD"
 
 
+class AnswerCoverage(StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    DECLINED = "DECLINED"
+    UNRELATED = "UNRELATED"
+
+
+class RelationshipTone(StrEnum):
+    WARM = "WARM"
+    NEUTRAL = "NEUTRAL"
+    BLUNT = "BLUNT"
+    HOSTILE = "HOSTILE"
+
+
 class GoalCompletionStatus(StrEnum):
     NOT_STARTED = "NOT_STARTED"
     PARTIAL = "PARTIAL"
@@ -115,6 +178,16 @@ class FeedbackStatus(StrEnum):
 class FeedbackType(StrEnum):
     GOOD = "GOOD"
     NEEDS_IMPROVEMENT = "NEEDS_IMPROVEMENT"
+
+
+class MessageFeedbackCoverageStatus(StrEnum):
+    ANSWERED = "ANSWERED"
+    MISSING = "MISSING"
+
+
+class MessageFeedbackIssueDimension(StrEnum):
+    CLARITY = "CLARITY"
+    LANGUAGE_ACCURACY = "LANGUAGE_ACCURACY"
 
 
 class EvaluationContextType(StrEnum):
@@ -164,6 +237,12 @@ class InnerThoughtData(BaseModel):
     @classmethod
     def inner_thought_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+class InnerThoughtCandidate(InnerThoughtData):
+    answerCoverage: AnswerCoverage
+    relationshipTone: RelationshipTone
+    directedAttack: bool
 
 
 class InnerThoughtResponse(BaseModel):
@@ -223,6 +302,8 @@ def _strip_base_locale_analogy_framing(value: str) -> str:
         "한국어로 비유하자면",
         "한국어로 비유하면",
         "한국어로 치면",
+        "한국어로는",
+        "한국어로도",
     )
     for prefix in framing_prefixes:
         if stripped.startswith(prefix):
@@ -284,11 +365,9 @@ class MessageFeedbackResponse(BaseModel):
     feedbackStatus: FeedbackStatus
 
 
-class MessageFeedbackData(BaseModel):
+class MessageFeedbackContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    messageId: int = Field(gt=0)
-    feedbackType: FeedbackType
     baseLocaleAnalogy: str
     positiveFeedback: str | None = None
     feedbackDetail: str | None = None
@@ -311,6 +390,38 @@ class MessageFeedbackData(BaseModel):
     @classmethod
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
         return _optional_not_blank(value)
+
+    @field_validator("correctionExpression")
+    @classmethod
+    def correction_expression_placeholders_must_use_supported_format(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        if not has_supported_correction_expression_placeholders(value):
+            raise ValueError("correctionExpression placeholders must use [your ...] format")
+        return value
+
+    @field_validator("correctionReason")
+    @classmethod
+    def correction_reason_must_not_expose_internal_policy(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is not None and any(
+            marker in value
+            for marker in ("없는 사실", "사실을 만들지", "임의로 추측")
+        ):
+            raise ValueError(
+                "correctionReason must not expose internal generation policy",
+            )
+        return value
+
+
+class MessageFeedbackData(MessageFeedbackContent):
+    messageId: int = Field(gt=0)
+    feedbackType: FeedbackType
 
     @model_validator(mode="after")
     def feedback_fields_must_match_type(self) -> Self:
@@ -346,21 +457,86 @@ class MessageFeedbackScoreEvidence(BaseModel):
     languageAccuracy: int = Field(strict=True, ge=0, le=2)
 
 
-class MessageFeedbackEvaluation(MessageFeedbackData):
-    scoreEvidence: MessageFeedbackScoreEvidence
+class MessageFeedbackCoverageEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestExcerpt: str
+    answerExcerpt: str | None
+    status: MessageFeedbackCoverageStatus
+
+    @field_validator("requestExcerpt")
+    @classmethod
+    def request_excerpt_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("answerExcerpt")
+    @classmethod
+    def answer_excerpt_must_not_be_blank(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        return _optional_not_blank(value)
 
     @model_validator(mode="after")
-    def score_evidence_must_match_feedback_type(self) -> Self:
-        all_scores_are_max = all(
-            score == 2
-            for score in (
-                self.scoreEvidence.contextFit,
-                self.scoreEvidence.clarity,
-                self.scoreEvidence.languageAccuracy,
-            )
-        )
-        if (self.feedbackType == FeedbackType.GOOD) != all_scores_are_max:
-            raise ValueError("scoreEvidence must match feedbackType")
+    def answer_must_match_status(self) -> Self:
+        if self.status == MessageFeedbackCoverageStatus.ANSWERED:
+            if self.answerExcerpt is None:
+                raise ValueError("ANSWERED coverage requires answerExcerpt")
+        elif self.answerExcerpt is not None:
+            raise ValueError("MISSING coverage requires null answerExcerpt")
+        return self
+
+
+class MessageFeedbackActionableIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: MessageFeedbackIssueDimension
+    sourceExcerpt: str
+    correctionExcerpt: str
+    rule: str
+
+    @field_validator("sourceExcerpt", "correctionExcerpt", "rule")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class MessageFeedbackAdjudicationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    coverageEvidence: list[MessageFeedbackCoverageEvidence] = Field(min_length=1)
+    ignoredSpeechArtifacts: list[str]
+    actionableIssues: list[MessageFeedbackActionableIssue]
+
+    @field_validator("ignoredSpeechArtifacts")
+    @classmethod
+    def artifacts_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return [_validate_not_blank(value) for value in values]
+
+    @model_validator(mode="after")
+    def issue_dimensions_must_be_unique(self) -> Self:
+        dimensions = [issue.dimension for issue in self.actionableIssues]
+        if len(dimensions) != len(set(dimensions)):
+            raise ValueError("actionable issue dimensions must be unique")
+        return self
+
+
+class MessageFeedbackCandidate(MessageFeedbackContent):
+    scoreEvidence: MessageFeedbackScoreEvidence
+    coverageEvidence: list[MessageFeedbackCoverageEvidence] = Field(min_length=1)
+    ignoredSpeechArtifacts: list[str]
+    actionableIssues: list[MessageFeedbackActionableIssue]
+
+    @field_validator("ignoredSpeechArtifacts")
+    @classmethod
+    def artifacts_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return [_validate_not_blank(value) for value in values]
+
+    @model_validator(mode="after")
+    def issue_dimensions_must_be_unique(self) -> Self:
+        dimensions = [issue.dimension for issue in self.actionableIssues]
+        if len(dimensions) != len(set(dimensions)):
+            raise ValueError("actionable issue dimensions must be unique")
         return self
 
 
