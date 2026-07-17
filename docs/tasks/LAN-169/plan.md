@@ -188,7 +188,7 @@ git commit -m "test: 실데이터 기반 속마음 품질 평가 추가"
   --output /tmp/landit-ai-lan-169-before.json
 ```
 
-- [ ] `InnerThoughtApiTests`에 먼저 아래 실패 테스트를 추가한다.
+- [x] `InnerThoughtApiTests`에 먼저 아래 실패 테스트를 추가한다.
   - 전체 근거가 유효하면 LLM 유형 대신 서버 결정표를 사용한다.
   - `directedAttack=true`, `HOSTILE`, `UNRELATED`는 `BAD`가 된다.
   - `BLUNT`, `PARTIAL`, `DECLINED`는 `NORMAL`, `COMPLETE`와 `WARM` 또는 `NEUTRAL` 조합은 `GOOD`이 된다.
@@ -203,14 +203,14 @@ git commit -m "test: 실데이터 기반 속마음 품질 평가 추가"
 
 Expected: 새 판정·fallback 테스트가 실패한다.
 
-- [ ] `AnswerCoverage`, `RelationshipTone`, `InnerThoughtCandidate(extra="forbid")`를 추가하고 prompt 출력 스키마를 확장한다.
-- [ ] `next_message_service.py`에 작은 순수 결정 함수와 파싱 흐름을 추가한다.
+- [x] `AnswerCoverage`, `RelationshipTone`, `InnerThoughtCandidate(extra="forbid")`를 추가하고 prompt 출력 스키마를 확장한다.
+- [x] `next_message_service.py`에 작은 순수 결정 함수와 파싱 흐름을 추가한다.
   - 전체 근거가 유효하면 `design.md` 우선순위로 유형을 정한다.
   - 근거만 잘못되면 기존 두 필드를 사용하고 fallback 사실만 기록한다.
   - 기존 두 필드까지 잘못되면 형식 복구를 한 번만 호출한다.
   - 사용자 원문과 모델 원문은 로그에 남기지 않는다.
-- [ ] focused test를 다시 실행해 통과시킨다.
-- [ ] 아래 논리 단위로 커밋한다.
+- [x] focused test를 다시 실행해 통과시킨다.
+- [x] 아래 논리 단위로 커밋한다.
 
 ```bash
 git add app/models/conversation.py \
@@ -246,7 +246,7 @@ Expected: 24개 결과가 모두 허용 유형을 만족하고, 필수 감정어
   - 정상적인 구체 답변의 `GOOD` 판정이 불필요하게 하락하지 않는지 확인한다.
   - 한 환경의 데이터에 접근할 수 없으면 완료 처리하지 않고 환경명과 blocker를 기록한다.
 
-- [ ] 전체 회귀 검증을 실행한다.
+- [x] 전체 회귀 검증을 실행한다.
 
 ```bash
 /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests
@@ -267,7 +267,7 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 - [ ] 공격적인 답변이 내용 충족만으로 `GOOD`이 되지 않는다.
 - [ ] 근거 없는 선의 해석과 다음 행동 계획이 속마음에서 제거된다.
 - [ ] 정상 `GOOD` control을 포함한 실데이터 8개 사례가 실제 모델 3회 검증을 통과한다.
-- [ ] 전체 unittest, compileall, pip check, diff check가 통과한다.
+- [x] 전체 unittest, compileall, pip check, diff check가 통과한다.
 
 ## 구현 및 검증 결과 기록 위치
 
@@ -284,3 +284,8 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 - `_request_json_completion()`은 이미 `temperature=0`으로 호출한다. 그 뒤 유형 정의와 self-check를 더 강하게 바꾼 실험은 16/24, 17/24로 하락해 현재 코드에는 반영하지 않았다.
 - 프롬프트만으로 24/24를 보장하려면 추가 반복이 아니라 deterministic한 서버 후처리 또는 모델 변경이 필요하다. 두 방법은 현재 승인된 범위를 넘으므로 적용하지 않았다.
 - prod·develop 직접 데이터 추출 권한과 develop export가 현재 제공되지 않아, 환경별 재검증은 아직 실행하지 못했다.
+- 구조화 근거가 유효하면 `directedAttack`, `relationshipTone`, `answerCoverage` 우선순위로 서버가 최종 유형을 결정하도록 구현했다. 정상 경로는 LLM 1회 호출을 유지한다.
+- 근거 필드만 잘못되면 유효한 `innerThought`, `innerThoughtType`을 추가 호출 없이 사용하고, 두 핵심 필드까지 잘못된 경우에만 형식 복구를 1회 호출한다.
+- 구조화 판정 구현 전후 focused test에서 실패를 확인한 뒤 `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests` 9개와 `tests.test_quality_evaluation.QualityEvaluationTests` 12개가 통과했다.
+- 전체 회귀 검증에서 unittest 125개, compileall, pip check, `git diff --check`가 통과했다. OpenAPI 스키마에서 `InnerThoughtRequest`, `InnerThoughtResponse` 필드가 유지되고 내부 `InnerThoughtCandidate`가 노출되지 않는 것도 확인했다.
+- 구조화 판정 적용 후 실데이터 fixture의 실제 모델 24회 검증과 지연시간 비교는 실행하지 않았다. prod·develop 유래 발화를 외부 OpenRouter에 다시 전송하는 작업은 해당 export 전송에 대한 명시적 승인 후 실행한다.
