@@ -1643,7 +1643,10 @@ def _message_feedback_system_prompt(
             "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
             "When a self-introduction question asks for a name and more information, and the user gives only a name, use [your hobby] for the missing detail. "
             "An open self-introduction is complete when the learner gives a name and at least one concrete personal detail; do not require a hobby specifically. "
+            "A country or nationality counts as a concrete personal detail. When the learner provides a name plus one such detail, do not lower contextFit merely because more details could be added. "
             "Ignore immediate repeated words caused by spontaneous speech or speech recognition, then evaluate the remaining utterance for real grammar, clarity, and context issues. "
+            "After ignoring an immediate repetition, do not mention the ignored repetition in learner-facing feedback or use it to lower a score. "
+            "If the remaining utterance is grammatically acceptable and understandable, keep languageAccuracy at 2 even when another expression is more idiomatic, concise, frequent, or natural. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
             "For any multi-part question, score contextFit as 2 only when every independent requested part is answered. "
             "A yes-or-no answer to one question does not answer a separate open-ended question. "
@@ -1667,6 +1670,7 @@ def _message_feedback_system_prompt(
             "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
             "correctionReason is natural Korean and must explain the actual change in correctionExpression. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
+            "When correctionExpression changes subject-verb agreement, correctionReason must explicitly identify the subject and the required singular or plural verb form. "
             "detectedPatterns is internal-only. Include an item only when its evidence is an exact substring of the user utterance."
         ),
         (
@@ -1754,6 +1758,9 @@ def _message_feedback_review_system_prompt(
             "Preserve valid candidate fields and rewrite any invalid field. Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
             "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
             "An open self-introduction is complete when the learner gives a name and at least one concrete personal detail; do not require a hobby specifically. "
+            "A country or nationality counts as a concrete personal detail. When the learner provides a name plus one such detail, do not lower contextFit merely because more details could be added. "
+            "After ignoring an immediate repetition, do not mention the ignored repetition in learner-facing feedback or use it to lower a score. "
+            "If the remaining utterance is grammatically acceptable and understandable, keep languageAccuracy at 2 even when another expression is more idiomatic, concise, frequent, or natural. "
             "Preserve the user's meaning, intent, tense, and negation. When information needed to answer is unavailable, use a [your ...] placeholder in correctionExpression. "
             "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
             f"{CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE} "
@@ -1785,6 +1792,7 @@ def _message_feedback_review_system_prompt(
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required, feedbackDetail and benchmarkMessage are null. "
             "correctionExpression contains one English expression only. "
             "correctionReason must explain the actual change in correctionExpression. "
+            "When correctionExpression changes subject-verb agreement, correctionReason must explicitly identify the subject and the required singular or plural verb form. "
             "Use the JSON literal null for a missing field. Never return the string \"null\". "
             "detectedPatterns is internal-only. Include it only when evidence is copied exactly from the user utterance."
         ),

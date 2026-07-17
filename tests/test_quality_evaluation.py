@@ -22,7 +22,11 @@ from app.models.conversation import (
     MessageFeedbackScoreEvidence,
     SessionFeedbackResponse,
 )
-from scripts.evaluate_conversation_quality import evaluate_cases, main
+from scripts.evaluate_conversation_quality import (
+    _feedback_session_message_result,
+    evaluate_cases,
+    main,
+)
 
 
 def closing_case():
@@ -314,6 +318,45 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["validationError"], "AiGenerationFailedError")
         self.assertEqual(results[0]["validationReason"], "test failure")
         self.assertGreaterEqual(results[0]["totalLatencyMs"], 0)
+
+    def test_feedback_session_requires_grammar_reason_in_correction_reason(self):
+        feedback = MessageFeedbackData(
+            messageId=64,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy='"여러 장소를 추천했어요"라고 말하는 것과 같아요.',
+            positiveFeedback="여행지를 구체적으로 추천했어요.",
+            correctionExpression=(
+                "Haeundae, Kijang, and Gwangalli Beach are really good."
+            ),
+            correctionReason="동사 형태를 맞추면 더 자연스러워요.",
+        )
+        entry = SimpleNamespace(
+            feedback=feedback,
+            score_evidence=MessageFeedbackScoreEvidence(
+                contextFit=2,
+                clarity=2,
+                languageAccuracy=1,
+            ),
+            candidate_was_repaired=False,
+            copy_was_repaired=False,
+            copy_was_fallback=False,
+        )
+
+        result = _feedback_session_message_result(
+            entry,
+            {
+                "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+                "expectedMessageScoreRange": [70, 85],
+                "requiredAnyCorrectionReasonTerms": [
+                    "복수 주어",
+                    "주어-동사",
+                    "수 일치",
+                ],
+            },
+        )
+
+        self.assertFalse(result["requiredAnyCorrectionReasonTermMatched"])
+        self.assertFalse(result["expectationMatched"])
 
     def test_lan_166_scoring_fixture_covers_reported_score_boundaries(self):
         fixture_path = (

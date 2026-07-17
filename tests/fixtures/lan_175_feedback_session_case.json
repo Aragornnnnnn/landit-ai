@@ -93,7 +93,7 @@
         "messageId": 64,
         "expectedFeedbackType": "NEEDS_IMPROVEMENT",
         "expectedMessageScoreRange": [70, 85],
-        "requiredAnyFeedbackTerms": ["복수 주어", "주어-동사", "수 일치", "are"],
+        "requiredAnyCorrectionReasonTerms": ["복수 주어", "주어-동사", "수 일치"],
         "forbiddenFeedbackTerms": ["be동사를 넣어서", "be동사를 넣어"]
       }
     ],

@@ -1735,6 +1735,36 @@ class MessageFeedbackApiTests(unittest.TestCase):
             copy_prompt,
         )
 
+    def test_message_feedback_prompts_do_not_penalize_complete_spoken_answers(self):
+        candidate_prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+        review_prompt = next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        for prompt in (candidate_prompt, review_prompt):
+            self.assertIn(
+                "A country or nationality counts as a concrete personal detail",
+                prompt,
+            )
+            self.assertIn(
+                "do not lower contextFit merely because more details could be added",
+                prompt,
+            )
+            self.assertIn(
+                "more idiomatic, concise, frequent, or natural",
+                prompt,
+            )
+            self.assertIn(
+                "do not mention the ignored repetition in learner-facing feedback",
+                prompt,
+            )
+            self.assertIn(
+                "correctionReason must explicitly identify the subject",
+                prompt,
+            )
+
     def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
             EvaluationContextType.AI_MESSAGE,

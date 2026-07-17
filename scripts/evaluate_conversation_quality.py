@@ -467,6 +467,18 @@ def _feedback_session_message_result(
         term.casefold() in feedback_text.casefold()
         for term in required_any_terms
     )
+    required_any_correction_reason_terms = expected.get(
+        "requiredAnyCorrectionReasonTerms",
+        [],
+    )
+    correction_reason = feedback.correctionReason or ""
+    required_any_correction_reason_term_matched = (
+        not required_any_correction_reason_terms
+        or any(
+            term.casefold() in correction_reason.casefold()
+            for term in required_any_correction_reason_terms
+        )
+    )
     message_score = _message_score_from_evidence(entry.score_evidence)
     expected_score_range = expected["expectedMessageScoreRange"]
     feedback_type_matches = (
@@ -493,11 +505,16 @@ def _feedback_session_message_result(
         "foundForbiddenFeedbackTerms": found_forbidden_terms,
         "requiredAnyFeedbackTerms": required_any_terms,
         "requiredAnyFeedbackTermMatched": required_any_term_matched,
+        "requiredAnyCorrectionReasonTerms": required_any_correction_reason_terms,
+        "requiredAnyCorrectionReasonTermMatched": (
+            required_any_correction_reason_term_matched
+        ),
         "expectationMatched": (
             feedback_type_matches
             and score_matches
             and not found_forbidden_terms
             and required_any_term_matched
+            and required_any_correction_reason_term_matched
         ),
     }
 
