@@ -54,4 +54,5 @@ tests/
 - `SENTRY_DSN`이 없으면 Sentry를 초기화하지 않습니다.
 - secret 값은 로그, 테스트 출력, 문서, 커밋 메시지에 남기지 않습니다.
 - Docker 이미지는 `Dockerfile`로 빌드하고, GitHub Actions workflow는 수동 `workflow_dispatch` 배포를 기준으로 합니다.
-- 배포 workflow는 이미지를 ECR에 push한 뒤 ECS service를 `force-new-deployment`로 갱신합니다.
+- 프로덕션 배포 workflow는 `MAJOR.MINOR.PATCH` 버전을 입력받아 이미지를 ECR에 push하고 ECS service를 `force-new-deployment`로 갱신합니다.
+- ECS service가 안정화된 뒤 workflow는 배포 커밋에 `ai-v{버전}` annotated tag와 GitHub Release를 생성합니다.

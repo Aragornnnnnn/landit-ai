@@ -21,10 +21,26 @@ Landit AI Server 개발 협업 규칙입니다. 아키텍처 레벨 결정은 Gi
 | --- | --- |
 | `develop` | 기본 개발 통합 브랜치 |
 | `feat/{이슈 번호}` | 단위 기능 개발 브랜치. 예시: `feat/LAN-10` |
+| `fix/{이슈 번호}` | 배포 전 버그 수정 브랜치 |
+| `release/v{버전}` | 배포 범위 동결과 최종 검증 브랜치 |
 | `hotfix/{이슈 번호}` | 긴급 수정 브랜치 |
 
 - 브랜치 생성 전 Notion 이슈 번호를 확인합니다.
 - 기본 작업 흐름은 `feat/*`에서 작업 후 `develop`으로 병합하는 것입니다.
+- `release/*`는 `develop`에서 생성해 검증 후 `main`으로 병합합니다.
+- 릴리즈 브랜치를 만들기 전에는 배포 예정 `MAJOR.MINOR.PATCH` 버전을 확인하고 `release/v{버전}` 형식으로 생성합니다.
+- `hotfix/*`는 `main`에서 생성해 배포 후 `develop`과 진행 중인 `release/*`에 반영합니다.
+
+## 버전과 릴리즈
+
+- AI 서버는 `MAJOR.MINOR.PATCH` 버전을 사용합니다.
+- 신규 기능은 MINOR, 운영 버그 수정은 PATCH, 호환되지 않는 변경은 MAJOR를 증가시킵니다.
+- 프로덕션 배포는 `main`에서 수동 workflow로 실행하고 배포 버전을 입력합니다.
+- 정식 릴리즈의 workflow 입력 버전은 `release/v{버전}`의 버전과 같아야 합니다.
+- hotfix는 마지막 배포 태그를 기준으로 에이전트가 제안한 다음 PATCH 버전을 workflow에 입력합니다.
+- 배포가 성공하면 workflow가 `ai-v{버전}` annotated tag와 GitHub Release를 생성합니다.
+- 이미 게시한 태그는 삭제하거나 다른 커밋으로 이동하지 않습니다.
+- 개별 배포 변경 내역은 GitHub Release를 기준으로 확인합니다.
 
 ## 작업 문서
 
