@@ -1466,7 +1466,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             .candidate_was_repaired,
         )
 
-    def test_message_feedback_candidate_repair_failure_returns_502_without_cache(self):
+    def test_message_feedback_candidate_repair_failure_returns_failed_without_cache(self):
         invalid_candidate = message_feedback_candidate(good_message_feedback(1001))
         invalid_candidate.pop("feedbackDetail")
         fake_openai = FakeOpenAI(
@@ -1485,7 +1485,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
@@ -1576,7 +1577,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(entry.feedback.feedbackType.value, "GOOD")
         self.assertTrue(entry.copy_was_fallback)
 
-    def test_message_feedback_first_generation_failure_returns_503_without_cache(self):
+    def test_message_feedback_first_generation_failure_returns_failed_without_cache(self):
         fake_openai = FakeOpenAI(error=RuntimeError("candidate unavailable"))
         app = create_app(
             make_settings(
@@ -1591,7 +1592,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         self.assertEqual(len(fake_openai.completions.calls), 1)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
@@ -1698,7 +1700,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("[your hobby]", copy_prompt)
         self.assertIn("generic placeholder", copy_prompt)
 
-    def test_message_feedback_rejects_non_integer_score_evidence(self):
+    def test_message_feedback_non_integer_score_evidence_returns_failed(self):
         invalid_candidate = message_feedback_candidate(
             needs_improvement_message_feedback(1001),
         )
@@ -1719,7 +1721,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
     def test_message_feedback_generates_feedback_and_returns_preparing(self):
@@ -2162,7 +2165,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "질문에 맞는 핵심을 자연스럽게 전달했어요.",
         )
 
-    def test_message_feedback_invalid_ai_response_returns_502(self):
+    def test_message_feedback_invalid_ai_response_returns_failed(self):
         fake_openai = FakeOpenAI(
             content=json.dumps(
                 {
@@ -2191,11 +2194,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_message_feedback_rejects_internal_policy_in_correction_reason(self):
+    def test_message_feedback_internal_policy_in_correction_reason_returns_failed(self):
         ai_response = {
             "messageId": 1001,
             "feedbackType": "NEEDS_IMPROVEMENT",
@@ -2226,11 +2229,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_message_feedback_mismatched_message_id_returns_502(self):
+    def test_message_feedback_mismatched_message_id_returns_failed(self):
         ai_response = {
             "messageId": 9999,
             "feedbackType": "GOOD",
@@ -2261,10 +2264,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
 
-    def test_message_feedback_generation_failure_returns_503(self):
+    def test_message_feedback_generation_failure_returns_failed(self):
         fake_openai = FakeOpenAI(error=RuntimeError("network failed"))
         app = create_app(
             make_settings(
@@ -2279,21 +2282,22 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 202)
         self.assertEqual(
             response.json(),
             {
-                "success": False,
-                "data": None,
-                "error": {
-                    "code": "AI_GENERATION_FAILED",
-                    "message": "AI 응답 생성에 실패했습니다.",
+                "success": True,
+                "data": {
+                    "sessionId": 100,
+                    "messageId": 1001,
+                    "feedbackStatus": "FAILED",
                 },
+                "error": None,
             },
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_message_feedback_missing_model_returns_503(self):
+    def test_message_feedback_missing_model_returns_failed(self):
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
@@ -2307,8 +2311,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 json=valid_message_feedback_payload(),
             )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         openai_class.assert_not_called()
 
     def test_message_feedback_cache_expires_and_reports_missing_entries(self):

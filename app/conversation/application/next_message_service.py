@@ -321,51 +321,65 @@ def generate_message_feedback(
     settings: Settings | None = None,
 ) -> MessageFeedbackResponse:
     resolved_settings = settings or Settings()
-    (
-        candidate,
-        score_evidence,
-        detected_patterns,
-        candidate_was_repaired,
-    ) = _generate_message_feedback_candidate(
-        request,
-        resolved_settings,
-    )
-    copy_was_repaired = False
-    copy_was_fallback = False
     try:
-        feedback, detected_patterns, copy_was_repaired = _review_message_feedback_copy(
-            request,
+        (
             candidate,
             score_evidence,
             detected_patterns,
+            candidate_was_repaired,
+        ) = _generate_message_feedback_candidate(
+            request,
             resolved_settings,
+        )
+        copy_was_repaired = False
+        copy_was_fallback = False
+        try:
+            feedback, detected_patterns, copy_was_repaired = _review_message_feedback_copy(
+                request,
+                candidate,
+                score_evidence,
+                detected_patterns,
+                resolved_settings,
+            )
+        except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+            logger.warning(
+                "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
+                "workflow=message_feedback_copy_fallback reason=%s "
+                "sessionId=%s messageId=%s",
+                getattr(exc, "reason", type(exc).__name__),
+                request.sessionId,
+                request.messageId,
+            )
+            feedback = candidate
+            copy_was_fallback = True
+        feedback = _postprocess_message_feedback_benchmark(
+            feedback,
+            detected_patterns,
+            request.userMessage,
+        )
+
+        _store_message_feedback(
+            request.sessionId,
+            feedback,
+            score_evidence=score_evidence,
+            user_message=request.userMessage,
+            candidate_was_repaired=candidate_was_repaired,
+            copy_was_repaired=copy_was_repaired,
+            copy_was_fallback=copy_was_fallback,
         )
     except (AiGenerationFailedError, AiResponseInvalidError) as exc:
         logger.warning(
-            "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
-            "workflow=message_feedback_copy_fallback reason=%s "
-            "sessionId=%s messageId=%s",
+            "AI 메시지별 피드백 생성에 실패해 실패 상태를 반환합니다. "
+            "workflow=message_feedback_failed reason=%s sessionId=%s messageId=%s",
             getattr(exc, "reason", type(exc).__name__),
             request.sessionId,
             request.messageId,
         )
-        feedback = candidate
-        copy_was_fallback = True
-    feedback = _postprocess_message_feedback_benchmark(
-        feedback,
-        detected_patterns,
-        request.userMessage,
-    )
-
-    _store_message_feedback(
-        request.sessionId,
-        feedback,
-        score_evidence=score_evidence,
-        user_message=request.userMessage,
-        candidate_was_repaired=candidate_was_repaired,
-        copy_was_repaired=copy_was_repaired,
-        copy_was_fallback=copy_was_fallback,
-    )
+        return MessageFeedbackResponse(
+            sessionId=request.sessionId,
+            messageId=request.messageId,
+            feedbackStatus=FeedbackStatus.FAILED,
+        )
     return MessageFeedbackResponse(
         sessionId=request.sessionId,
         messageId=request.messageId,
