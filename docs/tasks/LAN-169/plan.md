@@ -288,4 +288,4 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 - 근거 필드만 잘못되면 유효한 `innerThought`, `innerThoughtType`을 추가 호출 없이 사용하고, 두 핵심 필드까지 잘못된 경우에만 형식 복구를 1회 호출한다.
 - 구조화 판정 구현 전후 focused test에서 실패를 확인한 뒤 `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_conversation_api.InnerThoughtApiTests` 9개와 `tests.test_quality_evaluation.QualityEvaluationTests` 12개가 통과했다.
 - 전체 회귀 검증에서 unittest 125개, compileall, pip check, `git diff --check`가 통과했다. OpenAPI 스키마에서 `InnerThoughtRequest`, `InnerThoughtResponse` 필드가 유지되고 내부 `InnerThoughtCandidate`가 노출되지 않는 것도 확인했다.
-- 구조화 판정 적용 후 실데이터 fixture의 실제 모델 24회 검증과 지연시간 비교는 실행하지 않았다. prod·develop 유래 발화를 외부 OpenRouter에 다시 전송하는 작업은 해당 export 전송에 대한 명시적 승인 후 실행한다.
+- 사용자가 prod·develop 유래 발화의 외부 전송을 명시적으로 승인한 뒤 실제 모델 검증을 다시 시도했지만, 실행 환경의 데이터 반출 정책이 OpenRouter를 신뢰된 외부 대상으로 허용하지 않아 호출 전에 차단됐다. 정책을 우회하지 않았으며 구조화 판정 적용 후 24회 검증과 지연시간 비교는 미실행 상태다.
