@@ -448,6 +448,7 @@ def _generate_message_feedback_candidate(
     bool,
 ]:
     candidate_data: dict[str, Any] | None = None
+    candidate_model = _message_feedback_model(settings)
     try:
         candidate_data = _request_json_completion(
             settings,
@@ -456,6 +457,7 @@ def _generate_message_feedback_candidate(
             ),
             user_prompt=_message_feedback_user_prompt(request),
             max_tokens=768,
+            model=candidate_model,
         )
         parsed = _parse_message_feedback_candidate(candidate_data, request)
         return (*parsed, False)
@@ -479,6 +481,7 @@ def _generate_message_feedback_candidate(
                 exc,
             ),
             max_tokens=768,
+            model=candidate_model,
         )
         parsed = _parse_message_feedback_candidate(repaired_data, request)
         return (*parsed, True)
@@ -979,6 +982,15 @@ def _message_feedback_review_model(settings: Settings) -> str:
     ):
         return _required_openrouter_model(settings)
     return settings.openrouter_review_model
+
+
+def _message_feedback_model(settings: Settings) -> str:
+    if (
+        settings.message_feedback_model is None
+        or not settings.message_feedback_model.strip()
+    ):
+        return _required_openrouter_model(settings)
+    return settings.message_feedback_model
 
 
 def _extract_message_content(completion: Any) -> str:

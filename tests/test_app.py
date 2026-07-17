@@ -42,6 +42,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.openrouter_base_url, "https://openrouter.ai/api/v1")
         self.assertIsNone(settings.openrouter_api_key)
         self.assertIsNone(settings.openrouter_model)
+        self.assertIsNone(settings.message_feedback_model)
         self.assertIsNone(settings.openrouter_review_model)
         self.assertTrue(settings.message_feedback_review_enabled)
         self.assertIsNone(settings.sentry_dsn)
@@ -54,6 +55,7 @@ class SettingsTests(unittest.TestCase):
                 "OPENROUTER_API_KEY": "test-openrouter-key",
                 "OPENROUTER_BASE_URL": "https://openrouter.example/v1",
                 "OPENROUTER_MODEL": "openrouter-test-model",
+                "MESSAGE_FEEDBACK_MODEL": "message-feedback-model",
                 "OPENROUTER_REVIEW_MODEL": "openrouter-review-model",
                 "MESSAGE_FEEDBACK_REVIEW_ENABLED": "false",
             },
@@ -69,6 +71,10 @@ class SettingsTests(unittest.TestCase):
         )
         self.assertEqual(settings.openrouter_base_url, "https://openrouter.example/v1")
         self.assertEqual(settings.openrouter_model, "openrouter-test-model")
+        self.assertEqual(
+            settings.message_feedback_model,
+            "message-feedback-model",
+        )
         self.assertEqual(
             settings.openrouter_review_model,
             "openrouter-review-model",

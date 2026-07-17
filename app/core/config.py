@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str | None = None
+    message_feedback_model: str | None = None
     openrouter_review_model: str | None = None
     message_feedback_review_enabled: bool = True
     sentry_dsn: str | None = None

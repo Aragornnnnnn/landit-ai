@@ -1903,7 +1903,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
-                openrouter_model="openrouter-test-model",
+                openrouter_model="openrouter-mini-model",
+                message_feedback_model="message-feedback-model",
                 message_feedback_review_enabled=False,
             ),
         )
@@ -1916,6 +1917,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            ["message-feedback-model", "message-feedback-model"],
+        )
         entry = next_message_service._get_expected_message_feedback_entries(
             100,
             [1001],
@@ -2435,6 +2440,30 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertFalse(entry.candidate_was_repaired)
         self.assertFalse(entry.copy_was_repaired)
         self.assertFalse(entry.copy_was_fallback)
+
+    def test_message_feedback_single_pass_uses_dedicated_candidate_model(self):
+        candidate = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(content=json.dumps(candidate))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-mini-model",
+                message_feedback_model="message-feedback-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            [call["model"] for call in fake_openai.completions.calls],
+            ["message-feedback-model"],
+        )
 
     def test_message_feedback_accepts_user_opening_instruction(self):
         ai_response = {

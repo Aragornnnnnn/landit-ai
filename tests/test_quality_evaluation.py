@@ -699,6 +699,7 @@ class QualityEvaluationTests(unittest.TestCase):
                     "scripts.evaluate_conversation_quality.Settings",
                     return_value=SimpleNamespace(
                         openrouter_model="openai/test-model",
+                        message_feedback_model="openai/message-feedback-model",
                         openrouter_review_model="openai/review-model",
                         message_feedback_review_enabled=False,
                     ),
@@ -713,6 +714,10 @@ class QualityEvaluationTests(unittest.TestCase):
             report = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(report["model"], "openai/test-model")
+        self.assertEqual(
+            report["messageFeedbackModel"],
+            "openai/message-feedback-model",
+        )
         self.assertEqual(report["reviewModel"], "openai/review-model")
         self.assertFalse(report["messageFeedbackReviewEnabled"])
         self.assertEqual(report["casesFile"], str(cases_path))
