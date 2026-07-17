@@ -17,6 +17,7 @@ from app.conversation.application.next_message_service import (
 from app.models.conversation import (
     FeedbackStatus,
     InnerThoughtResponse,
+    MessageFeedbackAdjudicationEvidence,
     MessageFeedbackData,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -237,15 +238,69 @@ class QualityEvaluationTests(unittest.TestCase):
                 languageAccuracy=1,
             ),
         ]
+        adjudication_evidences = [
+            MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "Tell me a little about yourself!",
+                        "answerExcerpt": "I am Sunny, and I'm from Korea",
+                        "status": "ANSWERED",
+                    },
+                ],
+                ignoredSpeechArtifacts=[],
+                actionableIssues=[],
+            ),
+            MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "What are you into?",
+                        "answerExcerpt": "I'm into reading books",
+                        "status": "ANSWERED",
+                    },
+                ],
+                ignoredSpeechArtifacts=["I I"],
+                actionableIssues=[],
+            ),
+            MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "Tell me your must-visit spots",
+                        "answerExcerpt": "Haeundae and Kijang",
+                        "status": "ANSWERED",
+                    },
+                ],
+                ignoredSpeechArtifacts=["is is"],
+                actionableIssues=[
+                    {
+                        "dimension": "LANGUAGE_ACCURACY",
+                        "sourceExcerpt": (
+                            "Haeundae and Kijang and Kwangwala Beach is"
+                        ),
+                        "correctionExcerpt": (
+                            "Haeundae, Kijang, and Gwangalli Beach are"
+                        ),
+                        "rule": (
+                            "subject-verb agreement requires a plural verb"
+                        ),
+                    },
+                ],
+            ),
+        ]
         entries = [
             SimpleNamespace(
                 feedback=feedback,
                 score_evidence=evidence,
+                adjudication_evidence=adjudication_evidence,
                 candidate_was_repaired=False,
                 copy_was_repaired=False,
                 copy_was_fallback=False,
             )
-            for feedback, evidence in zip(feedbacks, evidences, strict=True)
+            for feedback, evidence, adjudication_evidence in zip(
+                feedbacks,
+                evidences,
+                adjudication_evidences,
+                strict=True,
+            )
         ]
         session_response = SessionFeedbackResponse(
             sessionId=14,
@@ -337,6 +392,30 @@ class QualityEvaluationTests(unittest.TestCase):
                 clarity=2,
                 languageAccuracy=1,
             ),
+            adjudication_evidence=MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "Tell me your must-visit spots",
+                        "answerExcerpt": "Haeundae, Kijang",
+                        "status": "ANSWERED",
+                    },
+                ],
+                ignoredSpeechArtifacts=[],
+                actionableIssues=[
+                    {
+                        "dimension": "LANGUAGE_ACCURACY",
+                        "sourceExcerpt": (
+                            "Haeundae, Kijang, and Gwangalli Beach is"
+                        ),
+                        "correctionExcerpt": (
+                            "Haeundae, Kijang, and Gwangalli Beach are"
+                        ),
+                        "rule": (
+                            "subject-verb agreement requires a plural verb"
+                        ),
+                    },
+                ],
+            ),
             candidate_was_repaired=False,
             copy_was_repaired=False,
             copy_was_fallback=False,
@@ -356,6 +435,63 @@ class QualityEvaluationTests(unittest.TestCase):
         )
 
         self.assertFalse(result["requiredAnyCorrectionReasonTermMatched"])
+        self.assertFalse(result["expectationMatched"])
+
+    def test_feedback_session_result_validates_adjudication_evidence(self):
+        feedback = MessageFeedbackData(
+            messageId=62,
+            feedbackType="NEEDS_IMPROVEMENT",
+            baseLocaleAnalogy='"취미를 설명했어요"라고 말하는 것과 같아요.',
+            positiveFeedback="취미와 이유를 함께 설명했어요.",
+            correctionExpression="I really like reading.",
+            correctionReason="표현을 더 간결하게 말하면 좋아요.",
+        )
+        entry = SimpleNamespace(
+            feedback=feedback,
+            score_evidence=MessageFeedbackScoreEvidence(
+                contextFit=1,
+                clarity=2,
+                languageAccuracy=1,
+            ),
+            adjudication_evidence=MessageFeedbackAdjudicationEvidence(
+                coverageEvidence=[
+                    {
+                        "requestExcerpt": "What are you into?",
+                        "answerExcerpt": None,
+                        "status": "MISSING",
+                    },
+                ],
+                ignoredSpeechArtifacts=[],
+                actionableIssues=[
+                    {
+                        "dimension": "LANGUAGE_ACCURACY",
+                        "sourceExcerpt": "I I",
+                        "correctionExcerpt": "I",
+                        "rule": "Avoid repeated words.",
+                    },
+                ],
+            ),
+            candidate_was_repaired=False,
+            copy_was_repaired=False,
+            copy_was_fallback=False,
+        )
+
+        result = _feedback_session_message_result(
+            entry,
+            {
+                "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+                "expectedMessageScoreRange": [65, 65],
+                "expectedMissingCoverageCount": 0,
+                "expectedActionableIssueDimensions": [],
+                "forbiddenActionableSourceTerms": ["I I"],
+                "requiredAnyActionableRuleTerms": ["subject-verb", "agreement"],
+            },
+        )
+
+        self.assertFalse(result["missingCoverageCountMatchesExpectation"])
+        self.assertFalse(result["actionableIssueDimensionsMatchExpectation"])
+        self.assertEqual(result["foundForbiddenActionableSourceTerms"], ["I I"])
+        self.assertFalse(result["requiredAnyActionableRuleTermMatched"])
         self.assertFalse(result["expectationMatched"])
 
     def test_lan_166_scoring_fixture_covers_reported_score_boundaries(self):

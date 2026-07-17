@@ -81,18 +81,26 @@
         "messageId": 60,
         "expectedFeedbackType": "GOOD",
         "expectedMessageScoreRange": [100, 100],
+        "expectedMissingCoverageCount": 0,
+        "expectedActionableIssueDimensions": [],
         "forbiddenFeedbackTerms": ["[your hobby]", "취미에 대한 내용이 빠져"]
       },
       {
         "messageId": 62,
         "expectedFeedbackType": "GOOD",
         "expectedMessageScoreRange": [100, 100],
+        "expectedMissingCoverageCount": 0,
+        "expectedActionableIssueDimensions": [],
+        "forbiddenActionableSourceTerms": ["I I"],
         "forbiddenFeedbackTerms": ["I I", "반복", "중복", "하나만"]
       },
       {
         "messageId": 64,
         "expectedFeedbackType": "NEEDS_IMPROVEMENT",
         "expectedMessageScoreRange": [70, 85],
+        "expectedMissingCoverageCount": 0,
+        "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
+        "requiredAnyActionableRuleTerms": ["subject-verb", "agreement", "plural"],
         "requiredAnyCorrectionReasonTerms": ["복수 주어", "주어-동사", "수 일치"],
         "forbiddenFeedbackTerms": ["be동사를 넣어서", "be동사를 넣어"]
       }

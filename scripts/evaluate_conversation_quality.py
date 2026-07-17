@@ -445,6 +445,7 @@ def _feedback_session_message_result(
     expected: dict[str, Any],
 ) -> dict[str, Any]:
     feedback = entry.feedback
+    adjudication_evidence = entry.adjudication_evidence
     feedback_text = "\n".join(
         value
         for value in (
@@ -479,6 +480,57 @@ def _feedback_session_message_result(
             for term in required_any_correction_reason_terms
         )
     )
+    missing_coverage_count = sum(
+        item.status.value == "MISSING"
+        for item in adjudication_evidence.coverageEvidence
+    )
+    expected_missing_coverage_count = expected.get(
+        "expectedMissingCoverageCount",
+    )
+    missing_coverage_count_matches = (
+        expected_missing_coverage_count is None
+        or missing_coverage_count == expected_missing_coverage_count
+    )
+    actionable_issue_dimensions = sorted(
+        issue.dimension.value
+        for issue in adjudication_evidence.actionableIssues
+    )
+    expected_actionable_issue_dimensions = expected.get(
+        "expectedActionableIssueDimensions",
+    )
+    actionable_issue_dimensions_match = (
+        expected_actionable_issue_dimensions is None
+        or actionable_issue_dimensions
+        == sorted(expected_actionable_issue_dimensions)
+    )
+    forbidden_actionable_source_terms = expected.get(
+        "forbiddenActionableSourceTerms",
+        [],
+    )
+    actionable_source_text = "\n".join(
+        issue.sourceExcerpt
+        for issue in adjudication_evidence.actionableIssues
+    )
+    found_forbidden_actionable_source_terms = [
+        term
+        for term in forbidden_actionable_source_terms
+        if term.casefold() in actionable_source_text.casefold()
+    ]
+    required_any_actionable_rule_terms = expected.get(
+        "requiredAnyActionableRuleTerms",
+        [],
+    )
+    actionable_rule_text = "\n".join(
+        issue.rule
+        for issue in adjudication_evidence.actionableIssues
+    )
+    required_any_actionable_rule_term_matched = (
+        not required_any_actionable_rule_terms
+        or any(
+            term.casefold() in actionable_rule_text.casefold()
+            for term in required_any_actionable_rule_terms
+        )
+    )
     message_score = _message_score_from_evidence(entry.score_evidence)
     expected_score_range = expected["expectedMessageScoreRange"]
     feedback_type_matches = (
@@ -495,6 +547,7 @@ def _feedback_session_message_result(
         "expectedFeedbackType": expected["expectedFeedbackType"],
         "feedbackTypeMatchesExpectation": feedback_type_matches,
         "scoreEvidence": entry.score_evidence.model_dump(),
+        "adjudicationEvidence": adjudication_evidence.model_dump(mode="json"),
         "messageScore": message_score,
         "expectedMessageScoreRange": expected_score_range,
         "messageScoreWithinExpectation": score_matches,
@@ -509,12 +562,35 @@ def _feedback_session_message_result(
         "requiredAnyCorrectionReasonTermMatched": (
             required_any_correction_reason_term_matched
         ),
+        "missingCoverageCount": missing_coverage_count,
+        "expectedMissingCoverageCount": expected_missing_coverage_count,
+        "missingCoverageCountMatchesExpectation": (
+            missing_coverage_count_matches
+        ),
+        "actionableIssueDimensions": actionable_issue_dimensions,
+        "expectedActionableIssueDimensions": (
+            expected_actionable_issue_dimensions
+        ),
+        "actionableIssueDimensionsMatchExpectation": (
+            actionable_issue_dimensions_match
+        ),
+        "foundForbiddenActionableSourceTerms": (
+            found_forbidden_actionable_source_terms
+        ),
+        "requiredAnyActionableRuleTerms": required_any_actionable_rule_terms,
+        "requiredAnyActionableRuleTermMatched": (
+            required_any_actionable_rule_term_matched
+        ),
         "expectationMatched": (
             feedback_type_matches
             and score_matches
             and not found_forbidden_terms
             and required_any_term_matched
             and required_any_correction_reason_term_matched
+            and missing_coverage_count_matches
+            and actionable_issue_dimensions_match
+            and not found_forbidden_actionable_source_terms
+            and required_any_actionable_rule_term_matched
         ),
     }
 
