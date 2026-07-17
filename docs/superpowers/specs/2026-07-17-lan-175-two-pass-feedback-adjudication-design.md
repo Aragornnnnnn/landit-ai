@@ -1,4 +1,4 @@
-# LAN-175 2회 피드백 재심사와 실제 세션 품질 검증 설계
+# LAN-175 증거 기반 2회 피드백 판정과 실제 세션 품질 검증 설계
 
 ## 배경
 
@@ -11,10 +11,13 @@
 
 현재 LAN-167 구조는 첫 번째 호출의 `scoreEvidence`와 `feedbackType`을 서버에서 잠그고, 두 번째 호출은 사용자용 문구만 작성한다. 이 구조는 문구가 판정을 뒤집는 것을 막지만 첫 번째 호출의 의미 오판도 그대로 고정한다. LAN-175의 임시 구현은 자기소개 문구, 반복 단어와 교정 이유를 정규식과 단어 목록으로 탐지해 점수를 바꾸므로 새로운 질문과 표현에 일반화되지 않는다.
 
+점수와 문구를 모두 재심사하는 LAN-175의 첫 구현도 실제 품질 검증을 통과하지 못했다. 첫 3회는 모두 `NEEDS/NEEDS/NEEDS`, 세션 점수 55와 별점 1.5였다. 일반 판정 문구를 보강한 두 번째 3회에서도 전체 성공은 0회였다. 메시지 60은 1회만 `GOOD`, 메시지 62는 3회 모두 `NEEDS_IMPROVEMENT`, 메시지 64의 수 일치 교정 이유는 1회만 명시적 기준을 만족했다. 구조 복구, fallback과 검증 오류는 모두 0회였으므로 실패 원인은 응답 형식이나 네트워크가 아니라 근거 없이 표현 선호를 실제 오류로 승격하는 의미 판정이다.
+
 ## 목표
 
 - 정상 경로의 메시지 피드백 LLM 호출을 2회로 유지한다.
-- 두 번째 호출이 원본 요청과 첫 번째 후보를 독립적으로 재검토하고 최종 점수, 유형과 문구를 함께 확정하게 한다.
+- 두 번째 호출이 원본 요청과 첫 번째 후보를 증거 단위로 재검토하고 최종 점수, 유형과 문구를 함께 확정하게 한다.
+- 2 미만의 점수에는 빠진 요청 항목 또는 사용자 원문의 실제 오류 근거가 반드시 따라오게 한다.
 - 특정 질문, 사용자 문장, 메시지 ID 또는 한국어 교정 문구에 의존하는 의미 판정 하드코딩을 제거한다.
 - 구조와 음성 서비스에서 결정적으로 확인할 수 있는 서버 검증은 유지한다.
 - 전달받은 세션 행의 AI 질문과 사용자 발화를 수정하지 않은 fixture로 저장하고 OpenRouter에서 반복 재현한다.
@@ -24,7 +27,8 @@
 ## 비목표
 
 - 범용 영어 문법 검사기나 규칙 엔진을 서버에 구현하지 않는다.
-- LLM 호출을 3회로 늘려 다수결이나 별도 문구 생성 단계를 추가하지 않는다.
+- 정상 LLM 호출을 상시 3회로 늘리거나 같은 모델의 다수결을 추가하지 않는다.
+- 이번 변경에 조건부 3차 호출을 추가하지 않는다. 증거 기반 2회 구조도 실제 검증에 실패할 때 별도 설계로 판단한다.
 - 모델, 최대 출력 토큰과 점수 산식을 변경하지 않는다.
 - provider 또는 네트워크 실패에 임의 점수나 일반 피드백을 생성하지 않는다.
 - LAN-175와 무관한 대화 생성, 속마음 또는 마무리 메시지 동작을 변경하지 않는다.
@@ -33,10 +37,10 @@
 
 ```text
 원본 요청
-  -> 1차 전체 후보 생성
-  -> 서버의 구조 검증
-  -> 2차 전체 재심사와 최종 문구 생성
-  -> 서버의 구조·스피킹 검증
+  -> 1차 전체 후보와 판정 증거 생성
+  -> 서버의 구조·증거 일관성 검증
+  -> 2차 독립 증거 재구성과 최종 후보 생성
+  -> 서버의 구조·증거 일관성·스피킹 검증
   -> 성공 시 2차 점수와 문구 저장
   -> 실패 시 검증된 1차 후보 저장
   -> benchmarkMessage catalog 후처리
@@ -45,11 +49,14 @@
 
 ## 1차 전체 후보
 
-첫 번째 호출은 현재처럼 다음 값을 포함한 fallback 가능한 전체 후보를 만든다.
+첫 번째 호출은 다음 값을 포함한 fallback 가능한 전체 후보를 만든다.
 
 - `scoreEvidence.contextFit`.
 - `scoreEvidence.clarity`.
 - `scoreEvidence.languageAccuracy`.
+- `coverageEvidence`.
+- `ignoredSpeechArtifacts`.
+- `actionableIssues`.
 - `baseLocaleAnalogy`.
 - `positiveFeedback`.
 - `feedbackDetail`.
@@ -58,25 +65,56 @@
 - `benchmarkMessage`.
 - 내부 catalog 후처리용 `detectedPatterns`.
 
-`messageId`는 요청값을 사용하고 `feedbackType`은 서버가 세 점수에서 계산한다. 첫 번째 결과가 구조 검증을 통과해야만 두 번째 호출 실패 시 사용할 수 있는 fallback 후보가 된다.
+`coverageEvidence`의 각 항목은 AI 질문에서 그대로 복사한 `requestExcerpt`, 사용자 발화에서 그대로 복사한 `answerExcerpt` 또는 `null`, `ANSWERED` 또는 `MISSING` 상태를 가진다. `ignoredSpeechArtifacts`는 즉시 반복, 필러와 자기수정의 사용자 원문 구간을 기록한다. `actionableIssues`는 `CLARITY` 또는 `LANGUAGE_ACCURACY` 차원, 사용자 원문의 `sourceExcerpt`, 교정 구간과 짧은 규칙 근거를 기록한다. 한 차원에는 가장 중요한 문제 하나만 허용한다.
+
+내부 판정 증거의 형태는 다음과 같다.
+
+```json
+{
+  "coverageEvidence": [
+    {
+      "requestExcerpt": "exact AI message substring",
+      "answerExcerpt": "exact user message substring or null",
+      "status": "ANSWERED or MISSING"
+    }
+  ],
+  "ignoredSpeechArtifacts": ["exact user message substring"],
+  "actionableIssues": [
+    {
+      "dimension": "CLARITY or LANGUAGE_ACCURACY",
+      "sourceExcerpt": "exact user message substring",
+      "correctionExcerpt": "corrected English excerpt",
+      "rule": "short English rule explanation"
+    }
+  ]
+}
+```
+
+이 세 필드는 내부 후보와 cache, 품질 보고서에서만 사용하고 외부 API와 OpenAPI에는 노출하지 않는다.
+
+`messageId`는 요청값을 사용하고 `feedbackType`은 서버가 세 점수에서 계산한다. 첫 번째 결과가 구조와 증거 일관성 검증을 통과해야만 두 번째 호출 실패 시 사용할 수 있는 fallback 후보가 된다.
 
 ## 2차 전체 재심사
 
-두 번째 호출은 문구만 다듬지 않고 원본 요청과 1차 후보를 함께 검토한다. 출력은 1차와 같은 `scoreEvidence`, 사용자용 문구와 `detectedPatterns`를 가진다. 서버는 2차 `scoreEvidence`에서 최종 `feedbackType`을 다시 계산한다.
+두 번째 호출은 문구만 다듬거나 1차 점수에 투표하지 않는다. 원본 요청을 먼저 읽고 `coverageEvidence`, `ignoredSpeechArtifacts`, `actionableIssues`를 독립적으로 다시 구성한 뒤 전체 최종 후보를 반환한다. 출력은 1차와 같은 판정 증거, `scoreEvidence`, 사용자용 문구와 `detectedPatterns`를 가진다. 서버는 2차 `scoreEvidence`에서 최종 `feedbackType`을 다시 계산한다.
+
+2차 프롬프트는 1차 생성 프롬프트 전체를 반복하지 않는다. 짧은 점수 기준, 증거 계약, 원본 요청과 1차 후보만 제공해 규칙 희석과 1차 문구의 앵커링을 줄인다.
 
 재심사는 다음 순서로 판단한다.
 
-1. 현재 AI 질문에서 독립적으로 요구한 항목을 식별한다.
-2. 사용자 발화가 각 항목에 답했는지 확인한다.
-3. 음성 입력의 필러, 즉시 반복과 자기수정을 의미 또는 문법 오류와 구분한다.
-4. 반복을 제거하고 남은 발화에 실제 문법, 명료성 또는 문맥 오류가 있는지 확인한다.
-5. 점수와 유형에 맞는 사용자용 문구를 작성한다.
-6. `correctionExpression`과 `correctionReason`이 같은 실제 변경을 설명하는지 자체 검증한다.
+1. 현재 AI 질문의 각 요청을 원문 `requestExcerpt`로 나눈다.
+2. 각 요청에 대응하는 사용자 원문 `answerExcerpt`를 연결하고 빠진 요청만 `MISSING`으로 둔다.
+3. 음성 입력의 필러, 즉시 반복과 자기수정을 `ignoredSpeechArtifacts`로 분리한다.
+4. 남은 발화에서 실제 문법 또는 명료성 문제가 있을 때만 원문 근거가 있는 `actionableIssues`를 만든다.
+5. 증거와 일치하는 `scoreEvidence`를 정한다.
+6. 점수와 같은 문제를 설명하는 사용자용 문구를 작성한다.
+7. `correctionExpression`, `correctionReason`과 `actionableIssues`가 같은 실제 변경을 설명하는지 자체 검증한다.
 
-재심사 프롬프트에는 특정 세션 문장을 정답으로 넣지 않고 일반 원칙과 대비 예시를 사용한다.
+재심사 프롬프트에는 특정 세션 문장을 정답으로 넣지 않고 다음 일반 계약을 사용한다.
 
 - 열린 자기소개 질문은 이름과 하나 이상의 구체적인 개인 정보로 답할 수 있으며 취미를 반드시 요구하지 않는다.
 - `I I`나 `is is`처럼 즉시 반복된 음성 토큰은 한 번으로 읽고, 반복을 제거한 문장에 남은 오류만 평가한다.
+- 문법적으로 허용되고 의미가 분명한 표현은 더 흔하거나 간결한 대안이 있다는 이유만으로 `actionableIssues`에 넣지 않는다.
 - 여러 장소를 나열한 복수 주어에 단수 동사를 쓴 경우에는 반복과 별개로 주어와 동사의 수 일치를 평가한다.
 - 교정 표현이 `is`를 `are`로 바꾸면 교정 이유도 복수 주어와 동사 일치를 설명해야 한다.
 
@@ -86,6 +124,12 @@
 
 - 요청의 `messageId` 주입.
 - `scoreEvidence`에서 `feedbackType` 계산.
+- 모든 `requestExcerpt`가 현재 AI 질문의 정확한 부분 문자열인지 확인.
+- `ANSWERED`의 `answerExcerpt`와 모든 음성·오류 근거가 사용자 발화의 정확한 부분 문자열인지 확인.
+- `MISSING`에는 `answerExcerpt=null`, `ANSWERED`에는 실제 `answerExcerpt`가 있는지 확인.
+- `contextFit=2`이면 `MISSING`이 없고, 2 미만이면 하나 이상의 `MISSING`이 있는지 확인.
+- `clarity` 또는 `languageAccuracy`가 2 미만이면 해당 차원의 `actionableIssues`가 있고, 2이면 해당 차원의 문제가 없는지 확인.
+- `ignoredSpeechArtifacts`에 기록한 원문 구간을 `actionableIssues.sourceExcerpt`로 다시 사용하지 않는지 확인.
 - 유형별 필수 필드와 `null` 필드.
 - Pydantic 스키마와 빈 문자열 거부.
 - `[your ...]` 플레이스홀더 형식.
@@ -151,6 +195,10 @@
 
 - 2차 재심사가 1차 `NEEDS_IMPROVEMENT`를 `GOOD`으로 바꾸고 최종 점수 근거가 캐시에 저장된다.
 - 2차 재심사가 1차 `GOOD`을 `NEEDS_IMPROVEMENT`로 바꿀 수 있다.
+- 요청과 답변 coverage 증거가 각각 AI 질문과 사용자 발화의 정확한 부분 문자열이어야 한다.
+- `contextFit`, `clarity`, `languageAccuracy`가 2 미만이면 해당 차원의 구조화된 근거가 필요하다.
+- 무시한 음성 반복을 실제 오류 근거로 다시 사용할 수 없다.
+- `LANGUAGE_ACCURACY` 근거 없이 `languageAccuracy`를 낮춘 후보를 거부한다.
 - 2차 출력의 `feedbackType`은 받지 않고 서버가 2차 점수에서 계산한다.
 - 2차 재심사 provider 오류와 구조 복구 실패에서는 검증된 1차 후보와 1차 점수를 저장한다.
 - 자기소개, 음성 반복과 복수 주어를 판정하는 런타임 정규식과 단어 목록이 없다.
@@ -179,6 +227,6 @@
 
 ## 예상 효과와 남는 위험
 
-첫 번째 호출의 의미 오판을 두 번째 호출이 바로잡을 수 있으면서 정상 호출 수는 2회로 유지된다. 의미 판정은 프롬프트와 모델 재심사에 집중되고 서버는 결정적 계약만 검사하므로 LAN-175 사례별 하드코딩이 새로운 질문에 누적되지 않는다.
+첫 번째 호출의 의미 오판을 두 번째 호출이 바로잡을 수 있으면서 정상 호출 수는 2회로 유지된다. 근거 없이 점수를 반환하던 모델이 요청 coverage와 실제 오류 구간을 함께 제출하므로, 표현 선호를 실제 오류처럼 숨기기 어려워진다. 서버는 원문 포함 관계와 점수·증거 일관성만 검사하고 영어 의미를 재판정하지 않으므로 LAN-175 사례별 하드코딩이 새로운 질문에 누적되지 않는다.
 
-남는 위험은 두 모델 호출이 같은 오판을 반복하거나 2차 실패 시 1차 오판이 fallback으로 사용되는 경우다. 이를 숨기지 않고 실제 세션 3회 재생에서 후보와 최종 결과, 복구율, fallback률과 지연을 함께 기록한다. 품질 기준을 만족하지 못하면 3차 호출을 추가하지 않고 프롬프트의 일반 판정 기준과 대표 대비 예시를 수정한 뒤 같은 fixture로 다시 검증한다.
+남는 위험은 두 모델 호출이 같은 잘못된 coverage 또는 오류 근거를 만들거나 2차 실패 시 1차 오판이 fallback으로 사용되는 경우다. exact substring 검증은 근거가 원문에 존재함을 보장하지만 그 근거의 영어 교육적 타당성까지 보장하지 않는다. 이를 숨기지 않고 실제 세션 3회 재생에서 증거, 최종 결과, 복구율, fallback률과 지연을 함께 기록한다. 품질 기준을 다시 만족하지 못하면 프롬프트 문구를 더 누적하지 않고 조건부 3차 판정 또는 모델 변경을 별도 설계로 검토한다.
