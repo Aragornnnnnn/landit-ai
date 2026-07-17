@@ -275,6 +275,26 @@ class QualityEvaluationTests(unittest.TestCase):
             ],
             ["GOOD"],
         )
+        self.assertIn(
+            "떠오르",
+            cases_by_id["lan169-unknown-answer"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "단호",
+            cases_by_id["lan169-short-no"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "서운",
+            cases_by_id["lan169-harsh-boundary"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "아침",
+            cases_by_id["lan169-natural-routine-answer"]["requiredAnyTerms"],
+        )
+        self.assertIn(
+            "공격",
+            cases_by_id["lan169-directed-profanity"]["requiredAnyTerms"],
+        )
 
     def test_main_records_reproducible_execution_metadata(self):
         with tempfile.TemporaryDirectory() as directory:

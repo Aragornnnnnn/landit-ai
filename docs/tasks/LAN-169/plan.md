@@ -218,5 +218,8 @@ Expected: 모든 명령이 통과하고 `inner-thought` API 필드에 변경이 
 - `b6f5394`에서 `inner-thought` 평가 분기와 실제 CSV 기반 8개 fixture를 추가했다.
 - `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 121개 테스트를 통과했다. worktree에 `.venv`가 없어 기존 저장소의 가상환경을 사용했다.
 - `PYTHONPYCACHEPREFIX=/tmp/landit-ai-lan-169-pycache /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m compileall -q app tests scripts`, `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m pip check`, `git diff --check`를 통과했다.
-- 실제 모델 24회 평가는 fixture의 대화 내용을 OpenRouter로 전송해야 하므로 별도 명시 승인이 필요하다. 현재는 승인 대기 상태다.
+- OpenRouter 전송 승인 후 `openai/gpt-5.4-mini`로 8개 사례를 3회씩 실행했다. 프롬프트 보강 전후 결과는 14/24, 16/24, 20/24까지 개선됐고, 현재 코드는 20/24를 만든 프롬프트 상태다.
+- 20/24 결과의 미통과 4건은 메시지 395 `No.` 1회가 `BAD`로, 메시지 249 `Saturday.` 3회가 `GOOD`으로 분류된 사례다. 둘 다 기대 유형은 `NORMAL`이다.
+- `_request_json_completion()`은 이미 `temperature=0`으로 호출한다. 그 뒤 유형 정의와 self-check를 더 강하게 바꾼 실험은 16/24, 17/24로 하락해 현재 코드에는 반영하지 않았다.
+- 프롬프트만으로 24/24를 보장하려면 추가 반복이 아니라 deterministic한 서버 후처리 또는 모델 변경이 필요하다. 두 방법은 현재 승인된 범위를 넘으므로 적용하지 않았다.
 - prod·develop 직접 데이터 추출 권한과 develop export가 현재 제공되지 않아, 환경별 재검증은 아직 실행하지 못했다.

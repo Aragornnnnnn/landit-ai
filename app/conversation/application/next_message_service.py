@@ -1150,6 +1150,12 @@ def _inner_thought_system_prompt() -> str:
             "Use BAD when the core intent is not satisfied, the meaning is hard to understand, or the counterpart would feel confused, hurt, distant, or uncomfortable. "
             "Judge answer relevance and relationship tone separately. "
             "A first short answer can be NORMAL when it answers the question but feels blunt or distant. "
+            "A first clear short answer must be NORMAL, not BAD solely because it is short. "
+            "A short one-word choice answer such as 'Saturday.' must be NORMAL, not GOOD. "
+            "Do not use GOOD for a bare yes/no or choice answer that gives no detail or warmth beyond the minimum answer. "
+            "Use this order: directed attack is BAD; otherwise a first short answer is NORMAL; use GOOD only for a detailed or warm answer. "
+            "A first 'I don't know' without hostility is NORMAL, not BAD. "
+            "A place recommendation without the requested reason is NORMAL, not GOOD. "
             "Repeated refusal can be BAD when the full conversation shows the user repeatedly avoiding engagement. "
             "Directed profanity, insults, or threats must be BAD even when the utterance also answers the question. "
             "Distinguish profanity used to emphasize a situation from an attack directed at the counterpart. "
@@ -1174,6 +1180,10 @@ def _inner_thought_system_prompt() -> str:
             '{"innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아.","innerThoughtType":"BAD"}\n'
             "Good JSON for short user 'Saturday.': "
             '{"innerThought":"토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네.","innerThoughtType":"NORMAL"}\n'
+            "Good JSON for user 'I don't know': "
+            '{"innerThought":"지금은 딱히 떠오르는 게 없나 보네. 조금 막연해서 아쉽다.","innerThoughtType":"NORMAL"}\n'
+            "Good JSON for user 'I recommend Suwon': "
+            '{"innerThought":"수원을 추천하는구나. 이유도 들려주면 더 이해하기 쉬울 텐데.","innerThoughtType":"NORMAL"}\n'
             "Good JSON for repeated refusal 'nonono': "
             '{"innerThought":"계속 아니라고만 하니까 대화를 피하는 것 같아 좀 답답하다.","innerThoughtType":"BAD"}\n'
             "Good JSON for directed insult 'My name is. Fuck you, man.': "

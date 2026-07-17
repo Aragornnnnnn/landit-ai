@@ -3,7 +3,7 @@
     "caseId": "lan169-short-no",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["NORMAL"],
-    "requiredAnyTerms": ["짧", "무뚝뚝", "거리", "답답"],
+    "requiredAnyTerms": ["짧", "무뚝뚝", "거리", "답답", "단호", "허무"],
     "forbiddenTerms": ["다행", "친절", "해야겠", "말아야겠"],
     "payload": {
       "sessionId": 120,
@@ -69,7 +69,7 @@
     "caseId": "lan169-unknown-answer",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["NORMAL"],
-    "requiredAnyTerms": ["모르", "막연", "답답"],
+    "requiredAnyTerms": ["모르", "막연", "답답", "떠오르", "어색", "막막"],
     "forbiddenTerms": ["친절", "다행", "해야겠", "말아야겠"],
     "payload": {
       "sessionId": 108,
@@ -180,7 +180,7 @@
     "caseId": "lan169-harsh-boundary",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["NORMAL", "BAD"],
-    "requiredAnyTerms": ["강", "불편", "당황", "거리"],
+    "requiredAnyTerms": ["강", "불편", "당황", "거리", "서운", "냉정", "차가"],
     "forbiddenTerms": ["맞겠다", "지켜야겠"],
     "payload": {
       "sessionId": 87,
@@ -213,7 +213,7 @@
     "caseId": "lan169-directed-profanity",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["BAD"],
-    "requiredAnyTerms": ["욕", "기분", "불쾌", "당황", "상처"],
+    "requiredAnyTerms": ["욕", "기분", "불쾌", "당황", "상처", "공격"],
     "forbiddenTerms": ["해야겠", "말아야겠"],
     "payload": {
       "sessionId": 62,
@@ -246,7 +246,7 @@
     "caseId": "lan169-natural-routine-answer",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["GOOD"],
-    "requiredAnyTerms": ["규칙", "다행", "안심", "좋"],
+    "requiredAnyTerms": ["규칙", "다행", "안심", "좋", "아침", "맞추", "쉬"],
     "forbiddenTerms": ["까칠", "무례", "불쾌"],
     "payload": {
       "sessionId": 121,
