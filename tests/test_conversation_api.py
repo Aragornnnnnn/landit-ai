@@ -1325,6 +1325,32 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("Do not claim the user stated missing information", candidate_prompt)
         self.assertIn("Do not claim the user stated missing information", copy_prompt)
 
+    def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
+        candidate_prompt = next_message_service._message_feedback_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+        copy_prompt = next_message_service._message_feedback_review_system_prompt(
+            EvaluationContextType.AI_MESSAGE,
+        )
+
+        for prompt in (candidate_prompt, copy_prompt):
+            self.assertIn("one most important improvement", prompt)
+            self.assertIn("I'm not sure yet. I prefer to split the cleaning [your preferred way].", prompt)
+            self.assertIn("I'm up at 9am, and I go to bed at [your bedtime].", prompt)
+            self.assertIn(
+                "No, I haven't had a roommate situation that drove me crazy.",
+                prompt,
+            )
+            self.assertIn(
+                "Do not add an answer to the second question in that correction.",
+                prompt,
+            )
+            self.assertIn(
+                "Do not use [your dealbreaker] or mention dealbreakers in correctionReason.",
+                prompt,
+            )
+            self.assertIn("Do not make a punctuation or spacing change", prompt)
+
     def test_message_feedback_repair_prompt_explains_generic_placeholder(self):
         request = conversation_models.MessageFeedbackRequest.model_validate(
             valid_message_feedback_payload(),
@@ -2242,6 +2268,12 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Expected message IDs: [1001, 1003]", messages[1]["content"])
         self.assertIn("Cached message feedback counts: GOOD=1, NEEDS_IMPROVEMENT=1", messages[1]["content"])
         self.assertIn("summaryMessage", messages[0]["content"])
+
+    def test_session_feedback_prompt_avoids_overpraising_when_all_messages_need_improvement(self):
+        prompt = next_message_service._session_feedback_system_prompt()
+
+        self.assertIn("GOOD=0", prompt)
+        self.assertIn("do not say the learner did well overall", prompt)
 
     def test_session_feedback_rejects_invalid_expected_message_ids(self):
         payload = valid_session_feedback_payload()

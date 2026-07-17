@@ -207,5 +207,99 @@
       },
       "userMessage": "I like reading a book. This is so cool."
     }
+  },
+  {
+    "caseId": "lan167-cleaning-unknown-answer",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
+    "expectedMessageScoreRange": [80, 80],
+    "requiredCorrectionPlaceholders": ["[your preferred way]"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1678,
+      "turnNumber": 8,
+      "messageSequence": 16,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "새 룸메이트와 생활 규칙 정하기",
+        "briefing": "새 룸메이트와 청소와 생활 습관을 이야기합니다.",
+        "conversationGoal": "청소를 나누는 선호를 자연스럽게 말합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "How do you usually like to split cleaning stuff? What worked for you before?",
+        "translatedContent": "청소 같은 건 보통 어떻게 나누는 걸 좋아해? 전에는 어떻게 했었는지 궁금해."
+      },
+      "userMessage": "I don't know."
+    }
+  },
+  {
+    "caseId": "lan167-daily-rhythm-one-missing-part",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
+    "expectedMessageScoreRange": [80, 80],
+    "requiredCorrectionPlaceholders": ["[your bedtime]"],
+    "forbiddenFeedbackTerms": [
+      "대문자",
+      "소문자",
+      "쉼표",
+      "마침표",
+      "문장부호",
+      "capitalization",
+      "uppercase",
+      "lowercase",
+      "comma",
+      "period",
+      "punctuation"
+    ],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1679,
+      "turnNumber": 9,
+      "messageSequence": 18,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "새 룸메이트와 생활 규칙 정하기",
+        "briefing": "새 룸메이트와 청소와 생활 습관을 이야기합니다.",
+        "conversationGoal": "평소 생활 리듬을 자연스럽게 말합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What time are you usually up, and when do you go to bed?",
+        "translatedContent": "보통 몇 시에 일어나고, 몇 시에 자?"
+      },
+      "userMessage": "I'm up at 9am."
+    }
+  },
+  {
+    "caseId": "lan167-ambiguous-roommate-no",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 1,
+    "expectedMessageScoreRange": [80, 80],
+    "forbiddenFeedbackTerms": ["dealbreaker"],
+    "payload": {
+      "sessionId": 167,
+      "messageId": 1680,
+      "turnNumber": 10,
+      "messageSequence": 20,
+      "scenario": {
+        "scenarioId": 5,
+        "title": "새 룸메이트와 생활 규칙 정하기",
+        "briefing": "새 룸메이트와 청소와 생활 습관을 이야기합니다.",
+        "conversationGoal": "룸메이트와의 불편했던 경험과 생활 기준을 이야기합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Have you ever had a roommate situation that drove you crazy? What are your dealbreakers?",
+        "translatedContent": "룸메이트 때문에 정말 힘들었던 적 있어? 절대 안 되는 생활 기준도 있어?"
+      },
+      "userMessage": "No."
+    }
   }
 ]

@@ -415,3 +415,12 @@
 - 실제 이상 사례 9건을 `openai/gpt-5.4-mini`로 각 1회 재평가한 결과 최종 오류는 0건이었고, 후보 복구 1건, 문구 복구와 fallback은 0건이었다. 이 과정에서 이유를 말하지 않은 발화에 이유를 덧붙인 비유 1건과 영문 발화를 인용한 비유 1건을 추가로 발견했다.
 - 한국어 인용 검증과 사실 보존 프롬프트를 보강한 뒤 발견 사례 2건을 다시 실행했다. 각각 `“책 읽는 걸 좋아해요”라고 말하는 것과 같아요.`, `“나는 책 읽는 걸 좋아해”라고 취미를 말한 것과 같아요.`를 반환했고, 후보·문구 복구와 fallback 없이 통과했다.
 - 전체 unittest 115개, compileall, pip check, diff check가 통과했다.
+
+## 2026-07-17 LAN-167 실제 세션 후속 피드백 품질 보정
+
+- 세션 120의 `I don't know.`, `I'm up at 9am.`, `No.`를 고정 품질 사례로 추가했다. `I don't know.`과 `No.`는 질문 전체에는 불완전하지만 첫 질문에는 직접 반응하므로 `contextFit=1`, 메시지 점수 80점이 적절하다.
+- 후보·검수 프롬프트는 복합 질문에서 한 가지 핵심 개선만 제시하도록 보강했다. 청소 선호의 불확실한 답은 `I'm not sure yet. I prefer to split the cleaning [your preferred way].`, 생활 리듬의 부분 답은 `I'm up at 9am, and I go to bed at [your bedtime].`라는 문장 뼈대로 유도한다.
+- 첫 실제 모델 측정에서 `No.` 사례가 룸메이트 경험과 `dealbreaker`를 함께 채우는 문제가 확인됐다. 첫 질문만 명확히 하는 경우 두 번째 질문·`[your dealbreaker]`·관련 이유를 추가하지 않는 경계를 프롬프트에 명시했고, 재측정에서 `No, I haven't had a roommate situation that drove me crazy.`와 첫 질문만 설명하는 이유가 생성됐다.
+- `GOOD=0`일 때 세션 총평은 전체적으로 잘했다고 말하지 않고, 캐시 피드백에 실제 존재하는 최소 강점과 한 가지 개선 방향만 언급하도록 보강했다. 점수 산식, 외부 API, OpenAPI, backend DTO, DB 스키마는 변경하지 않았다.
+- 실제 OpenRouter 모델로 기존 7개와 신규 청소·생활 리듬 사례를 1회 평가하고, 보정 뒤 룸메이트 `No.` 사례를 다시 1회 평가했다. 각 사례의 유형·문맥 적합도·점수·문구 계약이 fixture 기대값과 일치했다.
+- `.venv/bin/python -m unittest discover -s tests` 116개, `.venv/bin/python -m compileall app tests scripts`, `.venv/bin/python -m pip check`, `git diff --check`를 통과했다.
