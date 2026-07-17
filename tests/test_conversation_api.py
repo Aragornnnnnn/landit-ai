@@ -626,27 +626,31 @@ class InnerThoughtApiTests(unittest.TestCase):
             messages[0]["content"],
         )
         self.assertIn(
-            "A first clear short answer must be NORMAL, not BAD solely because it is short.",
+            "A bare yes/no or choice answer with no detail or warmth is BLUNT and NORMAL, not GOOD.",
             messages[0]["content"],
         )
         self.assertIn(
-            "A short one-word choice answer such as 'Saturday.' must be NORMAL, not GOOD.",
+            "directed attack, HOSTILE, or UNRELATED is BAD; PARTIAL, DECLINED, or BLUNT is NORMAL; otherwise GOOD.",
             messages[0]["content"],
         )
         self.assertIn(
-            "Use this order: directed attack is BAD; otherwise a first short answer is NORMAL; use GOOD only for a detailed or warm answer.",
+            "innerThought must directly reflect these classifications.",
             messages[0]["content"],
         )
         self.assertIn(
-            "A first 'I don't know' without hostility is NORMAL, not BAD.",
+            "do not add a practical upside or reassurance",
             messages[0]["content"],
         )
         self.assertIn(
-            "A place recommendation without the requested reason is NORMAL, not GOOD.",
+            "'I don't know' without hostility is DECLINED and NORMAL; a recommendation without the requested reason is PARTIAL and NORMAL.",
             messages[0]["content"],
         )
         self.assertIn(
             "Repeated refusal can be BAD",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "repeatedly refuses the same request, classify the relationship tone as HOSTILE",
             messages[0]["content"],
         )
         self.assertIn(
