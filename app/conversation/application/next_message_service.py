@@ -374,32 +374,33 @@ def generate_message_feedback(
         final_adjudication_evidence = adjudication_evidence
         copy_was_repaired = False
         copy_was_fallback = False
-        try:
-            (
-                feedback,
-                final_score_evidence,
-                final_adjudication_evidence,
-                detected_patterns,
-                copy_was_repaired,
-            ) = _review_message_feedback_candidate(
-                request,
-                candidate,
-                score_evidence,
-                adjudication_evidence,
-                detected_patterns,
-                resolved_settings,
-            )
-        except (AiGenerationFailedError, AiResponseInvalidError) as exc:
-            logger.warning(
-                "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
-                "workflow=message_feedback_copy_fallback reason=%s "
-                "sessionId=%s messageId=%s",
-                getattr(exc, "reason", type(exc).__name__),
-                request.sessionId,
-                request.messageId,
-            )
-            feedback = candidate
-            copy_was_fallback = True
+        feedback = candidate
+        if resolved_settings.message_feedback_review_enabled:
+            try:
+                (
+                    feedback,
+                    final_score_evidence,
+                    final_adjudication_evidence,
+                    detected_patterns,
+                    copy_was_repaired,
+                ) = _review_message_feedback_candidate(
+                    request,
+                    candidate,
+                    score_evidence,
+                    adjudication_evidence,
+                    detected_patterns,
+                    resolved_settings,
+                )
+            except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+                logger.warning(
+                    "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
+                    "workflow=message_feedback_copy_fallback reason=%s "
+                    "sessionId=%s messageId=%s",
+                    getattr(exc, "reason", type(exc).__name__),
+                    request.sessionId,
+                    request.messageId,
+                )
+                copy_was_fallback = True
         feedback = _postprocess_message_feedback_benchmark(
             feedback,
             detected_patterns,

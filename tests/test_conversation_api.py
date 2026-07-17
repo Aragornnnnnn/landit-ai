@@ -1890,6 +1890,40 @@ class MessageFeedbackApiTests(unittest.TestCase):
             .candidate_was_repaired,
         )
 
+    def test_message_feedback_single_pass_repairs_invalid_candidate_once(self):
+        invalid_candidate = message_feedback_candidate(good_message_feedback(1001))
+        invalid_candidate.pop("feedbackDetail")
+        valid_candidate = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(invalid_candidate),
+                json.dumps(valid_candidate),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertTrue(entry.candidate_was_repaired)
+        self.assertFalse(entry.copy_was_repaired)
+        self.assertFalse(entry.copy_was_fallback)
+
     def test_message_feedback_candidate_repair_failure_returns_failed_without_cache(self):
         invalid_candidate = message_feedback_candidate(good_message_feedback(1001))
         invalid_candidate.pop("feedbackDetail")
@@ -2347,6 +2381,33 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIsNotNone(cached_feedback)
         self.assertEqual(cached_feedback.feedbackType, "GOOD")
         self.assertIsNone(cached_feedback.correctionExpression)
+
+    def test_message_feedback_single_pass_uses_only_candidate(self):
+        candidate = message_feedback_candidate(good_message_feedback(1001))
+        fake_openai = FakeOpenAI(content=json.dumps(candidate))
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertFalse(entry.candidate_was_repaired)
+        self.assertFalse(entry.copy_was_repaired)
+        self.assertFalse(entry.copy_was_fallback)
 
     def test_message_feedback_accepts_user_opening_instruction(self):
         ai_response = {

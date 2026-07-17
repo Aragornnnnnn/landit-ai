@@ -700,6 +700,7 @@ class QualityEvaluationTests(unittest.TestCase):
                     return_value=SimpleNamespace(
                         openrouter_model="openai/test-model",
                         openrouter_review_model="openai/review-model",
+                        message_feedback_review_enabled=False,
                     ),
                 ),
                 patch(
@@ -713,6 +714,7 @@ class QualityEvaluationTests(unittest.TestCase):
 
         self.assertEqual(report["model"], "openai/test-model")
         self.assertEqual(report["reviewModel"], "openai/review-model")
+        self.assertFalse(report["messageFeedbackReviewEnabled"])
         self.assertEqual(report["casesFile"], str(cases_path))
         self.assertEqual(report["casesSha256"], hashlib.sha256(b"[]").hexdigest())
         self.assertEqual(report["runs"], 2)

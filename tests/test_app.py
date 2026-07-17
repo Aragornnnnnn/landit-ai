@@ -43,6 +43,7 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(settings.openrouter_api_key)
         self.assertIsNone(settings.openrouter_model)
         self.assertIsNone(settings.openrouter_review_model)
+        self.assertTrue(settings.message_feedback_review_enabled)
         self.assertIsNone(settings.sentry_dsn)
 
     def test_settings_read_openrouter_environment_variables(self):
@@ -54,6 +55,7 @@ class SettingsTests(unittest.TestCase):
                 "OPENROUTER_BASE_URL": "https://openrouter.example/v1",
                 "OPENROUTER_MODEL": "openrouter-test-model",
                 "OPENROUTER_REVIEW_MODEL": "openrouter-review-model",
+                "MESSAGE_FEEDBACK_REVIEW_ENABLED": "false",
             },
             clear=True,
         ):
@@ -71,6 +73,7 @@ class SettingsTests(unittest.TestCase):
             settings.openrouter_review_model,
             "openrouter-review-model",
         )
+        self.assertFalse(settings.message_feedback_review_enabled)
 
 
 class AppFactoryTests(unittest.TestCase):

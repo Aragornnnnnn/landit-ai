@@ -635,6 +635,9 @@ def main() -> None:
         "reviewModel": (
             settings.openrouter_review_model or settings.openrouter_model
         ),
+        "messageFeedbackReviewEnabled": (
+            settings.message_feedback_review_enabled
+        ),
         "casesFile": str(args.cases),
         "casesSha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "runs": args.runs,
