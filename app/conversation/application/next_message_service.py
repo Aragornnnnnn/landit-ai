@@ -18,6 +18,7 @@ from app.models.conversation import (
     AnswerCoverage,
     ClosingMessageRequest,
     ClosingMessageResponse,
+    CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE,
     ConversationHistoryMessage,
     EvaluationContextType,
     FeedbackStatus,
@@ -39,6 +40,8 @@ from app.models.conversation import (
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
+    correction_expression_placeholder_labels,
+    normalize_correction_expression_placeholders,
 )
 
 
@@ -527,19 +530,12 @@ def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, 
     normalized_data = dict(data)
     correction_expression = normalized_data.get("correctionExpression")
     if isinstance(correction_expression, str):
-        normalized_data["correctionExpression"] = re.sub(
-            r"\[([a-z][a-z ]*)\]",
-            _normalize_message_feedback_placeholder,
-            correction_expression,
+        normalized_data["correctionExpression"] = (
+            normalize_correction_expression_placeholders(
+                correction_expression,
+            )
         )
     return normalized_data
-
-
-def _normalize_message_feedback_placeholder(match: re.Match[str]) -> str:
-    label = match.group(1)
-    if label.startswith("your "):
-        return match.group(0)
-    return f"[your {label}]"
 
 
 def _normalize_preference_only_candidate(
@@ -708,7 +704,7 @@ def _validate_spoken_message_feedback(
 def _has_generic_placeholder(correction_expression: str | None) -> bool:
     if correction_expression is None:
         return False
-    labels = re.findall(r"\[([a-z][a-z ]*)\]", correction_expression)
+    labels = correction_expression_placeholder_labels(correction_expression)
     return any(
         label.startswith("your information")
         or label.startswith("your detail")
@@ -1601,6 +1597,7 @@ def _message_feedback_system_prompt(
             "A short answer can be complete when it fits the question. "
             "If information needed to answer is missing, use a [your ...] placeholder in correctionExpression rather than inventing it. "
             "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
+            f"{CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE} "
             "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
             "When a self-introduction question asks for a name and more information, and the user gives only a name, use [your hobby] for the missing detail. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
@@ -1680,6 +1677,11 @@ def _message_feedback_repair_user_prompt(
 
 def _message_feedback_repair_instruction(error: Exception) -> str:
     reason = getattr(error, "reason", type(error).__name__)
+    if "correctionExpression placeholders must use" in reason:
+        return (
+            "correctionExpression has an invalid placeholder. "
+            f"{CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE}"
+        )
     if reason == "message_feedback_generic_placeholder":
         return (
             "message_feedback_generic_placeholder: Use a specific placeholder "
@@ -1706,6 +1708,7 @@ def _message_feedback_review_system_prompt(
             "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
             "Preserve the user's meaning, intent, tense, and negation. When information needed to answer is unavailable, use a [your ...] placeholder in correctionExpression. "
             "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
+            f"{CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE} "
             "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
             "When the user's reason is vague but present, retain the user's own words rather than substituting a plausible reason. "
             "Do not make capitalization, punctuation, or a meaning-neutral filler the only improvement. Do not replace a natural grammar alternative only because you prefer another form. "

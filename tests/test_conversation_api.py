@@ -980,6 +980,72 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "I'm up at [your wake-up time], and I go to bed at [your bedtime].",
         )
 
+    def test_message_feedback_normalizes_hyphenated_unprefixed_placeholder(self):
+        normalized = next_message_service._normalize_message_feedback_placeholders(
+            {"correctionExpression": "I'm up at [wake-up time]."},
+        )
+
+        self.assertEqual(
+            normalized["correctionExpression"],
+            "I'm up at [your wake-up time].",
+        )
+
+    def test_message_feedback_rejects_nested_placeholder_label(self):
+        with self.assertRaisesRegex(
+            ValidationError,
+            r"correctionExpression placeholders must use \[your \.\.\.\] format",
+        ):
+            conversation_models.MessageFeedbackContent.model_validate(
+                {
+                    "baseLocaleAnalogy": (
+                        '"몇 시에 일어나는지는 말하지 않았어요"라고 '
+                        "답하는 것과 같아요."
+                    ),
+                    "correctionExpression": "I'm up at [your [wake-up time]].",
+                },
+            )
+
+    def test_message_feedback_detects_hyphenated_generic_placeholder(self):
+        self.assertTrue(
+            next_message_service._has_generic_placeholder(
+                "I enjoy [your information-detail].",
+            ),
+        )
+
+    def test_message_feedback_accepts_hyphenated_placeholder_without_repair(self):
+        candidate = message_feedback_candidate(
+            needs_improvement_message_feedback(1001),
+        )
+        candidate["correctionExpression"] = (
+            "I'm up at [your wake-up time], and I go to bed at [your bedtime]."
+        )
+        copy = message_feedback_copy(needs_improvement_message_feedback(1001))
+        copy["correctionExpression"] = candidate["correctionExpression"]
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(candidate), json.dumps(copy)],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/message-feedback",
+                json=valid_message_feedback_payload(),
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        entry = next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
+        self.assertFalse(entry.candidate_was_repaired)
+        self.assertEqual(
+            entry.feedback.correctionExpression,
+            "I'm up at [your wake-up time], and I go to bed at [your bedtime].",
+        )
+
     def test_message_feedback_uses_generic_candidate_until_copy_rewrites_it(self):
         candidate = message_feedback_candidate(
             needs_improvement_message_feedback(1001),
@@ -1512,6 +1578,14 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertIn("not direct feedback or advice", copy_prompt)
         self.assertIn("Do not claim the user stated missing information", candidate_prompt)
         self.assertIn("Do not claim the user stated missing information", copy_prompt)
+        self.assertIn(
+            "A placeholder label must be non-empty and cannot contain brackets or line breaks.",
+            candidate_prompt,
+        )
+        self.assertIn(
+            "A placeholder label must be non-empty and cannot contain brackets or line breaks.",
+            copy_prompt,
+        )
 
     def test_message_feedback_prompts_keep_one_improvement_natural_for_short_answers(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(

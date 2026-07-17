@@ -6,6 +6,16 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+_CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN = re.compile(
+    r"\[([^\[\]\r\n]+)\]",
+)
+CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE = (
+    "Use [your <specific label>] placeholders only. "
+    "A placeholder label must be non-empty and cannot contain brackets or line breaks. "
+    "Hyphens, uppercase letters, and numbers are allowed."
+)
+
+
 def _validate_not_blank(value: str) -> str:
     if not value.strip():
         raise ValueError("must not be blank")
@@ -16,6 +26,36 @@ def _optional_not_blank(value: str | None) -> str | None:
     if value is None:
         return None
     return _validate_not_blank(value)
+
+
+def correction_expression_placeholder_labels(value: str) -> list[str]:
+    return _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.findall(value)
+
+
+def normalize_correction_expression_placeholders(value: str) -> str:
+    def normalize_placeholder(match: re.Match[str]) -> str:
+        label = match.group(1)
+        if label.startswith("your "):
+            return match.group(0)
+        return f"[your {label}]"
+
+    return _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.sub(
+        normalize_placeholder,
+        value,
+    )
+
+
+def has_supported_correction_expression_placeholders(value: str) -> bool:
+    labels = correction_expression_placeholder_labels(value)
+    unparsed_value = _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN.sub("", value)
+    return (
+        "[" not in unparsed_value
+        and "]" not in unparsed_value
+        and all(
+            label.startswith("your ") and label.removeprefix("your ").strip()
+            for label in labels
+        )
+    )
 
 
 class ScenarioContext(BaseModel):
@@ -354,11 +394,7 @@ class MessageFeedbackContent(BaseModel):
     ) -> str | None:
         if value is None:
             return None
-        placeholders = re.findall(r"\[[^\]]+\]", value)
-        if any(
-            re.fullmatch(r"\[your [^\[\]\r\n]+\]", placeholder) is None
-            for placeholder in placeholders
-        ):
+        if not has_supported_correction_expression_placeholders(value):
             raise ValueError("correctionExpression placeholders must use [your ...] format")
         return value
 
