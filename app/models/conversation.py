@@ -180,6 +180,16 @@ class FeedbackType(StrEnum):
     NEEDS_IMPROVEMENT = "NEEDS_IMPROVEMENT"
 
 
+class MessageFeedbackCoverageStatus(StrEnum):
+    ANSWERED = "ANSWERED"
+    MISSING = "MISSING"
+
+
+class MessageFeedbackIssueDimension(StrEnum):
+    CLARITY = "CLARITY"
+    LANGUAGE_ACCURACY = "LANGUAGE_ACCURACY"
+
+
 class EvaluationContextType(StrEnum):
     AI_MESSAGE = "AI_MESSAGE"
     SCENARIO_OPENING_INSTRUCTION = "SCENARIO_OPENING_INSTRUCTION"
@@ -447,8 +457,87 @@ class MessageFeedbackScoreEvidence(BaseModel):
     languageAccuracy: int = Field(strict=True, ge=0, le=2)
 
 
+class MessageFeedbackCoverageEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestExcerpt: str
+    answerExcerpt: str | None
+    status: MessageFeedbackCoverageStatus
+
+    @field_validator("requestExcerpt")
+    @classmethod
+    def request_excerpt_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("answerExcerpt")
+    @classmethod
+    def answer_excerpt_must_not_be_blank(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        return _optional_not_blank(value)
+
+    @model_validator(mode="after")
+    def answer_must_match_status(self) -> Self:
+        if self.status == MessageFeedbackCoverageStatus.ANSWERED:
+            if self.answerExcerpt is None:
+                raise ValueError("ANSWERED coverage requires answerExcerpt")
+        elif self.answerExcerpt is not None:
+            raise ValueError("MISSING coverage requires null answerExcerpt")
+        return self
+
+
+class MessageFeedbackActionableIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: MessageFeedbackIssueDimension
+    sourceExcerpt: str
+    correctionExcerpt: str
+    rule: str
+
+    @field_validator("sourceExcerpt", "correctionExcerpt", "rule")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class MessageFeedbackAdjudicationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    coverageEvidence: list[MessageFeedbackCoverageEvidence] = Field(min_length=1)
+    ignoredSpeechArtifacts: list[str]
+    actionableIssues: list[MessageFeedbackActionableIssue]
+
+    @field_validator("ignoredSpeechArtifacts")
+    @classmethod
+    def artifacts_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return [_validate_not_blank(value) for value in values]
+
+    @model_validator(mode="after")
+    def issue_dimensions_must_be_unique(self) -> Self:
+        dimensions = [issue.dimension for issue in self.actionableIssues]
+        if len(dimensions) != len(set(dimensions)):
+            raise ValueError("actionable issue dimensions must be unique")
+        return self
+
+
 class MessageFeedbackCandidate(MessageFeedbackContent):
     scoreEvidence: MessageFeedbackScoreEvidence
+    coverageEvidence: list[MessageFeedbackCoverageEvidence] = Field(min_length=1)
+    ignoredSpeechArtifacts: list[str]
+    actionableIssues: list[MessageFeedbackActionableIssue]
+
+    @field_validator("ignoredSpeechArtifacts")
+    @classmethod
+    def artifacts_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return [_validate_not_blank(value) for value in values]
+
+    @model_validator(mode="after")
+    def issue_dimensions_must_be_unique(self) -> Self:
+        dimensions = [issue.dimension for issue in self.actionableIssues]
+        if len(dimensions) != len(set(dimensions)):
+            raise ValueError("actionable issue dimensions must be unique")
+        return self
 
 
 class SessionFeedbackRequest(BaseModel):
