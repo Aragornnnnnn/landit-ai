@@ -368,20 +368,7 @@ class MessageFeedbackContent(BaseModel):
     @field_validator("baseLocaleAnalogy")
     @classmethod
     def base_locale_analogy_must_not_be_blank_or_framed(cls, value: str) -> str:
-        normalized = _validate_not_blank(_strip_base_locale_analogy_framing(value))
-        has_quoted_utterance = re.search(
-            r'(?:"[^"]*[가-힣][^"]*"|“[^”]*[가-힣][^”]*”|‘[^’]*[가-힣][^’]*’)',
-            normalized,
-        )
-        has_analogy_comparison = "라고" in normalized and any(
-            marker in normalized
-            for marker in ("것과 같", "것과 비슷")
-        )
-        if has_quoted_utterance is None or not has_analogy_comparison:
-            raise ValueError(
-                "baseLocaleAnalogy must compare a quoted Korean utterance",
-            )
-        return normalized
+        return _validate_not_blank(_strip_base_locale_analogy_framing(value))
 
     @field_validator(
         "positiveFeedback",
