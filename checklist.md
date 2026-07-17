@@ -409,6 +409,14 @@
 - [x] 외부 NEEDS 계약을 유지하는 중립 기본 문구 보정 추가.
 - [x] HTTP·후보 조립 회귀 테스트와 전체 unittest, compileall, diff check 통과.
 
+## 2026-07-17 LAN-170 한국어 비유 응답 규칙
+
+- [x] 설명형 `baseLocaleAnalogy`를 재현하는 RED 테스트 작성.
+- [x] 한국어 발화 인용·비교 검증과 프롬프트 규칙 추가.
+- [x] conversation API 문서에 필드 의미 반영.
+- [x] 전체 로컬 검증 실행.
+- [x] 실제 이상 사례를 OpenRouter로 재평가.
+
 ## 2026-07-17 LAN-167 실제 세션 후속 피드백 품질 보정
 
 - [x] 청소 선호 `I don't know.`, 생활 리듬 `I'm up at 9am.`, 모호한 룸메이트 `No.` 사례를 품질 fixture에 추가.

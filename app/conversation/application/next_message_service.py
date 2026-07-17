@@ -470,7 +470,10 @@ def _normalize_preference_only_candidate(
         return candidate, score_evidence
     normalized_candidate = candidate.model_copy(
         update={
-            "baseLocaleAnalogy": "좋아하는 활동을 자연스럽게 말한 상황이에요.",
+            "baseLocaleAnalogy": (
+                '"저는 포뮬러 원 보는 걸 좋아해요"라고 '
+                "좋아하는 활동을 자연스럽게 말하는 것과 같아요."
+            ),
             "feedbackDetail": "질문에 맞는 핵심을 자연스럽게 전달했어요.",
         },
     )
@@ -1474,7 +1477,10 @@ def _message_feedback_system_prompt(
         (
             "Field Policy:\n"
             "All three scoreEvidence values are integers from 0 to 2. The server derives feedbackType from scoreEvidence, so do not return feedbackType. "
-            "baseLocaleAnalogy is a Korean analogy for the same issue. "
+            "baseLocaleAnalogy is required and must compare the user's English with one quoted Korean utterance using the form \"<Korean utterance>\"라고 ... 것과 같아요. Preserve the same naturalness or the same issue. "
+            "It is not direct feedback or advice: do not explain what is missing or tell the learner what to say. Do not include 한국어로 치면, 한국어로는, or 한국어로도. "
+            "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
+            "For an incomplete self-introduction, write \"안녕하세요, 제 이름은 상민이에요\"라고 이름만 말하고 자기소개를 멈춘 것과 같아요, not 자기소개가 부족하니 내용을 더 말해야 해요. "
             "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
             "correctionReason is natural Korean. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
@@ -1483,7 +1489,7 @@ def _message_feedback_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         "Detected Pattern Catalog:\n"
@@ -1578,7 +1584,10 @@ def _message_feedback_review_system_prompt(
         ),
         (
             "Field Policy:\n"
-            "baseLocaleAnalogy is required and explains how the English sounds through one Korean analogy. "
+            "baseLocaleAnalogy is required and must compare the user's English with one quoted Korean utterance using the form \"<Korean utterance>\"라고 ... 것과 같아요. Preserve the same naturalness or the same issue. "
+            "It is not direct feedback or advice: do not explain what is missing or tell the learner what to say. Do not include 한국어로 치면, 한국어로는, or 한국어로도. "
+            "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
+            "For an incomplete self-introduction, write \"안녕하세요, 제 이름은 상민이에요\"라고 이름만 말하고 자기소개를 멈춘 것과 같아요, not 자기소개가 부족하니 내용을 더 말해야 해요. "
             "For GOOD, positiveFeedback, correctionExpression, and correctionReason are null, feedbackDetail is required, and benchmarkMessage is a short non-quantitative Korean message or null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required, feedbackDetail and benchmarkMessage are null. "
             "correctionExpression contains one English expression only. "
@@ -1596,7 +1605,7 @@ def _message_feedback_review_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"baseLocaleAnalogy":"Korean feedback","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         f"Evaluation context type: {evaluation_context_type}",
