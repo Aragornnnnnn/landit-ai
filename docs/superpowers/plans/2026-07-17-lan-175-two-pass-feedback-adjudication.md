@@ -1,357 +1,433 @@
-# LAN-175 Two-Pass Feedback Adjudication Implementation Plan
+# LAN-175 Evidence-Based Two-Pass Feedback Adjudication Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Keep the normal message-feedback path at two LLM calls while allowing the second call to correct the first call's score and copy, then replay the user's exact session through OpenRouter and report quality and latency.
+**Goal:** Keep message feedback at two normal LLM calls while requiring source-grounded coverage and issue evidence for every score below 2.
 
-**Architecture:** The first call remains a structurally valid fallback candidate. The second call returns the same internal candidate shape, including `scoreEvidence`, and becomes authoritative when valid; the server derives `feedbackType` from the selected evidence. Session feedback remains one call, but its prompt must reject absolute praise that contradicts any cached `NEEDS_IMPROVEMENT`. The quality evaluator gains a grouped session case that generates all message feedbacks in one cache, generates session feedback, and records outcomes and timings.
+**Architecture:** Both calls return a complete fallback-capable candidate plus internal adjudication evidence. The server validates exact source excerpts and score-to-evidence consistency without deciding English semantics; the second call independently rebuilds evidence with a shorter reviewer prompt and becomes authoritative when valid.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, OpenAI Python SDK through OpenRouter, standard-library `unittest`, JSON fixtures.
 
 ## Global Constraints
 
-- The normal message-feedback path must make exactly two LLM calls.
-- Do not add a third semantic judge or blind retry.
-- Remove LAN-175 runtime semantic regexes and Korean phrase-list score overrides.
-- Keep deterministic schema, placeholder, spoken-form, and benchmark-catalog validation.
-- Keep the external API, OpenAPI, backend DTO, database schema, scoring formula, model, and token limits unchanged.
-- Preserve the supplied AI and USER `message_content` values byte-for-byte in the live-quality fixture.
-- Do not expose secrets, raw provider metadata, `scoreEvidence`, `detectedPatterns`, or internal repair/fallback flags through public APIs.
+- The normal message-feedback path makes exactly two LLM calls.
+- Do not add an unconditional or conditional third call in this change.
+- Do not add question-specific regexes, Korean phrase-list scoring, or runtime English grammar rules.
+- Keep public API models, OpenAPI, backend DTOs, database schema, score formula, model, and token limits unchanged.
+- Evidence fields are internal-only and must not appear in public response models or OpenAPI.
+- Preserve supplied AI and USER `message_content` values byte-for-byte in the quality fixture.
 
 ---
 
-### Task 1: Rebase the approved design onto current main without the hardcoded prototype
+### Task 1: Model and validate source-grounded adjudication evidence
 
 **Files:**
-- Preserve: `docs/superpowers/specs/2026-07-17-lan-175-two-pass-feedback-adjudication-design.md`
-- Remove through history rewrite: prototype changes from commit `ee0a9c8`
+- Modify: `app/models/conversation.py`
+- Modify: `app/conversation/application/next_message_service.py`
+- Test: `tests/test_conversation_api.py`
 
 **Interfaces:**
-- Consumes: `origin/main` with LAN-174 response recovery and the LAN-175 design commit `b848f8c`.
-- Produces: `hotfix/LAN-175` based on current `origin/main`, containing the design but no LAN-175 production implementation.
+- Produces: `MessageFeedbackCoverageStatus`, `MessageFeedbackIssueDimension`, `MessageFeedbackCoverageEvidence`, `MessageFeedbackActionableIssue`, and `MessageFeedbackAdjudicationEvidence`.
+- Extends: `MessageFeedbackCandidate` with `coverageEvidence`, `ignoredSpeechArtifacts`, and `actionableIssues`.
+- Produces: `_message_feedback_adjudication_evidence(candidate) -> MessageFeedbackAdjudicationEvidence`.
+- Produces: `_validate_message_feedback_adjudication(candidate, request) -> None`.
 
-- [ ] **Step 1: Confirm the exact commit range**
+- [ ] **Step 1: Write RED model and validation tests**
 
-Run: `git rev-list --left-right --count HEAD...origin/main && git log --oneline --decorate -6`
+Add focused tests that construct candidate dictionaries and call `_parse_message_feedback_candidate`.
 
-Expected: branch contains `ee0a9c8` followed by `b848f8c` and is behind `origin/main` by four commits.
+```python
+def test_message_feedback_rejects_score_without_matching_evidence(self):
+    candidate = good_message_feedback_candidate(1001)
+    candidate["scoreEvidence"]["languageAccuracy"] = 1
+    candidate["coverageEvidence"] = [{
+        "requestExcerpt": "What are you into?",
+        "answerExcerpt": "I'm into reading books",
+        "status": "ANSWERED",
+    }]
+    candidate["ignoredSpeechArtifacts"] = []
+    candidate["actionableIssues"] = []
 
-- [ ] **Step 2: Move only commits after the prototype onto main**
+    with self.assertRaisesRegex(
+        AiResponseInvalidError,
+        "message_feedback_language_accuracy_evidence",
+    ):
+        next_message_service._parse_message_feedback_candidate(
+            candidate,
+            message_feedback_request_for(
+                ai_message="What are you into?",
+                user_message="I'm into reading books",
+            ),
+        )
+```
 
-Run: `git rebase --onto origin/main ee0a9c8 hotfix/LAN-175`
+Add separate cases for a non-source `requestExcerpt`, a non-source `answerExcerpt`, `contextFit=2` with `MISSING`, `contextFit=1` without `MISSING`, duplicate issue dimensions, and an ignored artifact reused as an issue source.
 
-Expected: the design commit is replayed and the hardcoded prototype commit is absent from the new branch history.
+- [ ] **Step 2: Run tests and verify RED**
 
-- [ ] **Step 3: Verify the clean implementation baseline**
+Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_rejects_score_without_matching_evidence`
 
-Run: `git status --short --branch && git log --oneline --decorate -6 && git diff origin/main...HEAD --stat`
+Expected: FAIL because evidence fields and validation do not exist.
 
-Expected: only the approved design differs from `origin/main`; the worktree is clean.
+- [ ] **Step 3: Add the internal Pydantic evidence models**
+
+Add the following shapes near `MessageFeedbackScoreEvidence`.
+
+```python
+class MessageFeedbackCoverageStatus(StrEnum):
+    ANSWERED = "ANSWERED"
+    MISSING = "MISSING"
+
+
+class MessageFeedbackIssueDimension(StrEnum):
+    CLARITY = "CLARITY"
+    LANGUAGE_ACCURACY = "LANGUAGE_ACCURACY"
+
+
+class MessageFeedbackCoverageEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requestExcerpt: str
+    answerExcerpt: str | None
+    status: MessageFeedbackCoverageStatus
+
+    @field_validator("requestExcerpt", "answerExcerpt")
+    @classmethod
+    def excerpts_must_not_be_blank(cls, value: str | None) -> str | None:
+        return _optional_not_blank(value)
+
+    @model_validator(mode="after")
+    def answer_must_match_status(self) -> Self:
+        if self.status == MessageFeedbackCoverageStatus.ANSWERED:
+            if self.answerExcerpt is None:
+                raise ValueError("ANSWERED coverage requires answerExcerpt")
+        elif self.answerExcerpt is not None:
+            raise ValueError("MISSING coverage requires null answerExcerpt")
+        return self
+
+
+class MessageFeedbackActionableIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dimension: MessageFeedbackIssueDimension
+    sourceExcerpt: str
+    correctionExcerpt: str
+    rule: str
+
+    @field_validator("sourceExcerpt", "correctionExcerpt", "rule")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class MessageFeedbackAdjudicationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    coverageEvidence: list[MessageFeedbackCoverageEvidence] = Field(min_length=1)
+    ignoredSpeechArtifacts: list[str]
+    actionableIssues: list[MessageFeedbackActionableIssue]
+
+    @field_validator("ignoredSpeechArtifacts")
+    @classmethod
+    def artifacts_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return [_validate_not_blank(value) for value in values]
+
+    @model_validator(mode="after")
+    def issue_dimensions_must_be_unique(self) -> Self:
+        dimensions = [issue.dimension for issue in self.actionableIssues]
+        if len(dimensions) != len(set(dimensions)):
+            raise ValueError("actionable issue dimensions must be unique")
+        return self
+```
+
+Add the same three fields to `MessageFeedbackCandidate` and construct `MessageFeedbackAdjudicationEvidence` from them after validation.
+
+- [ ] **Step 4: Implement deterministic request-level evidence validation**
+
+After Pydantic validation in `_parse_message_feedback_candidate`, call a new helper before assembling public feedback.
+
+```python
+def _validate_message_feedback_adjudication(
+    candidate: MessageFeedbackCandidate,
+    request: MessageFeedbackRequest,
+) -> None:
+    evidence = _message_feedback_adjudication_evidence(candidate)
+    for coverage in evidence.coverageEvidence:
+        if coverage.requestExcerpt not in request.evaluationContext.content:
+            raise AiResponseInvalidError("message_feedback_request_evidence")
+        if (
+            coverage.answerExcerpt is not None
+            and coverage.answerExcerpt not in request.userMessage
+        ):
+            raise AiResponseInvalidError("message_feedback_answer_evidence")
+
+    for artifact in evidence.ignoredSpeechArtifacts:
+        if artifact not in request.userMessage:
+            raise AiResponseInvalidError("message_feedback_speech_artifact_evidence")
+    for issue in evidence.actionableIssues:
+        if issue.sourceExcerpt not in request.userMessage:
+            raise AiResponseInvalidError("message_feedback_actionable_issue_evidence")
+        if issue.sourceExcerpt in evidence.ignoredSpeechArtifacts:
+            raise AiResponseInvalidError("message_feedback_ignored_issue_overlap")
+
+    missing_coverage = any(
+        item.status == MessageFeedbackCoverageStatus.MISSING
+        for item in evidence.coverageEvidence
+    )
+    if (candidate.scoreEvidence.contextFit == 2) == missing_coverage:
+        raise AiResponseInvalidError("message_feedback_context_evidence")
+
+    issue_dimensions = {issue.dimension for issue in evidence.actionableIssues}
+    score_dimensions = (
+        (
+            candidate.scoreEvidence.clarity,
+            MessageFeedbackIssueDimension.CLARITY,
+            "message_feedback_clarity_evidence",
+        ),
+        (
+            candidate.scoreEvidence.languageAccuracy,
+            MessageFeedbackIssueDimension.LANGUAGE_ACCURACY,
+            "message_feedback_language_accuracy_evidence",
+        ),
+    )
+    for score, dimension, reason in score_dimensions:
+        if (score == 2) == (dimension in issue_dimensions):
+            raise AiResponseInvalidError(reason)
+```
+
+Raise stable `AiResponseInvalidError` reasons for each failed contract. Compare exact strings without case folding or semantic regexes.
+
+- [ ] **Step 5: Run Task 1 tests GREEN**
+
+Run all newly added evidence tests and expect PASS.
+
+- [ ] **Step 6: Commit Task 1**
+
+```bash
+git add app/models/conversation.py app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "feat: 메시지 피드백 판정 근거 계약 추가"
+```
 
 ---
 
-### Task 2: Make the second call authoritative for score and copy
+### Task 2: Carry final evidence through both calls and cache
 
 **Files:**
 - Modify: `app/conversation/application/next_message_service.py`
 - Test: `tests/test_conversation_api.py`
 
 **Interfaces:**
-- Consumes: `_generate_message_feedback_candidate(...) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any, bool]`.
-- Produces: `_review_message_feedback_candidate(...) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any, bool]`.
-- Produces: `_parse_message_feedback_candidate(...) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any]` for both first and second outputs.
-- Preserves: `_MessageFeedbackCacheEntry.score_evidence` as the evidence used for the final stored feedback.
+- Changes: `_parse_message_feedback_candidate(...) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, MessageFeedbackAdjudicationEvidence, Any]`.
+- Changes: `_generate_message_feedback_candidate(...) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, MessageFeedbackAdjudicationEvidence, Any, bool]`.
+- Changes: `_review_message_feedback_candidate(...) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, MessageFeedbackAdjudicationEvidence, Any, bool]`.
+- Extends: `_MessageFeedbackCacheEntry.adjudication_evidence` and `_store_message_feedback(..., adjudication_evidence=...)`.
 
-- [ ] **Step 1: Write a RED test proving review can upgrade NEEDS to GOOD**
+- [ ] **Step 1: Write RED authoritative and fallback evidence tests**
 
-Add a test that feeds a first candidate with `contextFit=1` and a second candidate with all scores equal to 2.
-
-```python
-def test_message_feedback_review_can_upgrade_candidate_score(self):
-    candidate = message_feedback_candidate(
-        needs_improvement_message_feedback(1001),
-    )
-    reviewed = message_feedback_candidate(good_message_feedback(1001))
-    fake_openai = FakeOpenAI(
-        contents=[json.dumps(candidate), json.dumps(reviewed)],
-    )
-    app = create_app(make_settings(
-        openrouter_api_key="test-openrouter-key",
-        openrouter_model="openrouter-test-model",
-    ))
-
-    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-        response = make_client(app).post(
-            "/api/v1/conversation/message-feedback",
-            json=valid_message_feedback_payload(),
-        )
-
-    entry = next_message_service._get_expected_message_feedback_entries(
-        100,
-        [1001],
-    )[0]
-    self.assertEqual(response.status_code, 202)
-    self.assertEqual(entry.feedback.feedbackType.value, "GOOD")
-    self.assertEqual(entry.score_evidence.model_dump(), {
-        "contextFit": 2,
-        "clarity": 2,
-        "languageAccuracy": 2,
-    })
-```
-
-- [ ] **Step 2: Run the focused test and verify RED**
-
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_can_upgrade_candidate_score`
-
-Expected: FAIL because the current review schema rejects `scoreEvidence` or keeps the first evidence locked.
-
-- [ ] **Step 3: Write a RED test proving review can downgrade GOOD to NEEDS**
-
-Use a first all-2 candidate and a reviewed candidate with `languageAccuracy=1`; assert final type `NEEDS_IMPROVEMENT` and final score evidence `2,2,1`.
-
-- [ ] **Step 4: Run both focused tests and verify RED**
-
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_can_upgrade_candidate_score tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_can_downgrade_candidate_score`
-
-Expected: both tests fail for the locked-review behavior.
-
-- [ ] **Step 5: Implement the minimal authoritative-review flow**
-
-Change `generate_message_feedback` so the selected evidence follows the selected feedback.
+Add one test where first and second candidates have different evidence and assert the cache stores the second evidence. Add one review-failure test and assert it stores the first evidence.
 
 ```python
-final_score_evidence = score_evidence
-try:
-    (
-        feedback,
-        final_score_evidence,
-        detected_patterns,
-        copy_was_repaired,
-    ) = _review_message_feedback_candidate(
-        request,
-        candidate,
-        score_evidence,
-        detected_patterns,
-        resolved_settings,
-    )
-except (AiGenerationFailedError, AiResponseInvalidError):
-    feedback = candidate
-    copy_was_fallback = True
-
-_store_message_feedback(
-    request.sessionId,
-    feedback,
-    score_evidence=final_score_evidence,
-    user_message=request.userMessage,
-    candidate_was_repaired=candidate_was_repaired,
-    copy_was_repaired=copy_was_repaired,
-    copy_was_fallback=copy_was_fallback,
+self.assertEqual(
+    entry.adjudication_evidence.coverageEvidence[0].status,
+    MessageFeedbackCoverageStatus.ANSWERED,
+)
+self.assertEqual(
+    entry.adjudication_evidence.actionableIssues,
+    [],
 )
 ```
 
-Rename the review helper and parse its output through `_parse_message_feedback_candidate(reviewed_data, request)`. Return reviewed evidence and use the same parser for review repair output. Keep first-candidate fallback unchanged.
+- [ ] **Step 2: Run both tests and verify RED**
 
-- [ ] **Step 6: Change the review prompt from locked copy to independent adjudication**
+Expected: FAIL because cache entries do not store adjudication evidence.
 
-The review system prompt must require a complete `MessageFeedbackCandidate` JSON with `scoreEvidence` and must explicitly state the six adjudication steps from the design. Remove statements that score and type are locked. Keep the candidate and original request in the review user prompt, labeling the first evidence as candidate evidence rather than locked evidence.
+- [ ] **Step 3: Thread evidence through parsing, generation, review, and storage**
 
-- [ ] **Step 7: Run focused GREEN verification**
+Build `MessageFeedbackAdjudicationEvidence` from each validated candidate. Select `final_adjudication_evidence` together with `final_score_evidence`. If review fails, keep the first evidence and candidate. Store only the selected final evidence.
 
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_can_upgrade_candidate_score tests.test_conversation_api.MessageFeedbackApiTests.test_message_feedback_review_can_downgrade_candidate_score`
+- [ ] **Step 4: Remove the preference-specific runtime score override**
 
-Expected: PASS.
+Delete `_normalize_preference_only_candidate`, `_is_like_infinitive_gerund_alternative`, and `_gerund_forms`. Remove the parser call that rewrites `languageAccuracy` for only `like to watch` and `like watching`; the general evidence contract replaces this special case.
 
-- [ ] **Step 8: Add and verify fallback evidence regression**
+Add an `rg` assertion test or source scan ensuring those names no longer exist.
 
-Update the existing review provider-failure and repair-failure tests to assert that the stored evidence is the first candidate evidence. Run those focused tests and expect PASS.
+- [ ] **Step 5: Run Task 2 tests GREEN**
 
-- [ ] **Step 9: Add prompt contract regression tests**
+Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
 
-Assert the review prompt contains `Re-evaluate scoreEvidence`, immediate spoken repetition guidance, remaining-error guidance, and correction-expression/reason consistency. Assert it does not contain `locked by the server` or `do not return or change them`.
+Expected: all message-feedback tests PASS.
 
-- [ ] **Step 10: Run all message-feedback API tests**
+- [ ] **Step 6: Commit Task 2**
 
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.MessageFeedbackApiTests`
-
-Expected: PASS with no failed or errored tests.
-
-- [ ] **Step 11: Commit the authoritative review change**
-
-Run: `git add app/conversation/application/next_message_service.py tests/test_conversation_api.py && git commit -m "fix: 2차 검수가 피드백 점수와 문구를 재심사하도록 수정"`
-
-Expected: one implementation commit containing only the review-flow and its tests.
+```bash
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "refactor: 최종 피드백과 판정 근거를 함께 선택하도록 변경"
+```
 
 ---
 
-### Task 3: Remove LAN-175 semantic hardcoding and enforce session-summary consistency in prompts
+### Task 3: Replace the long reviewer with a compact evidence-first adjudicator
 
 **Files:**
 - Modify: `app/conversation/application/next_message_service.py`
 - Test: `tests/test_conversation_api.py`
 
 **Interfaces:**
-- Consumes: final cached `MessageFeedbackData` values in `_session_feedback_user_prompt`.
-- Produces: session prompt rule that disallows universal praise whenever `NEEDS_IMPROVEMENT count > 0`.
-- Removes: `_normalize_self_introduction_candidate`, `_normalize_spoken_repetition_only_candidate`, `_answers_open_self_introduction`, `_feedback_mentions_only_spoken_repetition`, `_normalize_session_feedback_praise`, and `_ABSOLUTE_SESSION_PRAISE_TERMS` if present after rebase.
+- Produces: `_message_feedback_evidence_policy() -> str` shared by candidate and reviewer prompts.
+- Changes: `_message_feedback_review_user_prompt(..., adjudication_evidence, ...)` to include first evidence explicitly.
+- Preserves: current two-call and one-step-per-stage repair behavior.
 
-- [ ] **Step 1: Write a RED prompt test for mixed feedback**
+- [ ] **Step 1: Write RED prompt-contract tests**
+
+Assert both prompts require exact excerpts and score-to-evidence consistency. Assert the reviewer says to rebuild evidence independently and does not contain the long scenario-specific cleaning, daily-rhythm, or roommate examples.
 
 ```python
-def test_session_feedback_prompt_rejects_absolute_praise_for_mixed_feedback(self):
-    prompt = next_message_service._session_feedback_system_prompt()
+for prompt in (candidate_prompt, review_prompt):
+    self.assertIn("coverageEvidence", prompt)
+    self.assertIn("ignoredSpeechArtifacts", prompt)
+    self.assertIn("actionableIssues", prompt)
+    self.assertIn("exact substring", prompt)
 
-    self.assertIn("NEEDS_IMPROVEMENT count is greater than 0", prompt)
-    self.assertIn("do not claim that every answer was natural or perfect", prompt)
+self.assertIn("rebuild the evidence independently", review_prompt)
+self.assertNotIn("cleaning-preference question", review_prompt)
+self.assertNotIn("daily-rhythm question", review_prompt)
+self.assertNotIn("roommate question about a bad experience", review_prompt)
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [ ] **Step 2: Run prompt tests and verify RED**
 
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.SessionFeedbackApiTests.test_session_feedback_prompt_rejects_absolute_praise_for_mixed_feedback`
+Expected: FAIL because the current output schema omits adjudication evidence and the reviewer repeats the long rubric.
 
-Expected: FAIL because current main only handles the `GOOD=0` boundary.
+- [ ] **Step 3: Add one shared evidence policy and output schema**
 
-- [ ] **Step 3: Add the minimal session prompt rule**
+The policy must state these general rules.
 
-Add one general instruction to `_session_feedback_system_prompt` stating that any nonzero `NEEDS_IMPROVEMENT` count forbids claims that all or every answer was natural, correct, or perfect. Require strengths to come from cached GOOD feedback or factual `positiveFeedback`.
+```text
+Every coverageEvidence.requestExcerpt is an exact evaluation-context substring.
+ANSWERED requires an exact user answerExcerpt; MISSING requires null.
+Every ignoredSpeechArtifacts and actionableIssues.sourceExcerpt is an exact user substring.
+An ignored speech artifact cannot be an actionable issue.
+contextFit below 2 requires MISSING coverage.
+clarity or languageAccuracy below 2 requires a matching actionable issue.
+A grammatical, understandable expression is not actionable merely because another form is more common or concise.
+```
 
-- [ ] **Step 4: Verify GREEN and hardcoding absence**
+Include the evidence fields in both JSON schemas. Keep them internal and continue omitting `feedbackType` and `messageId` from model output.
 
-Run the focused session prompt test, then run:
+- [ ] **Step 4: Make the reviewer concise and independent**
 
-`rg -n "_normalize_self_introduction_candidate|_normalize_spoken_repetition_only_candidate|_answers_open_self_introduction|_feedback_mentions_only_spoken_repetition|_normalize_session_feedback_praise|_ABSOLUTE_SESSION_PRAISE_TERMS" app tests`
+Keep only the shared evidence policy, score definitions, learner-field contract, output schema, safety policy, original request, and first candidate/evidence. Tell the reviewer to reconstruct evidence before comparing it with the first candidate. Do not preserve candidate fields by default.
 
-Expected: focused test PASS and `rg` returns no matches.
+- [ ] **Step 5: Run Task 3 tests GREEN**
 
-- [ ] **Step 5: Run session-feedback API tests**
+Run all prompt and message-feedback API tests and expect PASS.
 
-Run: `.venv/bin/python -m unittest tests.test_conversation_api.SessionFeedbackApiTests`
+- [ ] **Step 6: Commit Task 3**
 
-Expected: PASS.
-
-- [ ] **Step 6: Commit the session-summary rule**
-
-Run: `git add app/conversation/application/next_message_service.py tests/test_conversation_api.py && git commit -m "fix: 혼합 피드백과 세션 총평의 칭찬이 모순되지 않도록 수정"`
-
-Expected: one prompt-policy commit and its regression test.
+```bash
+git add app/conversation/application/next_message_service.py tests/test_conversation_api.py
+git commit -m "fix: 2차 피드백을 증거 우선 판정기로 단순화"
+```
 
 ---
 
-### Task 4: Replay the exact supplied session through the quality evaluator
+### Task 4: Report adjudication evidence in the private quality evaluator
 
 **Files:**
 - Modify: `scripts/evaluate_conversation_quality.py`
-- Modify: `tests/test_quality_evaluation.py`
-- Create: `tests/fixtures/lan_175_feedback_session_case.json`
+- Modify: `tests/fixtures/lan_175_feedback_session_case.json`
+- Test: `tests/test_quality_evaluation.py`
 
 **Interfaces:**
-- Consumes: a case with `kind="feedback-session"`, `messageFeedbackPayloads`, `sessionFeedbackPayload`, expected message boundaries, expected native-score range, and expected star rating.
-- Produces: one result per run containing `messageResults`, `nativeScore`, `starRating`, `highlightMessage`, `summaryMessage`, `messageFeedbacks`, `messageLatenciesMs`, `sessionFeedbackLatencyMs`, `totalLatencyMs`, and validation fields.
-- Extends: CLI `--kind` choices with `feedback-session`.
+- Extends each private `messageResults` item with `adjudicationEvidence`.
+- Extends expected fixture boundaries with `expectedMissingCoverageCount`, `expectedActionableIssueDimensions`, `forbiddenActionableSourceTerms`, and `requiredAnyActionableRuleTerms`.
+- Keeps public API and OpenAPI unchanged.
 
-- [ ] **Step 1: Write a RED fixture-integrity test**
+- [ ] **Step 1: Write RED evaluator tests**
 
-Load `lan_175_feedback_session_case.json` and assert the six `evaluationContext.content` and `userMessage` values exactly equal the six supplied `message_content` strings, including punctuation and repeated tokens. Assert message IDs `[60, 62, 64]` and expected boundaries `GOOD`, `GOOD`, `NEEDS_IMPROVEMENT`.
+Build cache entries with adjudication evidence and assert the evaluator detects these failures.
 
-- [ ] **Step 2: Run the fixture test and verify RED**
+```python
+self.assertFalse(result["missingCoverageCountMatchesExpectation"])
+self.assertFalse(result["actionableIssueDimensionsMatchExpectation"])
+self.assertEqual(result["foundForbiddenActionableSourceTerms"], ["I I"])
+self.assertFalse(result["requiredAnyActionableRuleTermMatched"])
+```
 
-Run: `.venv/bin/python -m unittest tests.test_quality_evaluation.QualityEvaluationTests.test_lan_175_session_fixture_preserves_supplied_messages`
+- [ ] **Step 2: Run evaluator tests and verify RED**
 
-Expected: FAIL because the exact-session fixture does not exist.
+Expected: FAIL because evidence is not reported or evaluated.
 
-- [ ] **Step 3: Add the exact session fixture**
+- [ ] **Step 3: Add evidence expectations without changing supplied messages**
 
-Create a one-case JSON array. Copy the three AI messages and three USER messages exactly from the supplied table. Use session ID 14, message IDs 60/62/64, turn numbers 1/2/3, sequences 2/4/6, and a consistent scenario payload. Set expected message scores to `[100,100]`, `[100,100]`, and `[70,85]`; set expected native score range `[83,87]` and expected star rating `2.5`.
+Set messages 60 and 62 to zero missing coverage and no actionable issues. For message 62, forbid `I I` as an actionable source. Set message 64 to zero missing coverage and one `LANGUAGE_ACCURACY` issue whose rule includes one of `subject-verb`, `agreement`, or `plural`.
 
-- [ ] **Step 4: Verify the fixture test GREEN**
+- [ ] **Step 4: Implement evidence reporting and gates**
 
-Run the focused fixture-integrity test and expect PASS.
+Serialize `entry.adjudication_evidence` into each result and combine all new evidence checks into `expectationMatched`. Do not serialize evidence in the FastAPI response.
 
-- [ ] **Step 5: Write RED evaluator tests for grouped session replay**
+- [ ] **Step 5: Run Task 4 tests GREEN**
 
-Patch `generate_message_feedback`, `_get_expected_message_feedback_entries`, and `generate_session_feedback` with deterministic values. Assert message order, score checks, session score checks, and nonnegative latency fields. Add an error-path test that records `validationError` instead of aborting the batch.
+Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_quality_evaluation.QualityEvaluationTests`
 
-- [ ] **Step 6: Run grouped evaluator tests and verify RED**
+Expected: all quality evaluator tests PASS.
 
-Run the two new `QualityEvaluationTests` methods and expect failure because `feedback-session` is unsupported.
+- [ ] **Step 6: Commit Task 4**
 
-- [ ] **Step 7: Implement grouped session evaluation**
-
-Import `perf_counter`, `generate_session_feedback`, `SessionFeedbackRequest`, and the final cache entry helper. Add `feedback-session` to accepted kinds and dispatch it from `_evaluate_case`. Clear the cache before and after each run. Time each message call, read its final cache entry, generate session feedback once, and return all requested output fields. Convert generation, validation, or missing-cache failures into one structured result with the case ID, run, error type, error reason, and elapsed time.
-
-- [ ] **Step 8: Run grouped evaluator tests GREEN**
-
-Run the focused grouped evaluator tests and expect PASS.
-
-- [ ] **Step 9: Run all quality-evaluator tests**
-
-Run: `.venv/bin/python -m unittest tests.test_quality_evaluation`
-
-Expected: PASS.
-
-- [ ] **Step 10: Commit the exact-session evaluator**
-
-Run: `git add scripts/evaluate_conversation_quality.py tests/test_quality_evaluation.py tests/fixtures/lan_175_feedback_session_case.json && git commit -m "test: 전달 세션 원문 기반 피드백 품질 평가 추가"`
-
-Expected: one test-tool commit with the exact fixture and evaluator support.
+```bash
+git add scripts/evaluate_conversation_quality.py tests/fixtures/lan_175_feedback_session_case.json tests/test_quality_evaluation.py
+git commit -m "test: 실제 세션 판정 근거 품질 게이트 추가"
+```
 
 ---
 
-### Task 5: Verify locally and run the real OpenRouter demonstration
+### Task 5: Verify locally and run the final real-session gate
 
 **Files:**
 - Generate outside git: `/tmp/landit-ai-lan-175-results.json`
 
 **Interfaces:**
-- Consumes: the completed code and `tests/fixtures/lan_175_feedback_session_case.json`.
-- Produces: fresh local verification evidence and a three-run OpenRouter report tied to fixture SHA-256 and model name.
+- Consumes: completed two-pass implementation and exact supplied-session fixture.
+- Produces: local verification evidence and one final three-run OpenRouter report.
 
-- [ ] **Step 1: Run focused and full local verification**
-
-Run:
+- [ ] **Step 1: Run full local verification**
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
-.venv/bin/python -m compileall app tests scripts
-.venv/bin/python -m pip check
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m compileall app tests scripts
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m pip check
 git diff --check
 ```
 
-Expected: all unittest cases pass, compileall exits 0, pip reports no broken requirements, and diff check exits 0.
+Expected: all tests PASS, compileall exits 0, pip reports no broken requirements, and diff check exits 0.
 
-- [ ] **Step 2: Verify public OpenAPI does not expose internal fields**
+- [ ] **Step 2: Verify internal evidence is absent from public OpenAPI**
 
-Generate the FastAPI schema using the existing app factory and assert serialized components do not contain `scoreEvidence`, `detectedPatterns`, `candidateWasRepaired`, `copyWasRepaired`, or `copyWasFallback`.
+Serialize the FastAPI OpenAPI schema and assert it does not contain `coverageEvidence`, `ignoredSpeechArtifacts`, `actionableIssues`, `scoreEvidence`, `detectedPatterns`, or repair/fallback flags.
 
-Expected: assertion exits 0.
+- [ ] **Step 3: Run the exact session three times through OpenRouter**
 
-- [ ] **Step 3: Run the supplied session three times through OpenRouter**
-
-Run:
+Because this Codex tenant blocks outbound transcript transfer, the user runs the existing evaluator locally.
 
 ```bash
-.venv/bin/python scripts/evaluate_conversation_quality.py \
+/Users/sangmin8817/Soma/landit-ai/.venv/bin/python \
+  scripts/evaluate_conversation_quality.py \
   --cases tests/fixtures/lan_175_feedback_session_case.json \
   --runs 3 \
   --kind feedback-session \
   --output /tmp/landit-ai-lan-175-results.json
 ```
 
-Expected: three result objects are written without exposing credentials.
+- [ ] **Step 4: Evaluate the final quality gate**
 
-- [ ] **Step 4: Evaluate the report against the design gates**
+Require all three runs to produce `GOOD`, `GOOD`, `NEEDS_IMPROVEMENT`; message scores 100, 100, and 70-85; session score 83-87; star rating 2.5; evidence expectations matched; no universal-praise contradiction; no validation errors or missing messages. Report message, session, and total P50 and maximum latency.
 
-Check all three runs for message types `GOOD`, `GOOD`, `NEEDS_IMPROVEMENT`; scores 100, 100, and 70-85; session score 83-87; star rating 2.5; no hobby omission for message 60; no repetition-only criticism for message 62; accurate explanation for message 64 if `is` changes to `are`; no universal-praise contradiction; zero final validation errors and missing messages. Summarize per-call and total P50 and maximum latency from the recorded fields.
+- [ ] **Step 5: Stop on failure instead of adding prompt rules**
 
-- [ ] **Step 5: Quality-failure loop if a gate fails**
+If any run fails, do not add another prompt example or runtime exception. Report the evidence and treat conditional third-call or model-change design as the next decision.
 
-For each failed semantic gate, add one prompt-contract regression test, watch it fail, make the smallest general prompt change, run the focused unit test, then rerun only the failed live case three times. Do not add runtime regexes, phrase-list scoring, a third semantic call, model downgrade, or token reduction.
-
-- [ ] **Step 6: Record exact evidence**
-
-Report the commands, test count, model, fixture hash, per-run types/scores/session results, repair/fallback counts, and latency summary in the final response and PR body. Do not commit the `/tmp` report or any secret.
-
-- [ ] **Step 7: Final branch review**
+- [ ] **Step 6: Final branch review**
 
 Run: `git status --short --branch && git log --oneline origin/main..HEAD && git diff --stat origin/main...HEAD && git diff --check`
 
-Expected: clean worktree, reviewable commits, only LAN-175 files changed, and no whitespace errors.
+Expected: clean worktree, only LAN-175 files changed, reviewable semantic commits, and no whitespace errors.
