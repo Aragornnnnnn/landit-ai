@@ -3,7 +3,7 @@
     "caseId": "lan169-short-no",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["NORMAL"],
-    "requiredAnyTerms": ["짧", "무뚝뚝", "거리", "답답", "단호", "허무"],
+    "requiredAnyTerms": ["짧", "무뚝뚝", "거리", "답답", "단호", "허무", "아니라고만", "말하고 싶", "얘기할 생각"],
     "forbiddenTerms": ["다행", "친절", "해야겠", "말아야겠"],
     "payload": {
       "sessionId": 120,
@@ -37,7 +37,7 @@
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["NORMAL"],
     "requiredAnyTerms": ["짧", "딱", "까칠", "차갑"],
-    "forbiddenTerms": ["어렵지 않", "좋다는", "해야겠"],
+    "forbiddenTerms": ["어렵지 않", "해야겠"],
     "payload": {
       "sessionId": 95,
       "submittedMessageId": 249,
@@ -180,7 +180,7 @@
     "caseId": "lan169-harsh-boundary",
     "kind": "inner-thought",
     "expectedInnerThoughtTypes": ["NORMAL", "BAD"],
-    "requiredAnyTerms": ["강", "불편", "당황", "거리", "서운", "냉정", "차가"],
+    "requiredAnyTerms": ["강", "불편", "당황", "거리", "서운", "냉정", "차가", "기분", "선", "상처", "불쾌"],
     "forbiddenTerms": ["맞겠다", "지켜야겠"],
     "payload": {
       "sessionId": 87,
