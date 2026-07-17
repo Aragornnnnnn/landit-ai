@@ -365,10 +365,16 @@ def generate_message_feedback(
             request,
             resolved_settings,
         )
+        final_score_evidence = score_evidence
         copy_was_repaired = False
         copy_was_fallback = False
         try:
-            feedback, detected_patterns, copy_was_repaired = _review_message_feedback_copy(
+            (
+                feedback,
+                final_score_evidence,
+                detected_patterns,
+                copy_was_repaired,
+            ) = _review_message_feedback_candidate(
                 request,
                 candidate,
                 score_evidence,
@@ -395,7 +401,7 @@ def generate_message_feedback(
         _store_message_feedback(
             request.sessionId,
             feedback,
-            score_evidence=score_evidence,
+            score_evidence=final_score_evidence,
             user_message=request.userMessage,
             candidate_was_repaired=candidate_was_repaired,
             copy_was_repaired=copy_was_repaired,
@@ -468,13 +474,13 @@ def _generate_message_feedback_candidate(
         return feedback, score_evidence, detected_patterns, True
 
 
-def _review_message_feedback_copy(
+def _review_message_feedback_candidate(
     request: MessageFeedbackRequest,
     candidate: MessageFeedbackData,
     score_evidence: MessageFeedbackScoreEvidence,
     detected_patterns: Any,
     settings: Settings,
-) -> tuple[MessageFeedbackData, Any, bool]:
+) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any, bool]:
     reviewed_data: dict[str, Any] | None = None
     try:
         reviewed_data = _request_json_completion(
@@ -490,12 +496,14 @@ def _review_message_feedback_copy(
             ),
             max_tokens=768,
         )
-        feedback, reviewed_patterns = _parse_message_feedback_copy(
-            reviewed_data,
-            request,
-            score_evidence,
+        feedback, reviewed_evidence, reviewed_patterns = (
+            _parse_message_feedback_candidate(
+                reviewed_data,
+                request,
+                reject_generic_placeholder=True,
+            )
         )
-        return feedback, reviewed_patterns, False
+        return feedback, reviewed_evidence, reviewed_patterns, False
     except AiResponseInvalidError as exc:
         if reviewed_data is None:
             raise
@@ -520,17 +528,21 @@ def _review_message_feedback_copy(
             ),
             max_tokens=768,
         )
-        feedback, reviewed_patterns = _parse_message_feedback_copy(
-            repaired_data,
-            request,
-            score_evidence,
+        feedback, reviewed_evidence, reviewed_patterns = (
+            _parse_message_feedback_candidate(
+                repaired_data,
+                request,
+                reject_generic_placeholder=True,
+            )
         )
-        return feedback, reviewed_patterns, True
+        return feedback, reviewed_evidence, reviewed_patterns, True
 
 
 def _parse_message_feedback_candidate(
     data: dict[str, Any],
     request: MessageFeedbackRequest,
+    *,
+    reject_generic_placeholder: bool = False,
 ) -> tuple[MessageFeedbackData, MessageFeedbackScoreEvidence, Any]:
     candidate_data = dict(data)
     detected_patterns = candidate_data.pop("detectedPatterns", None)
@@ -552,30 +564,9 @@ def _parse_message_feedback_candidate(
     _validate_spoken_message_feedback(
         feedback,
         request.userMessage,
-        reject_generic_placeholder=False,
+        reject_generic_placeholder=reject_generic_placeholder,
     )
     return feedback, score_evidence, detected_patterns
-
-
-def _parse_message_feedback_copy(
-    data: dict[str, Any],
-    request: MessageFeedbackRequest,
-    score_evidence: MessageFeedbackScoreEvidence,
-) -> tuple[MessageFeedbackData, Any]:
-    copy_data = dict(data)
-    detected_patterns = copy_data.pop("detectedPatterns", None)
-    copy_data = _normalize_message_feedback_placeholders(copy_data)
-    try:
-        copy = MessageFeedbackContent.model_validate(copy_data)
-        feedback = _assemble_message_feedback(
-            copy,
-            message_id=request.messageId,
-            score_evidence=score_evidence,
-        )
-    except ValidationError as exc:
-        raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
-    _validate_spoken_message_feedback(feedback, request.userMessage)
-    return feedback, detected_patterns
 
 
 def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, Any]:
@@ -1519,7 +1510,8 @@ def _session_feedback_system_prompt() -> str:
             "Do not invent a new percentage hook that is not present in cached benchmarkMessage. "
             "If Allowed quantitative highlight candidates JSON is empty, highlightMessage must not contain %, 퍼센트, or count-based claims. "
             "When allowed candidates exist, copy one candidate exactly. "
-            "When no quantitative candidate exists, use repeated concrete themes from the cached feedback without adding numbers."
+            "When no quantitative candidate exists, use repeated concrete themes from the cached feedback without adding numbers. "
+            "When the NEEDS_IMPROVEMENT count is greater than 0, do not claim that every answer was natural or perfect."
         ),
         (
             "Summary Policy:\n"
@@ -1528,6 +1520,7 @@ def _session_feedback_system_prompt() -> str:
             "Mention what the learner did well and, if needed, one broad improvement direction based only on cached feedback. "
             "When Cached message feedback counts has GOOD=0, do not say the learner did well overall or completed the questions well. "
             "In that case, acknowledge only a concrete strength present in cached feedback, such as responding to the question or being understandable, and focus the summary on one improvement direction. "
+            "When any message needs improvement, take strengths only from cached GOOD feedback or factual positiveFeedback and keep one improvement direction consistent with correctionReason. "
             "Do not introduce corrections or examples that are not present in cached message feedback."
         ),
         (
@@ -1649,6 +1642,8 @@ def _message_feedback_system_prompt(
             f"{CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE} "
             "Include the missing topic in the placeholder label, for example [your travel document] rather than [your document]. "
             "When a self-introduction question asks for a name and more information, and the user gives only a name, use [your hobby] for the missing detail. "
+            "An open self-introduction is complete when the learner gives a name and at least one concrete personal detail; do not require a hobby specifically. "
+            "Ignore immediate repeated words caused by spontaneous speech or speech recognition, then evaluate the remaining utterance for real grammar, clarity, and context issues. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. Preserve the user's meaning, intent, tense, and negation. "
             "For any multi-part question, score contextFit as 2 only when every independent requested part is answered. "
             "A yes-or-no answer to one question does not answer a separate open-ended question. "
@@ -1671,7 +1666,7 @@ def _message_feedback_system_prompt(
             "For an incomplete self-introduction, write \"안녕하세요, 제 이름은 상민이에요\"라고 이름만 말하고 자기소개를 멈춘 것과 같아요, not 자기소개가 부족하니 내용을 더 말해야 해요. "
             "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
-            "correctionReason is natural Korean. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
+            "correctionReason is natural Korean and must explain the actual change in correctionExpression. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
             "detectedPatterns is internal-only. Include an item only when its evidence is an exact substring of the user utterance."
         ),
         (
@@ -1754,9 +1749,11 @@ def _message_feedback_review_system_prompt(
         _shared_safety_policy(),
         (
             "Review Task:\n"
-            "Review the candidate against the original request and return only the learner-facing copy fields. The supplied scoreEvidence and feedbackType are locked by the server; do not return or change them. "
-            "Preserve valid fields and rewrite any invalid field. Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
+            "Independently review the candidate against the original request and return one complete replacement candidate. Re-evaluate scoreEvidence instead of accepting the candidate scores. The server derives feedbackType from your final scoreEvidence, so do not return feedbackType. "
+            "First identify every independent part requested by the current evaluation context. Second check which parts the user actually answered. Third distinguish fillers, self-corrections, and immediate repeated words from meaning or grammar errors. Fourth ignore those speech artifacts and evaluate the remaining utterance for real context, clarity, and language issues. Fifth assign final scoreEvidence and write matching learner-facing fields. Sixth verify that correctionReason describes the actual change in correctionExpression. "
+            "Preserve valid candidate fields and rewrite any invalid field. Do not invent names, places, hobbies, feelings, habits, experiences, or reasons. "
             "Do not lower contextFit because a relevant reason is simple or vague; lower it only when a requested part is absent. "
+            "An open self-introduction is complete when the learner gives a name and at least one concrete personal detail; do not require a hobby specifically. "
             "Preserve the user's meaning, intent, tense, and negation. When information needed to answer is unavailable, use a [your ...] placeholder in correctionExpression. "
             "Use only the exact placeholder form [your hobby], [your reason], or another [your ...] label; never use [hobby] or [reason], and not a generic label such as information, detail, or document. "
             f"{CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE} "
@@ -1766,7 +1763,7 @@ def _message_feedback_review_system_prompt(
             "Do not mention capitalization, commas, periods, uppercase, lowercase, or punctuation as a learner-facing improvement reason. "
             "For example, like to watch and like watching are both acceptable; do not treat either form as an error. "
             "For NEEDS_IMPROVEMENT, give one most important improvement. "
-            "When the locked type is NEEDS_IMPROVEMENT because only part of a multi-part question was answered, keep the correction focused on the missing open-ended answer. "
+            "When NEEDS_IMPROVEMENT is caused by only part of a multi-part question being answered, keep the correction focused on the missing open-ended answer. "
             "When the user answers only part of a multi-part question, help them complete the one most important missing part and do not list other missing parts in correctionReason. "
             "Do not make a punctuation or spacing change the only correction. "
             "For a cleaning-preference question, if the user says I don't know, a natural correction is I'm not sure yet. I prefer to split the cleaning [your preferred way]. "
@@ -1779,6 +1776,7 @@ def _message_feedback_review_system_prompt(
         ),
         (
             "Field Policy:\n"
+            "All three scoreEvidence values are integers from 0 to 2. The server derives feedbackType from scoreEvidence, so do not return feedbackType. "
             "baseLocaleAnalogy is required and must compare the user's English with one quoted Korean utterance using the form \"<Korean utterance>\"라고 ... 것과 같아요. Preserve the same naturalness or the same issue. "
             "It is not direct feedback or advice: do not explain what is missing or tell the learner what to say. Do not include 한국어로 치면, 한국어로는, or 한국어로도. "
             "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
@@ -1786,6 +1784,7 @@ def _message_feedback_review_system_prompt(
             "For GOOD, positiveFeedback, correctionExpression, and correctionReason are null, feedbackDetail is required, and benchmarkMessage is a short non-quantitative Korean message or null. "
             "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required, feedbackDetail and benchmarkMessage are null. "
             "correctionExpression contains one English expression only. "
+            "correctionReason must explain the actual change in correctionExpression. "
             "Use the JSON literal null for a missing field. Never return the string \"null\". "
             "detectedPatterns is internal-only. Include it only when evidence is copied exactly from the user utterance."
         ),
@@ -1800,7 +1799,7 @@ def _message_feedback_review_system_prompt(
         (
             "Output Schema:\n"
             "Return ONLY one JSON object with this exact schema: "
-            '{"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
+            '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.","positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null","correctionExpression":"English text or null","correctionReason":"Korean text or null","benchmarkMessage":"Korean text or null","detectedPatterns":[{"errorType":"catalog pattern id","status":"correct","evidence":"exact user substring"}]}. '
             "Use the JSON literal null for absent fields."
         ),
         f"Evaluation context type: {evaluation_context_type}",
@@ -1817,9 +1816,9 @@ def _message_feedback_review_user_prompt(
         f"{_message_feedback_user_prompt(request)}\n\n"
         "Candidate JSON:\n"
         f"{candidate.model_dump_json(by_alias=True)}\n\n"
-        "Locked score evidence:\n"
+        "Candidate score evidence:\n"
         f"{score_evidence.model_dump_json()}\n\n"
-        "Locked feedback type:\n"
+        "Candidate feedback type:\n"
         f"{candidate.feedbackType.value}\n\n"
         "Candidate detected patterns:\n"
         f"{json.dumps(detected_patterns, ensure_ascii=False, separators=(',', ':'))}"
