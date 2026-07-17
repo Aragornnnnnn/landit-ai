@@ -169,7 +169,14 @@ def _evaluate_feedback_case(
     request = MessageFeedbackRequest.model_validate(case["payload"])
     clear_message_feedback_cache()
     try:
-        generate_message_feedback(request, settings)
+        response = generate_message_feedback(request, settings)
+        if response.feedbackStatus.value == "FAILED":
+            return _feedback_evaluation_error_result(
+                case,
+                run,
+                AiGenerationFailedError("message_feedback_failed"),
+                feedback_status=response.feedbackStatus.value,
+            )
         feedback_entry = _get_expected_message_feedback_entries(
             request.sessionId,
             [request.messageId],
@@ -227,6 +234,7 @@ def _evaluate_feedback_case(
         "caseId": case["caseId"],
         "kind": "message-feedback",
         "run": run,
+        "feedbackStatus": response.feedbackStatus.value,
         "expectedFeedbackType": expected_feedback_type,
         "feedbackType": feedback_type,
         "candidateWasRepaired": feedback_entry.candidate_was_repaired,
@@ -284,11 +292,14 @@ def _feedback_evaluation_error_result(
     case: dict[str, Any],
     run: int,
     error: Exception,
+    *,
+    feedback_status: str | None = None,
 ) -> dict[str, Any]:
     return {
         "caseId": case["caseId"],
         "kind": "message-feedback",
         "run": run,
+        "feedbackStatus": feedback_status,
         "expectedFeedbackType": case.get("expectedFeedbackType"),
         "feedbackType": None,
         "candidateWasRepaired": None,
@@ -314,7 +325,11 @@ def _feedback_evaluation_error_result(
         "foundForbiddenFeedbackTerms": [],
         "feedbackTextMatchesExpectation": False,
         "validationError": type(error).__name__,
-        "validationReason": getattr(error, "reason", type(error).__name__),
+        "validationReason": (
+            getattr(error, "reason", None)
+            or str(error)
+            or type(error).__name__
+        ),
     }
 
 

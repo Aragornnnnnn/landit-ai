@@ -867,6 +867,7 @@ class QualityEvaluationTests(unittest.TestCase):
             )
 
         self.assertEqual(results[0]["feedbackType"], "GOOD")
+        self.assertEqual(results[0]["feedbackStatus"], "PREPARING")
         self.assertEqual(results[0]["expectedFeedbackType"], "GOOD")
         self.assertTrue(results[0]["feedbackTypeMatchesExpectation"])
         self.assertEqual(results[0]["expectedContextFit"], 2)
@@ -1063,4 +1064,25 @@ class QualityEvaluationTests(unittest.TestCase):
 
         self.assertEqual(results[0]["validationError"], "AiResponseInvalidError")
         self.assertEqual(results[0]["validationReason"], "test_validation_reason")
+        self.assertIsNone(results[0]["finalFeedback"])
+
+    def test_feedback_result_records_failed_status_without_aborting_batch(self):
+        with patch(
+            "scripts.evaluate_conversation_quality.generate_message_feedback",
+            return_value=MessageFeedbackResponse(
+                sessionId=200,
+                messageId=2001,
+                feedbackStatus=FeedbackStatus.FAILED,
+            ),
+        ):
+            results = evaluate_cases(
+                [feedback_case()],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(results[0]["feedbackStatus"], "FAILED")
+        self.assertEqual(results[0]["validationError"], "AiGenerationFailedError")
+        self.assertEqual(results[0]["validationReason"], "message_feedback_failed")
         self.assertIsNone(results[0]["finalFeedback"])
