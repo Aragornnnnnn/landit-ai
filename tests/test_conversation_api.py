@@ -3404,7 +3404,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
     def _cache_feedback(self, app, feedback, *, user_message=None):
         feedback = dict(feedback)
-        if feedback["scoreEvidence"]["contextFit"] < 2:
+        if (
+            feedback["scoreEvidence"]["contextFit"] < 2
+            and not feedback.get("correctionExpression")
+        ):
             feedback["correctionExpression"] = (
                 "My phone number is [your phone number]."
             )
@@ -3470,6 +3473,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "clarity": 2,
             "languageAccuracy": 2,
         }
+        feedback["correctionExpression"] = (
+            "My phone number is [your phone number]."
+        )
         self._cache_feedback(app, feedback, user_message="I like soccer.")
 
         response = self._request_session_feedback(app, [1001])
@@ -3486,6 +3492,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "clarity": 0,
             "languageAccuracy": 0,
         }
+        feedback["correctionExpression"] = (
+            "My phone number is [your phone number]."
+        )
         self._cache_feedback(app, feedback, user_message="...")
 
         response = self._request_session_feedback(app, [1001])
@@ -3504,6 +3513,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "clarity": 2,
             "languageAccuracy": 2,
         }
+        irrelevant["correctionExpression"] = (
+            "My phone number is [your phone number]."
+        )
         self._cache_feedback(app, perfect)
         self._cache_feedback(app, minor_issue)
         self._cache_feedback(app, irrelevant)
