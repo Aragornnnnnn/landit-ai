@@ -541,6 +541,110 @@ class NextMessageApiTests(unittest.TestCase):
             "맛있겠다. 또 뭘 좋아해? 요리는 자주 해?",
         )
 
+    def test_next_message_removes_adjacent_repeated_sentences(self):
+        repeated_message = (
+            "I'm such a night owl, it's a problem. "
+            "What's your whole daily rhythm like — when are you up, when do you crash?"
+        )
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "aiMessage": f"{repeated_message} {repeated_message}",
+                    "translatedMessage": (
+                        "난 완전 올빼미형이라 문제야. 하루 일과는 어때?"
+                        "난 완전 올빼미형이라 문제야. 하루 일과는 어때?"
+                    ),
+                    "goalCompletionStatus": "PARTIAL",
+                },
+            ),
+        )
+        payload = valid_next_message_payload()
+        payload["nextQuestion"]["questionEn"] = (
+            "What's your whole daily rhythm like — when are you up, when do you crash?"
+        )
+        payload["nextQuestion"]["questionKo"] = "하루 일과는 어때?"
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/next-message",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["aiMessage"], repeated_message)
+        self.assertEqual(
+            response.json()["data"]["translatedMessage"],
+            "난 완전 올빼미형이라 문제야. 하루 일과는 어때?",
+        )
+
+    def test_next_message_prompt_keeps_counterpart_role_after_short_acceptance(self):
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "aiMessage": "Thanks. What brings you here today?",
+                    "translatedMessage": "고마워. 오늘은 무슨 일로 왔어?",
+                    "goalCompletionStatus": "PARTIAL",
+                },
+            ),
+        )
+        payload = valid_next_message_payload()
+        payload["scenario"]["counterpartRole"] = "Jordan, another cafe customer"
+        payload["conversationHistory"] = [
+            {
+                "messageId": 1000,
+                "turnNumber": 1,
+                "role": "AI",
+                "content": "Is this seat taken? Do you mind if I sit here?",
+                "translatedContent": "이 자리 비었나요? 여기 앉아도 될까요?",
+            },
+            {
+                "messageId": 1001,
+                "turnNumber": 1,
+                "role": "USER",
+                "content": "Sure.",
+                "translatedContent": None,
+            },
+        ]
+        payload["nextQuestion"] = {
+            "questionId": 2000,
+            "sequence": 2,
+            "questionEn": "What brings you here today?",
+            "questionKo": "오늘은 무슨 일로 왔어?",
+        }
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/next-message",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.kwargs["messages"][0]["content"]
+        self.assertIn(
+            "Speak only as the provided counterpart role.",
+            system_prompt,
+        )
+        self.assertIn(
+            "Never reverse requester and responder roles, even after a short reply such as 'Sure'.",
+            system_prompt,
+        )
+        self.assertIn(
+            "Do not stack equivalent reactions such as 'Thanks, I appreciate it'.",
+            system_prompt,
+        )
+
     def test_next_message_generation_failure_returns_503(self):
         fake_openai = FakeOpenAI(error=RuntimeError("network failed"))
         app = create_app(
