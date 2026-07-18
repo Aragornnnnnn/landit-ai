@@ -35,6 +35,7 @@ from app.models.conversation import (
     MessageFeedbackData,
     MessageFeedbackCoverageStatus,
     MessageFeedbackIssueDimension,
+    MessageFeedbackPrimaryDimension,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -92,6 +93,7 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
         error_type = raw_pattern.get("error_type")
         description = raw_pattern.get("display_name")
         feedback_copy = raw_pattern.get("feedback_copy")
+        example_right = raw_pattern.get("example_right")
         source = raw_pattern.get("source")
         if (
             not isinstance(error_type, str)
@@ -101,6 +103,8 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
             or not isinstance(raw_pattern.get("gamifiable"), bool)
             or not isinstance(feedback_copy, str)
             or not feedback_copy.strip()
+            or not isinstance(example_right, str)
+            or not example_right.strip()
             or not isinstance(source, str)
             or not source.strip()
         ):
@@ -109,6 +113,7 @@ def _load_benchmark_pattern_catalog() -> dict[str, dict[str, Any]]:
             "description": description,
             "gamifiable": raw_pattern["gamifiable"],
             "benchmarkMessage": _benchmark_message_from_feedback_copy(feedback_copy),
+            "exampleRight": example_right,
             "source": source,
         }
     return catalog
@@ -701,6 +706,54 @@ def _validate_message_feedback_adjudication(
     for score, dimension, reason in score_dimensions:
         if (score == 2) == (dimension in issue_dimensions):
             raise AiResponseInvalidError(reason)
+    _validate_primary_feedback_dimension(candidate)
+
+
+def _validate_primary_feedback_dimension(
+    candidate: MessageFeedbackCandidate,
+) -> None:
+    primary = candidate.primaryFeedbackDimension
+    scores = candidate.scoreEvidence
+    if _feedback_type_from_score_evidence(scores) == FeedbackType.GOOD:
+        if primary != MessageFeedbackPrimaryDimension.NONE:
+            raise AiResponseInvalidError("message_feedback_good_primary_dimension")
+        return
+    if primary == MessageFeedbackPrimaryDimension.NONE:
+        raise AiResponseInvalidError("message_feedback_missing_primary_dimension")
+
+    if primary == MessageFeedbackPrimaryDimension.CONTEXT_FIT:
+        has_missing_coverage = any(
+            item.status == MessageFeedbackCoverageStatus.MISSING
+            for item in candidate.coverageEvidence
+        )
+        placeholder_labels = correction_expression_placeholder_labels(
+            candidate.correctionExpression or "",
+        )
+        if scores.contextFit == 2 or not has_missing_coverage or not placeholder_labels:
+            raise AiResponseInvalidError("message_feedback_context_primary_dimension")
+        return
+
+    issue_dimension = MessageFeedbackIssueDimension(primary.value)
+    score = (
+        scores.clarity
+        if issue_dimension == MessageFeedbackIssueDimension.CLARITY
+        else scores.languageAccuracy
+    )
+    issue = next(
+        (
+            item
+            for item in candidate.actionableIssues
+            if item.dimension == issue_dimension
+        ),
+        None,
+    )
+    if (
+        score == 2
+        or issue is None
+        or _normalize_spoken_form(issue.correctionExcerpt)
+        not in _normalize_spoken_form(candidate.correctionExpression or "")
+    ):
+        raise AiResponseInvalidError("message_feedback_actionable_primary_dimension")
 
 
 def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, Any]:
@@ -755,6 +808,7 @@ def _assemble_message_feedback(
     feedback_values = content.model_dump(
         exclude={
             "scoreEvidence",
+            "primaryFeedbackDimension",
             "coverageEvidence",
             "ignoredSpeechArtifacts",
             "actionableIssues",
@@ -1199,11 +1253,6 @@ def _postprocess_message_feedback_benchmark(
     )
     if catalog_message is not None:
         return _with_benchmark_message(feedback, catalog_message)
-    if (
-        feedback.benchmarkMessage is not None
-        and not _contains_unverified_quantitative_claim(feedback.benchmarkMessage)
-    ):
-        return feedback
     return _with_benchmark_message(feedback, _DEFAULT_GOOD_BENCHMARK_MESSAGE)
 
 
@@ -1228,6 +1277,12 @@ def _benchmark_message_from_detected_patterns(
             continue
         catalog_pattern = _BENCHMARK_PATTERN_CATALOG.get(error_type)
         if catalog_pattern is None or catalog_pattern.get("gamifiable") is not True:
+            continue
+        example_right = catalog_pattern.get("exampleRight")
+        if not isinstance(example_right, str):
+            continue
+        normalized_example_right = _normalize_spoken_form(example_right)
+        if normalized_example_right not in _normalize_spoken_form(user_message):
             continue
         normalized_evidence = _normalize_evidence(evidence)
         if not normalized_evidence or normalized_evidence not in normalized_user_message:
@@ -1743,13 +1798,30 @@ def _message_feedback_evidence_policy() -> str:
         "clarity below 2 requires a CLARITY issue, and clarity 2 requires no CLARITY issue. "
         "languageAccuracy below 2 requires a LANGUAGE_ACCURACY issue, and languageAccuracy 2 requires no LANGUAGE_ACCURACY issue. "
         "Use at most one actionable issue per dimension. "
-        "A grammatical, understandable expression is not actionable merely because another form is more common, concise, frequent, idiomatic, or natural."
+        "A clear lexical or collocation error is actionable even when a listener can infer the intended meaning; being understandable does not make a definite error acceptable. "
+        "Do not mislabel a definite lexical or collocation error as a style or idiomaticity preference. "
+        "A grammatical, understandable expression is not actionable merely because another form is more common, concise, frequent, idiomatic, or natural. "
+        "Boundary examples: My contact number will be in your customer ID contains a definite word-choice or semantic-relation error. "
+        "For that example, use correctionExcerpt \"My contact number is linked to my customer ID\" and include it unchanged in correctionExpression. "
+        "Another option about this situation contains a definite collocation error; use another option for this situation. "
+        "When the utterance contains \"another option about this situation\", never return GOOD; set languageAccuracy to 1, use that exact phrase as sourceExcerpt, and use correctionExcerpt \"another option for this situation\". "
+        "A dependent fragment such as In the early morning, because is actionable when it breaks the sentence. "
+        "For the full fragment example, use sourceExcerpt \"In the early morning, because I can't wake up early.\" exactly. "
+        "Use correctionExcerpt \"I don't want you to wake me up early because I can't wake up early.\" and include it unchanged in correctionExpression. "
+        "Explain the fragment as clause structure, never as punctuation or capitalization. "
+        'Expected scoreEvidence for each of the first three error examples is {"contextFit":2,"clarity":2,"languageAccuracy":1}; '
+        "do not return GOOD, and include one matching LANGUAGE_ACCURACY actionable issue whose correctionExcerpt appears in correctionExpression. "
+        "It's nice place has a definite article omission, but a following reason still satisfies a request for why, so keep contextFit at 2 and lower languageAccuracy. "
+        "An immediate repetition such as I I like Lego is an ignored speech artifact when the remaining utterance is correct. "
+        "Set primaryFeedbackDimension to NONE for GOOD. For NEEDS_IMPROVEMENT, select one low-scoring dimension as the one primary improvement. "
+        "correctionExpression and correctionReason must address only primaryFeedbackDimension and must not silently rewrite unrelated parts."
     )
 
 
 def _message_feedback_output_schema() -> str:
     return (
         '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},'
+        '"primaryFeedbackDimension":"NONE or CONTEXT_FIT or CLARITY or LANGUAGE_ACCURACY",'
         '"coverageEvidence":[{"requestExcerpt":"exact evaluation context substring",'
         '"answerExcerpt":"exact user substring or null","status":"ANSWERED or MISSING"}],'
         '"ignoredSpeechArtifacts":["exact user substring"],'
@@ -1878,6 +1950,49 @@ def _message_feedback_repair_user_prompt(
 
 def _message_feedback_repair_instruction(error: Exception) -> str:
     reason = getattr(error, "reason", type(error).__name__)
+    evidence_instructions = {
+        "message_feedback_context_evidence": (
+            "contextFit is 2 only when every coverageEvidence item is ANSWERED; "
+            "contextFit below 2 requires at least one MISSING item."
+        ),
+        "message_feedback_clarity_evidence": (
+            "clarity below 2 requires one CLARITY actionable issue; "
+            "clarity 2 requires none. Copy sourceExcerpt exactly from the user utterance."
+        ),
+        "message_feedback_language_accuracy_evidence": (
+            "languageAccuracy below 2 requires one LANGUAGE_ACCURACY actionable issue; "
+            "languageAccuracy 2 requires none. Copy sourceExcerpt exactly from the user utterance."
+        ),
+        "message_feedback_actionable_primary_dimension": (
+            "Choose a low-scoring CLARITY or LANGUAGE_ACCURACY dimension with a matching actionable issue, "
+            "and correctionExpression must include that issue's correctionExcerpt."
+        ),
+        "message_feedback_good_primary_dimension": (
+            "GOOD requires primaryFeedbackDimension NONE and all scoreEvidence values equal to 2."
+        ),
+        "message_feedback_missing_primary_dimension": (
+            "NEEDS_IMPROVEMENT requires one low-scoring primaryFeedbackDimension; "
+            "do not use NONE."
+        ),
+        "message_feedback_context_primary_dimension": (
+            "CONTEXT_FIT requires contextFit below 2, at least one MISSING coverage item, "
+            "and a specific [your ...] placeholder in correctionExpression."
+        ),
+        "message_feedback_actionable_issue_evidence": (
+            "Every actionable issue sourceExcerpt must be copied exactly from the user utterance; "
+            "do not paraphrase it or change punctuation."
+        ),
+        "message_feedback_written_form_feedback": (
+            "Remove every reference to punctuation, capitalization, commas, periods, uppercase, or lowercase. "
+            "Explain only the spoken grammar or word-choice issue."
+        ),
+        "message_feedback_spoken_form_only": (
+            "correctionExpression must change spoken words or word order, not only punctuation or capitalization. "
+            "Use the actionable issue correctionExcerpt unchanged inside correctionExpression."
+        ),
+    }
+    if reason in evidence_instructions:
+        return f"{reason}: {evidence_instructions[reason]}"
     if "correctionExpression placeholders must use" in reason:
         return (
             "correctionExpression has an invalid placeholder. "
