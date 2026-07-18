@@ -3318,6 +3318,11 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
 
     def _cache_feedback(self, app, feedback, *, user_message=None):
+        feedback = dict(feedback)
+        if feedback["scoreEvidence"]["contextFit"] < 2:
+            feedback["correctionExpression"] = (
+                "My phone number is [your phone number]."
+            )
         payload = valid_message_feedback_payload()
         payload["messageId"] = feedback["messageId"]
         if user_message is not None:
