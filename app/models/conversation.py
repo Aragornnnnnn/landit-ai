@@ -190,6 +190,13 @@ class MessageFeedbackIssueDimension(StrEnum):
     LANGUAGE_ACCURACY = "LANGUAGE_ACCURACY"
 
 
+class MessageFeedbackPrimaryDimension(StrEnum):
+    NONE = "NONE"
+    CONTEXT_FIT = "CONTEXT_FIT"
+    CLARITY = "CLARITY"
+    LANGUAGE_ACCURACY = "LANGUAGE_ACCURACY"
+
+
 class EvaluationContextType(StrEnum):
     AI_MESSAGE = "AI_MESSAGE"
     SCENARIO_OPENING_INSTRUCTION = "SCENARIO_OPENING_INSTRUCTION"
@@ -523,6 +530,7 @@ class MessageFeedbackAdjudicationEvidence(BaseModel):
 
 class MessageFeedbackCandidate(MessageFeedbackContent):
     scoreEvidence: MessageFeedbackScoreEvidence
+    primaryFeedbackDimension: MessageFeedbackPrimaryDimension
     coverageEvidence: list[MessageFeedbackCoverageEvidence] = Field(min_length=1)
     ignoredSpeechArtifacts: list[str]
     actionableIssues: list[MessageFeedbackActionableIssue]

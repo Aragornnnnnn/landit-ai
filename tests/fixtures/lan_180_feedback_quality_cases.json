@@ -1,0 +1,170 @@
+[
+  {
+    "caseId": "lan180-contact-number-word-choice",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [70, 85],
+    "expectedMissingCoverageCount": 0,
+    "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
+    "payload": {
+      "sessionId": 180,
+      "messageId": 1801,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 180,
+        "title": "수하물 파손 신고",
+        "briefing": "공항 직원에게 파손된 수하물 정보를 전달합니다.",
+        "conversationGoal": "연락처 정보를 분명하게 전달합니다.",
+        "counterpartRole": "baggage service agent"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Where can I find your contact number?",
+        "translatedContent": "연락처는 어디에서 확인할 수 있나요?"
+      },
+      "userMessage": "My contact number will be in your customer ID, so you can just use that."
+    }
+  },
+  {
+    "caseId": "lan180-baggage-collocation",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [70, 85],
+    "expectedMissingCoverageCount": 0,
+    "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
+    "payload": {
+      "sessionId": 180,
+      "messageId": 1802,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 180,
+        "title": "수하물 파손 신고",
+        "briefing": "공항 직원에게 파손 상황과 원하는 조치를 설명합니다.",
+        "conversationGoal": "문제와 요청을 자연스럽게 전달합니다.",
+        "counterpartRole": "baggage service agent"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What happened to your luggage, and what would you like us to do?",
+        "translatedContent": "수하물에 무슨 일이 있었고 어떤 조치를 원하시나요?"
+      },
+      "userMessage": "My luggage bag is broken. Can I get a refund or another option about this situation?"
+    }
+  },
+  {
+    "caseId": "lan180-fragmented-morning-rule",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [50, 85],
+    "expectedMissingCoverageCount": 0,
+    "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
+    "payload": {
+      "sessionId": 180,
+      "messageId": 1803,
+      "turnNumber": 3,
+      "messageSequence": 6,
+      "scenario": {
+        "scenarioId": 181,
+        "title": "룸메이트 생활 규칙 정하기",
+        "briefing": "룸메이트와 서로 조심할 점을 이야기합니다.",
+        "conversationGoal": "생활 규칙을 분명하게 설명합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What should I be careful about as your roommate?",
+        "translatedContent": "룸메이트로서 무엇을 조심해야 할까?"
+      },
+      "userMessage": "I don't want you to wake me up in the morning. In the early morning, because I can't wake up early."
+    }
+  },
+  {
+    "caseId": "lan180-busan-reason-already-present",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [70, 85],
+    "expectedMissingCoverageCount": 0,
+    "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
+    "forbiddenFeedbackTerms": ["[your reason]", "이유가 빠"],
+    "payload": {
+      "sessionId": 180,
+      "messageId": 1804,
+      "turnNumber": 4,
+      "messageSequence": 8,
+      "scenario": {
+        "scenarioId": 182,
+        "title": "한국 여행지 추천",
+        "briefing": "친구에게 한국 여행지를 추천합니다.",
+        "conversationGoal": "장소와 추천 이유를 함께 설명합니다.",
+        "counterpartRole": "friend"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Tell me your must-visit spot in Korea and why I should go.",
+        "translatedContent": "한국에서 꼭 가야 할 곳과 그 이유를 말해 줘."
+      },
+      "userMessage": "I highly recommend Busan. It's nice place. You can enjoy the ocean, temples, and beautiful mountains in one city."
+    }
+  },
+  {
+    "caseId": "lan180-immediate-repetition",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "expectedMissingCoverageCount": 0,
+    "forbiddenActionableSourceTerms": ["I I"],
+    "payload": {
+      "sessionId": 180,
+      "messageId": 1805,
+      "turnNumber": 5,
+      "messageSequence": 10,
+      "scenario": {
+        "scenarioId": 183,
+        "title": "취미 이야기하기",
+        "briefing": "룸메이트와 좋아하는 취미를 이야기합니다.",
+        "conversationGoal": "좋아하는 활동을 자연스럽게 말합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What are you into these days?",
+        "translatedContent": "요즘 무엇에 관심 있어?"
+      },
+      "userMessage": "Well, I I like Lego."
+    }
+  },
+  {
+    "caseId": "lan180-natural-self-introduction",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "expectedMissingCoverageCount": 0,
+    "payload": {
+      "sessionId": 180,
+      "messageId": 1806,
+      "turnNumber": 6,
+      "messageSequence": 12,
+      "scenario": {
+        "scenarioId": 184,
+        "title": "룸메이트와 첫 만남",
+        "briefing": "새 룸메이트에게 자신을 소개합니다.",
+        "conversationGoal": "이름과 인사를 자연스럽게 전달합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What's your name? Tell me a little about yourself.",
+        "translatedContent": "이름이 뭐야? 간단히 소개해 줘."
+      },
+      "userMessage": "Hi, Charlie. Nice to meet you. I'm Jenny, and I'm from Korea. How are you?"
+    }
+  }
+]
