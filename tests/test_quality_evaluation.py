@@ -141,6 +141,29 @@ def feedback_session_case():
 
 
 class QualityEvaluationTests(unittest.TestCase):
+    def test_lan_180_feedback_fixture_covers_six_anonymized_regressions(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_180_feedback_quality_cases.json"
+        )
+
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(cases), 6)
+        self.assertTrue(all(case["kind"] == "message-feedback" for case in cases))
+        self.assertEqual(
+            {case["caseId"] for case in cases},
+            {
+                "lan180-contact-number-word-choice",
+                "lan180-baggage-collocation",
+                "lan180-fragmented-morning-rule",
+                "lan180-busan-reason-already-present",
+                "lan180-immediate-repetition",
+                "lan180-natural-self-introduction",
+            },
+        )
+
     def test_lan_175_session_fixture_preserves_supplied_messages(self):
         fixture_path = (
             Path(__file__).parent
