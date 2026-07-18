@@ -20,6 +20,7 @@ from app.models.conversation import (
     InnerThoughtResponse,
     MessageFeedbackAdjudicationEvidence,
     MessageFeedbackData,
+    MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
     SessionFeedbackResponse,
@@ -142,6 +143,7 @@ def feedback_session_case():
 
 class QualityEvaluationTests(unittest.TestCase):
     def test_lan_180_feedback_fixture_covers_six_anonymized_regressions(self):
+        """LAN-180 품질 fixture의 사례별 판정 계약을 고정한다."""
         fixture_path = (
             Path(__file__).parent
             / "fixtures"
@@ -152,17 +154,62 @@ class QualityEvaluationTests(unittest.TestCase):
 
         self.assertEqual(len(cases), 6)
         self.assertTrue(all(case["kind"] == "message-feedback" for case in cases))
-        self.assertEqual(
-            {case["caseId"] for case in cases},
-            {
-                "lan180-contact-number-word-choice",
-                "lan180-baggage-collocation",
-                "lan180-fragmented-morning-rule",
-                "lan180-busan-reason-already-present",
-                "lan180-immediate-repetition",
-                "lan180-natural-self-introduction",
+        expected_cases = {
+            "lan180-contact-number-word-choice": {
+                "feedbackType": "NEEDS_IMPROVEMENT",
+                "scoreRange": [70, 85],
+                "issueDimensions": ["LANGUAGE_ACCURACY"],
             },
-        )
+            "lan180-baggage-collocation": {
+                "feedbackType": "NEEDS_IMPROVEMENT",
+                "scoreRange": [70, 85],
+                "issueDimensions": ["LANGUAGE_ACCURACY"],
+            },
+            "lan180-fragmented-morning-rule": {
+                "feedbackType": "NEEDS_IMPROVEMENT",
+                "scoreRange": [50, 85],
+            },
+            "lan180-busan-reason-already-present": {
+                "feedbackType": "NEEDS_IMPROVEMENT",
+                "scoreRange": [70, 85],
+                "issueDimensions": ["LANGUAGE_ACCURACY"],
+                "forbiddenFeedbackTerms": ["[your reason]", "이유가 빠"],
+            },
+            "lan180-immediate-repetition": {
+                "feedbackType": "GOOD",
+                "scoreRange": [100, 100],
+                "forbiddenActionableSourceTerms": ["I I"],
+            },
+            "lan180-natural-self-introduction": {
+                "feedbackType": "GOOD",
+                "scoreRange": [100, 100],
+            },
+        }
+        self.assertEqual({case["caseId"] for case in cases}, set(expected_cases))
+        for case in cases:
+            expected = expected_cases[case["caseId"]]
+            self.assertEqual(
+                case["expectedFeedbackType"],
+                expected["feedbackType"],
+            )
+            self.assertEqual(
+                case["expectedMessageScoreRange"],
+                expected["scoreRange"],
+            )
+            self.assertEqual(case["expectedContextFit"], 2)
+            self.assertEqual(
+                case.get("expectedActionableIssueDimensions", []),
+                expected.get("issueDimensions", []),
+            )
+            self.assertEqual(
+                case.get("forbiddenFeedbackTerms", []),
+                expected.get("forbiddenFeedbackTerms", []),
+            )
+            self.assertEqual(
+                case.get("forbiddenActionableSourceTerms", []),
+                expected.get("forbiddenActionableSourceTerms", []),
+            )
+            MessageFeedbackRequest.model_validate(case["payload"])
 
     def test_lan_175_session_fixture_preserves_supplied_messages(self):
         fixture_path = (

@@ -2442,7 +2442,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
     def test_message_feedback_repair_explains_evidence_contract_failures(self):
         expected_instructions = {
             "message_feedback_context_evidence": "contextFit is 2 only when every coverageEvidence item is ANSWERED",
+            "message_feedback_clarity_evidence": "clarity below 2 requires one CLARITY actionable issue",
             "message_feedback_language_accuracy_evidence": "languageAccuracy below 2 requires one LANGUAGE_ACCURACY actionable issue",
+            "message_feedback_good_primary_dimension": "GOOD requires primaryFeedbackDimension NONE",
+            "message_feedback_missing_primary_dimension": "NEEDS_IMPROVEMENT requires one low-scoring primaryFeedbackDimension",
+            "message_feedback_context_primary_dimension": "CONTEXT_FIT requires contextFit below 2",
             "message_feedback_actionable_primary_dimension": "correctionExpression must include that issue's correctionExcerpt",
             "message_feedback_actionable_issue_evidence": "sourceExcerpt must be copied exactly from the user utterance",
             "message_feedback_written_form_feedback": "Remove every reference to punctuation",

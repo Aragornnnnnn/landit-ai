@@ -1955,6 +1955,10 @@ def _message_feedback_repair_instruction(error: Exception) -> str:
             "contextFit is 2 only when every coverageEvidence item is ANSWERED; "
             "contextFit below 2 requires at least one MISSING item."
         ),
+        "message_feedback_clarity_evidence": (
+            "clarity below 2 requires one CLARITY actionable issue; "
+            "clarity 2 requires none. Copy sourceExcerpt exactly from the user utterance."
+        ),
         "message_feedback_language_accuracy_evidence": (
             "languageAccuracy below 2 requires one LANGUAGE_ACCURACY actionable issue; "
             "languageAccuracy 2 requires none. Copy sourceExcerpt exactly from the user utterance."
@@ -1962,6 +1966,17 @@ def _message_feedback_repair_instruction(error: Exception) -> str:
         "message_feedback_actionable_primary_dimension": (
             "Choose a low-scoring CLARITY or LANGUAGE_ACCURACY dimension with a matching actionable issue, "
             "and correctionExpression must include that issue's correctionExcerpt."
+        ),
+        "message_feedback_good_primary_dimension": (
+            "GOOD requires primaryFeedbackDimension NONE and all scoreEvidence values equal to 2."
+        ),
+        "message_feedback_missing_primary_dimension": (
+            "NEEDS_IMPROVEMENT requires one low-scoring primaryFeedbackDimension; "
+            "do not use NONE."
+        ),
+        "message_feedback_context_primary_dimension": (
+            "CONTEXT_FIT requires contextFit below 2, at least one MISSING coverage item, "
+            "and a specific [your ...] placeholder in correctionExpression."
         ),
         "message_feedback_actionable_issue_evidence": (
             "Every actionable issue sourceExcerpt must be copied exactly from the user utterance; "
