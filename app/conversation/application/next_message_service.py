@@ -217,7 +217,11 @@ def _response_text(data: dict[str, Any], key: str, fallback: str) -> str:
 
 
 def _remove_adjacent_repeated_sentences(text: str) -> str:
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    """인접한 동일 문장 블록을 하나로 정리한다."""
+    sentences = re.split(
+        r"(?<=[.!?])(?:\s+|(?=[가-힣]))",
+        text.strip(),
+    )
     result: list[str] = []
     for sentence in sentences:
         result.append(sentence)

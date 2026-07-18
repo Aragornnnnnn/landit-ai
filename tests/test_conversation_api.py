@@ -551,7 +551,7 @@ class NextMessageApiTests(unittest.TestCase):
                 {
                     "aiMessage": f"{repeated_message} {repeated_message}",
                     "translatedMessage": (
-                        "난 완전 올빼미형이라 문제야. 하루 일과는 어때? "
+                        "난 완전 올빼미형이라 문제야. 하루 일과는 어때?"
                         "난 완전 올빼미형이라 문제야. 하루 일과는 어때?"
                     ),
                     "goalCompletionStatus": "PARTIAL",
