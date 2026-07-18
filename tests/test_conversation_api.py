@@ -3404,7 +3404,11 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
     def _cache_feedback(self, app, feedback, *, user_message=None):
         feedback = dict(feedback)
-        if feedback["scoreEvidence"]["contextFit"] < 2:
+        provided_correction_expression = feedback.get("correctionExpression")
+        if (
+            feedback["scoreEvidence"]["contextFit"] < 2
+            and not feedback.get("correctionExpression")
+        ):
             feedback["correctionExpression"] = (
                 "My phone number is [your phone number]."
             )
@@ -3419,6 +3423,13 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 json=payload,
             )
         self.assertEqual(response.status_code, 202)
+        if provided_correction_expression is not None:
+            cached_feedback = get_cached_message_feedback(100, feedback["messageId"])
+            self.assertIsNotNone(cached_feedback)
+            self.assertEqual(
+                cached_feedback.correctionExpression,
+                provided_correction_expression,
+            )
 
     def _request_session_feedback(self, app, expected_message_ids):
         payload = valid_session_feedback_payload()
@@ -3470,6 +3481,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "clarity": 2,
             "languageAccuracy": 2,
         }
+        feedback["correctionExpression"] = (
+            "My phone number is [your requested phone number]."
+        )
         self._cache_feedback(app, feedback, user_message="I like soccer.")
 
         response = self._request_session_feedback(app, [1001])
@@ -3486,6 +3500,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "clarity": 0,
             "languageAccuracy": 0,
         }
+        feedback["correctionExpression"] = (
+            "My phone number is [your requested phone number]."
+        )
         self._cache_feedback(app, feedback, user_message="...")
 
         response = self._request_session_feedback(app, [1001])
@@ -3504,6 +3521,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "clarity": 2,
             "languageAccuracy": 2,
         }
+        irrelevant["correctionExpression"] = (
+            "My phone number is [your requested phone number]."
+        )
         self._cache_feedback(app, perfect)
         self._cache_feedback(app, minor_issue)
         self._cache_feedback(app, irrelevant)
