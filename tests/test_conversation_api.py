@@ -2409,6 +2409,37 @@ class MessageFeedbackApiTests(unittest.TestCase):
             self.assertIn("primaryFeedbackDimension", prompt)
             self.assertIn("one primary improvement", prompt)
             self.assertIn("must not silently rewrite unrelated parts", prompt)
+            self.assertIn("contact number will be in your customer ID", prompt)
+            self.assertIn("Another option about this situation", prompt)
+            self.assertIn("In the early morning, because", prompt)
+            self.assertIn("It's nice place", prompt)
+            self.assertIn(
+                'Expected scoreEvidence for each of the first three error examples is {"contextFit":2,"clarity":2,"languageAccuracy":1}',
+                prompt,
+            )
+            self.assertIn(
+                "include one matching LANGUAGE_ACCURACY actionable issue",
+                prompt,
+            )
+            self.assertIn(
+                'sourceExcerpt "In the early morning, because I can\'t wake up early."',
+                prompt,
+            )
+
+    def test_message_feedback_repair_explains_evidence_contract_failures(self):
+        expected_instructions = {
+            "message_feedback_context_evidence": "contextFit is 2 only when every coverageEvidence item is ANSWERED",
+            "message_feedback_language_accuracy_evidence": "languageAccuracy below 2 requires one LANGUAGE_ACCURACY actionable issue",
+            "message_feedback_actionable_primary_dimension": "correctionExpression must include that issue's correctionExcerpt",
+            "message_feedback_actionable_issue_evidence": "sourceExcerpt must be copied exactly from the user utterance",
+        }
+
+        for reason, expected_instruction in expected_instructions.items():
+            error = next_message_service.AiResponseInvalidError(reason)
+            instruction = next_message_service._message_feedback_repair_instruction(
+                error,
+            )
+            self.assertIn(expected_instruction, instruction)
 
     def test_message_feedback_review_prompt_is_compact_and_evidence_first(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(

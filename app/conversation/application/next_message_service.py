@@ -1801,6 +1801,14 @@ def _message_feedback_evidence_policy() -> str:
         "A clear lexical or collocation error is actionable even when a listener can infer the intended meaning; being understandable does not make a definite error acceptable. "
         "Do not mislabel a definite lexical or collocation error as a style or idiomaticity preference. "
         "A grammatical, understandable expression is not actionable merely because another form is more common, concise, frequent, idiomatic, or natural. "
+        "Boundary examples: My contact number will be in your customer ID contains a definite word-choice or semantic-relation error. "
+        "Another option about this situation contains a definite collocation error; use another option for this situation. "
+        "A dependent fragment such as In the early morning, because is actionable when it breaks the sentence. "
+        "For the full fragment example, use sourceExcerpt \"In the early morning, because I can't wake up early.\" exactly. "
+        'Expected scoreEvidence for each of the first three error examples is {"contextFit":2,"clarity":2,"languageAccuracy":1}; '
+        "do not return GOOD, and include one matching LANGUAGE_ACCURACY actionable issue whose correctionExcerpt appears in correctionExpression. "
+        "It's nice place has a definite article omission, but a following reason still satisfies a request for why, so keep contextFit at 2 and lower languageAccuracy. "
+        "An immediate repetition such as I I like Lego is an ignored speech artifact when the remaining utterance is correct. "
         "Set primaryFeedbackDimension to NONE for GOOD. For NEEDS_IMPROVEMENT, select one low-scoring dimension as the one primary improvement. "
         "correctionExpression and correctionReason must address only primaryFeedbackDimension and must not silently rewrite unrelated parts."
     )
@@ -1938,6 +1946,26 @@ def _message_feedback_repair_user_prompt(
 
 def _message_feedback_repair_instruction(error: Exception) -> str:
     reason = getattr(error, "reason", type(error).__name__)
+    evidence_instructions = {
+        "message_feedback_context_evidence": (
+            "contextFit is 2 only when every coverageEvidence item is ANSWERED; "
+            "contextFit below 2 requires at least one MISSING item."
+        ),
+        "message_feedback_language_accuracy_evidence": (
+            "languageAccuracy below 2 requires one LANGUAGE_ACCURACY actionable issue; "
+            "languageAccuracy 2 requires none. Copy sourceExcerpt exactly from the user utterance."
+        ),
+        "message_feedback_actionable_primary_dimension": (
+            "Choose a low-scoring CLARITY or LANGUAGE_ACCURACY dimension with a matching actionable issue, "
+            "and correctionExpression must include that issue's correctionExcerpt."
+        ),
+        "message_feedback_actionable_issue_evidence": (
+            "Every actionable issue sourceExcerpt must be copied exactly from the user utterance; "
+            "do not paraphrase it or change punctuation."
+        ),
+    }
+    if reason in evidence_instructions:
+        return f"{reason}: {evidence_instructions[reason]}"
     if "correctionExpression placeholders must use" in reason:
         return (
             "correctionExpression has an invalid placeholder. "
