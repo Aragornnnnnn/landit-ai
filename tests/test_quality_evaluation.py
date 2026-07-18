@@ -168,6 +168,7 @@ class QualityEvaluationTests(unittest.TestCase):
             "lan180-fragmented-morning-rule": {
                 "feedbackType": "NEEDS_IMPROVEMENT",
                 "scoreRange": [50, 85],
+                "issueDimensions": ["LANGUAGE_ACCURACY"],
             },
             "lan180-busan-reason-already-present": {
                 "feedbackType": "NEEDS_IMPROVEMENT",

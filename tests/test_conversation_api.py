@@ -1123,6 +1123,41 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 request,
             )
 
+    def test_message_feedback_actionable_focus_rejects_empty_normalized_excerpt(self):
+        """문장부호뿐인 핵심 교정 근거가 검증을 우회하지 못하게 한다."""
+        payload = valid_message_feedback_payload()
+        payload["evaluationContext"]["content"] = "What happened to your luggage?"
+        payload["userMessage"] = "My luggage bag is broken."
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            coverage_evidence=[
+                {
+                    "requestExcerpt": "What happened to your luggage?",
+                    "answerExcerpt": "My luggage bag is broken.",
+                    "status": "ANSWERED",
+                },
+            ],
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "luggage bag",
+                    "correctionExcerpt": "...",
+                    "rule": "Use luggage without redundant bag.",
+                },
+            ],
+        )
+        candidate["correctionExpression"] = "My suitcase is broken."
+        request = MessageFeedbackRequest.model_validate(payload)
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_actionable_primary_dimension",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
     def test_message_feedback_rejects_score_without_matching_evidence(self):
         candidate = message_feedback_candidate_with_evidence(
             needs_improvement_message_feedback(1001),

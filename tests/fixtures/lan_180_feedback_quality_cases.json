@@ -62,6 +62,7 @@
     "expectedContextFit": 2,
     "expectedMessageScoreRange": [50, 85],
     "expectedMissingCoverageCount": 0,
+    "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
     "payload": {
       "sessionId": 180,
       "messageId": 1803,
