@@ -1802,9 +1802,13 @@ def _message_feedback_evidence_policy() -> str:
         "Do not mislabel a definite lexical or collocation error as a style or idiomaticity preference. "
         "A grammatical, understandable expression is not actionable merely because another form is more common, concise, frequent, idiomatic, or natural. "
         "Boundary examples: My contact number will be in your customer ID contains a definite word-choice or semantic-relation error. "
+        "For that example, use correctionExcerpt \"My contact number is linked to my customer ID\" and include it unchanged in correctionExpression. "
         "Another option about this situation contains a definite collocation error; use another option for this situation. "
+        "When the utterance contains \"another option about this situation\", never return GOOD; set languageAccuracy to 1, use that exact phrase as sourceExcerpt, and use correctionExcerpt \"another option for this situation\". "
         "A dependent fragment such as In the early morning, because is actionable when it breaks the sentence. "
         "For the full fragment example, use sourceExcerpt \"In the early morning, because I can't wake up early.\" exactly. "
+        "Use correctionExcerpt \"I don't want you to wake me up early because I can't wake up early.\" and include it unchanged in correctionExpression. "
+        "Explain the fragment as clause structure, never as punctuation or capitalization. "
         'Expected scoreEvidence for each of the first three error examples is {"contextFit":2,"clarity":2,"languageAccuracy":1}; '
         "do not return GOOD, and include one matching LANGUAGE_ACCURACY actionable issue whose correctionExcerpt appears in correctionExpression. "
         "It's nice place has a definite article omission, but a following reason still satisfies a request for why, so keep contextFit at 2 and lower languageAccuracy. "
@@ -1962,6 +1966,14 @@ def _message_feedback_repair_instruction(error: Exception) -> str:
         "message_feedback_actionable_issue_evidence": (
             "Every actionable issue sourceExcerpt must be copied exactly from the user utterance; "
             "do not paraphrase it or change punctuation."
+        ),
+        "message_feedback_written_form_feedback": (
+            "Remove every reference to punctuation, capitalization, commas, periods, uppercase, or lowercase. "
+            "Explain only the spoken grammar or word-choice issue."
+        ),
+        "message_feedback_spoken_form_only": (
+            "correctionExpression must change spoken words or word order, not only punctuation or capitalization. "
+            "Use the actionable issue correctionExcerpt unchanged inside correctionExpression."
         ),
     }
     if reason in evidence_instructions:

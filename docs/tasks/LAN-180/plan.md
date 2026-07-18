@@ -11,4 +11,4 @@
 
 - `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 통과했다. 173개 테스트를 실행했다.
 - OpenAPI에 `primaryFeedbackDimension`과 내부 후보 스키마가 노출되지 않는 것을 확인했다.
-- OpenRouter에서 6개 사례의 1회 평가가 모두 통과했고, 최종 보완 후 문장 파편 사례의 3회 반복 평가가 모두 통과했다.
+- 최종 프롬프트로 OpenRouter에서 6개 사례를 3회씩 평가했으며 18개 결과가 모두 기대 판정과 검증 조건을 통과했다.

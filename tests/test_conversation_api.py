@@ -2425,6 +2425,19 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 'sourceExcerpt "In the early morning, because I can\'t wake up early."',
                 prompt,
             )
+            self.assertIn(
+                'correctionExcerpt "I don\'t want you to wake me up early because I can\'t wake up early."',
+                prompt,
+            )
+            self.assertIn(
+                'correctionExcerpt "My contact number is linked to my customer ID"',
+                prompt,
+            )
+            self.assertIn(
+                'When the utterance contains "another option about this situation", never return GOOD',
+                prompt,
+            )
+            self.assertIn("Explain the fragment as clause structure", prompt)
 
     def test_message_feedback_repair_explains_evidence_contract_failures(self):
         expected_instructions = {
@@ -2432,6 +2445,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
             "message_feedback_language_accuracy_evidence": "languageAccuracy below 2 requires one LANGUAGE_ACCURACY actionable issue",
             "message_feedback_actionable_primary_dimension": "correctionExpression must include that issue's correctionExcerpt",
             "message_feedback_actionable_issue_evidence": "sourceExcerpt must be copied exactly from the user utterance",
+            "message_feedback_written_form_feedback": "Remove every reference to punctuation",
+            "message_feedback_spoken_form_only": "change spoken words or word order",
         }
 
         for reason, expected_instruction in expected_instructions.items():
