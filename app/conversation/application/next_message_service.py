@@ -747,10 +747,16 @@ def _validate_primary_feedback_dimension(
         ),
         None,
     )
+    normalized_correction_excerpt = (
+        _normalize_spoken_form(issue.correctionExcerpt)
+        if issue is not None
+        else ""
+    )
     if (
         score == 2
         or issue is None
-        or _normalize_spoken_form(issue.correctionExcerpt)
+        or not normalized_correction_excerpt
+        or normalized_correction_excerpt
         not in _normalize_spoken_form(candidate.correctionExpression or "")
     ):
         raise AiResponseInvalidError("message_feedback_actionable_primary_dimension")
