@@ -186,11 +186,15 @@ def _recover_next_message_response(
     data: dict[str, Any],
     request: NextMessageRequest,
 ) -> NextMessageResponse:
-    ai_message = _response_text(data, "aiMessage", request.nextQuestion.questionEn)
-    translated_message = _response_text(
-        data,
-        "translatedMessage",
-        request.nextQuestion.questionKo,
+    ai_message = _remove_adjacent_repeated_sentences(
+        _response_text(data, "aiMessage", request.nextQuestion.questionEn),
+    )
+    translated_message = _remove_adjacent_repeated_sentences(
+        _response_text(
+            data,
+            "translatedMessage",
+            request.nextQuestion.questionKo,
+        ),
     )
     if request.nextQuestion.questionEn not in ai_message:
         ai_message = f"{ai_message} {request.nextQuestion.questionEn}"
@@ -210,6 +214,24 @@ def _recover_next_message_response(
 def _response_text(data: dict[str, Any], key: str, fallback: str) -> str:
     value = data.get(key)
     return value.strip() if isinstance(value, str) and value.strip() else fallback
+
+
+def _remove_adjacent_repeated_sentences(text: str) -> str:
+    """인접한 동일 문장 블록을 하나로 정리한다."""
+    sentences = re.split(
+        r"(?<=[.!?])(?:\s+|(?=[가-힣]))",
+        text.strip(),
+    )
+    result: list[str] = []
+    for sentence in sentences:
+        result.append(sentence)
+        for block_size in range(len(result) // 2, 0, -1):
+            previous = result[-2 * block_size:-block_size]
+            current = result[-block_size:]
+            if previous == current:
+                del result[-block_size:]
+                break
+    return " ".join(result)
 
 
 def generate_inner_thought(
@@ -1272,6 +1294,13 @@ def _next_message_system_prompt() -> str:
             "Write a short natural acknowledgement, then connect to the backend-provided next fixed question."
         ),
         (
+            "Counterpart Perspective:\n"
+            "Speak only as the provided counterpart role. "
+            "Use the conversation history to track who made each request and who responded. "
+            "Never speak, answer, grant permission, or make decisions on behalf of the user. "
+            "Never reverse requester and responder roles, even after a short reply such as 'Sure'."
+        ),
+        (
             "Priority:\n"
             "For this MVP, quality is more important than speed or token savings. "
             "The user value is feeling that the AI is listening like a real conversation partner. "
@@ -1292,7 +1321,10 @@ def _next_message_system_prompt() -> str:
             "Do not use a standalone generic acknowledgement such as 'I see.' "
             "Do not mechanically summarize or quote the user. "
             "Do not copy the user's full utterance as the acknowledgement. "
-            "Prefer a human conversational reaction over keyword restatement."
+            "Prefer a human conversational reaction over keyword restatement. "
+            "Use exactly one acknowledgement clause. "
+            "Do not stack equivalent reactions such as 'Thanks, I appreciate it'. "
+            "Do not repeat the acknowledgement or fixed question."
         ),
         (
             "Goal Completion Policy:\n"
@@ -1326,7 +1358,9 @@ def _next_message_system_prompt() -> str:
             "1. aiMessage contains the exact next fixed question English unchanged. "
             "2. translatedMessage contains the exact next fixed question Korean unchanged. "
             "3. goalCompletionStatus is judged from Scenario conversation goal and Conversation history. "
-            "4. Return one JSON object only."
+            "4. The counterpart perspective stays consistent with the conversation history. "
+            "5. No sentence or question is repeated. "
+            "6. Return one JSON object only."
         ),
         (
             "Output Schema:\n"
