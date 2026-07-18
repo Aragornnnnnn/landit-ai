@@ -1,0 +1,24 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: "🚀 주요 기능"
+      labels:
+        - feat
+    - title: "🐛 오류 수정"
+      labels:
+        - bug
+    - title: "🔧 유지보수"
+      labels:
+        - refactor
+        - chore
+    - title: "🚢 배포"
+      labels:
+        - deploy
+    - title: "📝 문서"
+      labels:
+        - docs
+    - title: "📦 기타 변경"
+      labels:
+        - "*"

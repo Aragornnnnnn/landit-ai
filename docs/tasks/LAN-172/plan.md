@@ -10,8 +10,9 @@
 2. `main` 브랜치와 `MAJOR.MINOR.PATCH` 형식을 검증하고, 이미 존재하는 `ai-v{version}` 태그를 거부합니다.
 3. workflow 권한을 `contents: write`로 올리고 전체 Git 이력을 checkout합니다.
 4. ECS 서비스 안정화가 확인된 뒤 annotated tag와 GitHub Release를 생성합니다.
-5. `AGENTS.md`, `CONTRIBUTING.md`, `docs/architecture.md`, `design.md`에 실제 workflow와 일치하는 브랜치·버전·승인 규칙을 반영합니다.
-6. 변경 파일과 Git diff를 검토합니다.
+5. `.github/release.yml`에 수동으로 지정한 PR 타입 라벨별 변경 내역 분류와 제외 규칙을 추가합니다.
+6. `AGENTS.md`, `CONTRIBUTING.md`, `docs/architecture.md`, `design.md`에 실제 workflow와 일치하는 브랜치·버전·승인 규칙을 반영합니다.
+7. 변경 파일과 Git diff를 검토합니다.
 
 ## 발견 사항
 
@@ -20,6 +21,7 @@
 - workflow가 배포 성공 후 태그를 생성하므로, 배포가 실패하면 태그와 GitHub Release가 생성되지 않습니다.
 - PATCH, MINOR, MAJOR 중 어떤 버전을 사용할지는 배포 승인 전에 사람이 결정하고 에이전트는 정책에 맞는 버전을 제안합니다.
 - 릴리즈 브랜치 생성 전에 버전이 명시되지 않았다면 에이전트가 먼저 확인하고, workflow 입력에는 같은 버전을 사용합니다.
+- PR 타입 라벨은 당분간 사람이 지정하며 별도의 PR Labeler Action은 추가하지 않습니다.
 
 ## 검증
 
@@ -30,6 +32,7 @@
 ## 검증 결과
 
 - Ruby YAML 파서로 `.github/workflows/deploy-prod-worker.yml` 문법을 확인했습니다.
+- `.github/release.yml`의 YAML 문법과 `feat`, `bug`, `refactor`, `chore`, `deploy`, `docs`, `skip-changelog` 분류 규칙을 확인했습니다.
 - `git diff --check`가 통과했습니다.
 - 태그와 GitHub Release 단계가 ECS 안정화 검증 단계 뒤에 위치함을 확인했습니다.
 - `actionlint`는 현재 환경에 설치되어 있지 않아 실행하지 못했습니다.

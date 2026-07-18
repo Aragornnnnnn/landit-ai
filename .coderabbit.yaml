@@ -1,0 +1,63 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "ko-KR"
+early_access: false
+tone_instructions: >-
+  한국어로 간결하고 직접적으로 작성한다. 실제 결함, 보안 문제, 계약 위반,
+  회귀 가능성처럼 조치가 필요한 내용만 지적한다. 각 지적에는 근거와 영향을
+  포함하고 취향 차이, CI가 검사하는 포맷, 요청 범위 밖 리팩터링은 제안하지 않는다.
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  in_progress_fortune: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - "^develop$"
+      - "^main$"
+      - "^release/.*"
+      - "^feat/.*"
+  path_instructions:
+    - path: "app/api/**"
+      instructions: |
+        router는 HTTP 요청·응답, 검증, 상태 코드 책임만 갖는지 확인한다.
+        연결된 landit-be와 경로, DTO, 오류 코드와 HTTP 상태 호환성을 비교한다.
+        공개 API 계약 변경에는 unittest와 FastAPI OpenAPI 반영이 함께 있어야 한다.
+    - path: "app/models/**"
+      instructions: |
+        Pydantic 필드명, alias, enum, nullability, 기본값이 landit-be 계약과 일치하는지 확인한다.
+        모델 출력에 내부 예외, prompt, 사용자 민감정보가 포함되지 않아야 한다.
+    - path: "app/conversation/application/**"
+      instructions: |
+        LLM JSON 파싱, 스키마 검증, fallback과 오류 경계를 확인한다.
+        점수, 등급, positiveFeedback과 개선 피드백이 서로 모순되지 않는지 확인한다.
+        캐시와 중복 요청에서 동시성, 멱등성, 요청 간 데이터 누출을 확인한다.
+        prompt 작성, 파싱, 후처리, 점수 계산을 한 함수에 몰아넣는 변경을 지적한다.
+    - path: "app/core/**"
+      instructions: |
+        provider, model, base URL, API key는 Settings에서 읽고 호출 직전에 검증해야 한다.
+        API key, raw prompt, 사용자 발화가 로그, 예외, Sentry에 남지 않아야 한다.
+        관측 정보는 request id, endpoint, provider, model 같은 비민감 메타데이터로 제한한다.
+    - path: "app/data/**"
+      instructions: |
+        품질 데이터 변경이 지원 언어와 실제 제품 계약을 유지하는지 확인한다.
+        benchmark 근거 없이 품질 향상을 단정하거나 테스트 fixture와 불일치하는 변경을 지적한다.
+    - path: "tests/**"
+      instructions: |
+        실제 LLM 네트워크를 호출하지 않아야 한다.
+        설정 누락, blank secret, 잘못된 provider, malformed JSON, 점수 경계 회귀를 검증하는지 확인한다.
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  linked_repositories:
+    - repository: "Aragornnnnnn/landit-be"
+      instructions: >-
+        세션과 영속 상태를 소유하는 backend다. AI API의 요청·응답 DTO, enum,
+        nullability, 오류와 HTTP 상태 계약을 검증할 때 기준으로 참고한다.
