@@ -142,6 +142,47 @@ def feedback_session_case():
 
 
 class QualityEvaluationTests(unittest.TestCase):
+    def test_lan_182_feedback_fixture_covers_four_quality_regressions(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_182_feedback_quality_cases.json"
+        )
+
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        expected_cases = {
+            "lan182-complete-introduction-no-extra-advice": {
+                "feedbackType": "GOOD",
+                "forbiddenFeedbackTerms": ["취미", "더 풍부한 자기소개"],
+            },
+            "lan182-no-unrelated-third-person-benchmark": {
+                "feedbackType": "GOOD",
+                "forbiddenFeedbackTerms": ["3인칭 단수", "22%", "she·he"],
+            },
+            "lan182-unfinished-phrase-needs-improvement": {
+                "feedbackType": "NEEDS_IMPROVEMENT",
+                "forbiddenFeedbackTerms": ["자연스럽게 답", "잘 이어졌"],
+            },
+            "lan182-correction-adds-no-new-result": {
+                "feedbackType": "NEEDS_IMPROVEMENT",
+                "forbiddenFeedbackTerms": ["That worked well", "worked well"],
+            },
+        }
+        self.assertEqual({case["caseId"] for case in cases}, set(expected_cases))
+        for case in cases:
+            expected = expected_cases[case["caseId"]]
+            self.assertEqual(case["kind"], "message-feedback")
+            self.assertEqual(
+                case["expectedFeedbackType"],
+                expected["feedbackType"],
+            )
+            self.assertEqual(
+                case["forbiddenFeedbackTerms"],
+                expected["forbiddenFeedbackTerms"],
+            )
+            MessageFeedbackRequest.model_validate(case["payload"])
+
     def test_lan_180_feedback_fixture_covers_six_anonymized_regressions(self):
         """LAN-180 품질 fixture의 사례별 판정 계약을 고정한다."""
         fixture_path = (
@@ -1015,6 +1056,57 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(results[0]["missingRequiredCorrectionPlaceholders"], [])
         self.assertEqual(results[0]["foundForbiddenFeedbackTerms"], [])
         self.assertTrue(results[0]["feedbackTextMatchesExpectation"])
+
+    def test_feedback_result_checks_benchmark_forbidden_terms(self):
+        case = feedback_case()
+        case["forbiddenFeedbackTerms"] = ["unrelated benchmark"]
+        feedback = MessageFeedbackData(
+            messageId=2001,
+            feedbackType="GOOD",
+            baseLocaleAnalogy='"그래, 좋지"라고 자연스럽게 답하는 것과 같아요.',
+            feedbackDetail="친구의 제안에 자연스럽게 동의했어요.",
+            benchmarkMessage="Unrelated benchmark",
+        )
+        response = MessageFeedbackResponse(
+            sessionId=200,
+            messageId=2001,
+            feedbackStatus=FeedbackStatus.PREPARING,
+        )
+        score_evidence = MessageFeedbackScoreEvidence(
+            contextFit=2,
+            clarity=2,
+            languageAccuracy=2,
+        )
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=response,
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=[
+                    SimpleNamespace(
+                        feedback=feedback,
+                        score_evidence=score_evidence,
+                        candidate_was_repaired=False,
+                        copy_was_repaired=False,
+                        copy_was_fallback=False,
+                    ),
+                ],
+            ),
+        ):
+            results = evaluate_cases(
+                [case],
+                runs=1,
+                kind="message-feedback",
+                settings=Settings(_env_file=None),
+            )
+
+        self.assertEqual(
+            results[0]["foundForbiddenFeedbackTerms"],
+            ["unrelated benchmark"],
+        )
+        self.assertFalse(results[0]["feedbackTextMatchesExpectation"])
 
     def test_feedback_result_checks_required_placeholder_prefixes(self):
         case = feedback_case()
