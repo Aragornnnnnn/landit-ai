@@ -493,7 +493,9 @@ def _generate_message_feedback_candidate(
             raise
         logger.warning(
             "AI 메시지별 피드백 생성 결과를 구조 복구합니다. "
-            "workflow=message_feedback_candidate_repair sessionId=%s messageId=%s",
+            "workflow=message_feedback_candidate_repair reason=%s "
+            "sessionId=%s messageId=%s",
+            exc.reason,
             request.sessionId,
             request.messageId,
         )
@@ -510,7 +512,22 @@ def _generate_message_feedback_candidate(
             max_tokens=768,
             model=candidate_model,
         )
-        parsed = _parse_message_feedback_candidate(repaired_data, request)
+        try:
+            parsed = _parse_message_feedback_candidate(repaired_data, request)
+        except AiResponseInvalidError as repair_exc:
+            parsed = _parse_message_feedback_candidate(
+                repaired_data,
+                request,
+                enforce_policy=False,
+            )
+            logger.warning(
+                "AI 메시지별 피드백 판정 근거 검증에 실패해 생성 결과를 사용합니다. "
+                "workflow=message_feedback_candidate_fallback reason=%s "
+                "sessionId=%s messageId=%s",
+                repair_exc.reason,
+                request.sessionId,
+                request.messageId,
+            )
         return (*parsed, True)
 
 
@@ -613,6 +630,7 @@ def _parse_message_feedback_candidate(
     request: MessageFeedbackRequest,
     *,
     reject_generic_placeholder: bool = False,
+    enforce_policy: bool = True,
 ) -> tuple[
     MessageFeedbackData,
     MessageFeedbackScoreEvidence,
@@ -624,7 +642,8 @@ def _parse_message_feedback_candidate(
     candidate_data = _normalize_message_feedback_placeholders(candidate_data)
     try:
         candidate = MessageFeedbackCandidate.model_validate(candidate_data)
-        _validate_message_feedback_adjudication(candidate, request)
+        if enforce_policy:
+            _validate_message_feedback_adjudication(candidate, request)
         candidate = _complete_candidate_fallback_content(candidate)
         score_evidence = candidate.scoreEvidence
         adjudication_evidence = _message_feedback_adjudication_evidence(candidate)
@@ -635,11 +654,12 @@ def _parse_message_feedback_candidate(
         )
     except ValidationError as exc:
         raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
-    _validate_spoken_message_feedback(
-        feedback,
-        request.userMessage,
-        reject_generic_placeholder=reject_generic_placeholder,
-    )
+    if enforce_policy:
+        _validate_spoken_message_feedback(
+            feedback,
+            request.userMessage,
+            reject_generic_placeholder=reject_generic_placeholder,
+        )
     return feedback, score_evidence, adjudication_evidence, detected_patterns
 
 

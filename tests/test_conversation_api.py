@@ -2195,6 +2195,83 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
+    def test_message_feedback_evidence_repair_failure_uses_generated_feedback(self):
+        inconsistent_candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(inconsistent_candidate),
+                json.dumps(inconsistent_candidate),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with self.assertLogs(next_message_service.logger.name, level="WARNING") as logs:
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/message-feedback",
+                    json=valid_message_feedback_payload(),
+                )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "PREPARING")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        feedback = get_cached_message_feedback(100, 1001)
+        self.assertIsNotNone(feedback)
+        self.assertEqual(
+            feedback.correctionExpression,
+            "I like pizza because it is spicy.",
+        )
+        self.assertTrue(
+            any(
+                "workflow=message_feedback_candidate_repair "
+                "reason=message_feedback_language_accuracy_evidence"
+                in message
+                for message in logs.output
+            ),
+        )
+        self.assertTrue(
+            any(
+                "workflow=message_feedback_candidate_fallback "
+                "reason=message_feedback_language_accuracy_evidence"
+                in message
+                for message in logs.output
+            ),
+        )
+
+        session_payload = valid_session_feedback_payload()
+        session_payload["expectedMessageIds"] = [1001]
+        session_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "sessionId": 100,
+                    "highlightMessage": "대화 의도를 전달했어요.",
+                    "summaryMessage": "메시지별 피드백을 확인해 보세요.",
+                },
+            ),
+        )
+        with patch("app.core.openai_client.OpenAI", return_value=session_openai):
+            session_response = make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=session_payload,
+            )
+
+        self.assertEqual(session_response.status_code, 200)
+        self.assertEqual(
+            [
+                feedback["messageId"]
+                for feedback in session_response.json()["data"]["messageFeedbacks"]
+            ],
+            [1001],
+        )
+
     def test_message_feedback_repairs_invalid_copy_once(self):
         candidate = message_feedback_candidate(good_message_feedback(1001))
         invalid_copy = message_feedback_copy(good_message_feedback(1001))
