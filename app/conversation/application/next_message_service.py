@@ -1045,8 +1045,6 @@ def _evidence_tokens(value: str) -> list[str]:
 def _evidence_occurs_once(source: str, excerpt: str) -> bool:
     if not excerpt:
         return False
-    if excerpt in source:
-        return True
     source_tokens = _evidence_tokens(source)
     excerpt_tokens = _evidence_tokens(excerpt)
     if not excerpt_tokens or len(excerpt_tokens) > len(source_tokens):
