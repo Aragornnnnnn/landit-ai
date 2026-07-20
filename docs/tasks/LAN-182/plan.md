@@ -286,7 +286,7 @@ git commit -m "docs: PR label과 assignee 설정 규칙 반영"
 
 ## 실행 결과
 
-- 전체 unittest는 `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`로 실행했으며 185건이 통과했다. 작업 worktree에는 별도 `.venv`가 없어 기준 저장소의 가상환경을 사용했다.
+- 전체 unittest는 작업 worktree 루트에서 기준 저장소의 Python 3.12 가상환경을 활성화한 뒤 `python -m unittest discover -s tests`로 실행했으며 185건이 통과했다.
 - OpenAPI 계약 테스트 1건과 `git diff --check`가 통과했다.
 - LAN-182 품질 사례는 4건을 각각 3회 평가했다. 최종 전체 실행에서 11건이 통과했고 `MISSING` coverage의 중복 `answerExcerpt` 때문에 1건이 `FAILED`였다. 해당 값을 서버에서 `null`로 정규화한 뒤 실패 사례를 3회 재평가해 3건 모두 기대 판정과 점수 범위를 통과했다.
 - LAN-180 기존 품질 사례 6건을 각각 3회 평가했으며 18건 모두 기대 판정, 점수 범위와 금지 문구 기준을 통과했고 `FAILED`는 0건이었다.

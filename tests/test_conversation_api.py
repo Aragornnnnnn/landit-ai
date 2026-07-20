@@ -1052,6 +1052,9 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertFalse(
             next_message_service._evidence_occurs_once("yes, yes", "YES"),
         )
+        self.assertFalse(
+            next_message_service._evidence_occurs_once("yes, yes", "yes"),
+        )
 
     def test_evidence_match_rejects_spelling_or_meaning_change(self):
         self.assertFalse(
