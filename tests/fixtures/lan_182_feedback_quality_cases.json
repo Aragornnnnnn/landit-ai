@@ -1,0 +1,113 @@
+[
+  {
+    "caseId": "lan182-complete-introduction-no-extra-advice",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "expectedMissingCoverageCount": 0,
+    "forbiddenFeedbackTerms": ["취미", "더 풍부한 자기소개"],
+    "payload": {
+      "sessionId": 182,
+      "messageId": 1821,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 182,
+        "title": "룸메이트와 첫 만남",
+        "briefing": "새 룸메이트에게 자신을 소개합니다.",
+        "conversationGoal": "이름과 간단한 자기소개를 전달합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What's your name? Tell me a little about yourself.",
+        "translatedContent": "이름이 뭐야? 간단히 소개해 줘."
+      },
+      "userMessage": "Hi my name is Mina i'm from South Korea nice to see you"
+    }
+  },
+  {
+    "caseId": "lan182-no-unrelated-third-person-benchmark",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "GOOD",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [100, 100],
+    "expectedMissingCoverageCount": 0,
+    "forbiddenFeedbackTerms": ["3인칭 단수", "22%", "she·he"],
+    "payload": {
+      "sessionId": 182,
+      "messageId": 1822,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 182,
+        "title": "룸메이트와 첫 만남",
+        "briefing": "새 룸메이트에게 자신을 소개합니다.",
+        "conversationGoal": "이름과 간단한 자기소개를 전달합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "What's your name? Tell me a little about yourself.",
+        "translatedContent": "이름이 뭐야? 간단히 소개해 줘."
+      },
+      "userMessage": "My name is Minho, and I love food Nice to meet you."
+    }
+  },
+  {
+    "caseId": "lan182-unfinished-phrase-needs-improvement",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedContextFit": 2,
+    "expectedMessageScoreRange": [70, 85],
+    "expectedMissingCoverageCount": 0,
+    "expectedActionableIssueDimensions": ["LANGUAGE_ACCURACY"],
+    "forbiddenFeedbackTerms": ["자연스럽게 답", "잘 이어졌"],
+    "payload": {
+      "sessionId": 182,
+      "messageId": 1823,
+      "turnNumber": 2,
+      "messageSequence": 4,
+      "scenario": {
+        "scenarioId": 183,
+        "title": "첫 수업에서 옆자리 학생과 대화하기",
+        "briefing": "첫 수업에서 옆자리에 앉은 학생과 대화를 나눕니다.",
+        "conversationGoal": "학교생활에 관해 자연스럽게 대화합니다.",
+        "counterpartRole": "classmate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "Do you know anyone else in this class? I'm taking it alone and I'm worried about assignments and group projects.",
+        "translatedContent": "이 수업에 아는 사람이 있어? 나는 혼자 듣는데 과제와 조별 활동이 걱정돼."
+      },
+      "userMessage": "Me too. I'm alone. Don't worry about"
+    }
+  },
+  {
+    "caseId": "lan182-correction-adds-no-new-result",
+    "kind": "message-feedback",
+    "expectedFeedbackType": "NEEDS_IMPROVEMENT",
+    "expectedMessageScoreRange": [50, 85],
+    "forbiddenFeedbackTerms": ["That worked well", "worked well"],
+    "payload": {
+      "sessionId": 182,
+      "messageId": 1824,
+      "turnNumber": 1,
+      "messageSequence": 2,
+      "scenario": {
+        "scenarioId": 184,
+        "title": "집안일과 생활 규칙 정하기",
+        "briefing": "룸메이트와 청소 분담 방식을 조율합니다.",
+        "conversationGoal": "청소 분담과 이전 경험을 설명합니다.",
+        "counterpartRole": "roommate"
+      },
+      "evaluationContext": {
+        "type": "AI_MESSAGE",
+        "content": "How do you like to split cleaning? What worked for you before?",
+        "translatedContent": "청소는 어떻게 나누고 싶어? 전에 잘 맞았던 방식은 뭐야?"
+      },
+      "userMessage": "I think everyone should clean up. After themselves. When cleaning the cleaning the room."
+    }
+  }
+]
