@@ -35,7 +35,6 @@ from app.models.conversation import (
     MessageFeedbackData,
     MessageFeedbackCoverageStatus,
     MessageFeedbackIssueDimension,
-    MessageFeedbackPrimaryDimension,
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
@@ -57,8 +56,6 @@ _RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS = frozenset(
         "message_feedback_context_evidence",
         "message_feedback_clarity_evidence",
         "message_feedback_language_accuracy_evidence",
-        "message_feedback_good_primary_dimension",
-        "message_feedback_missing_primary_dimension",
         "message_feedback_context_primary_dimension",
         "message_feedback_actionable_primary_dimension",
     },
@@ -727,21 +724,27 @@ def _validate_message_feedback_adjudication(
 ) -> None:
     evidence = _message_feedback_adjudication_evidence(candidate)
     for coverage in evidence.coverageEvidence:
-        if coverage.requestExcerpt not in request.evaluationContext.content:
+        if not _evidence_occurs_once(
+            request.evaluationContext.content,
+            coverage.requestExcerpt,
+        ):
             raise AiResponseInvalidError("message_feedback_request_evidence")
         if (
             coverage.answerExcerpt is not None
-            and coverage.answerExcerpt not in request.userMessage
+            and not _evidence_occurs_once(
+                request.userMessage,
+                coverage.answerExcerpt,
+            )
         ):
             raise AiResponseInvalidError("message_feedback_answer_evidence")
 
     for artifact in evidence.ignoredSpeechArtifacts:
-        if artifact not in request.userMessage:
+        if not _evidence_occurs_once(request.userMessage, artifact):
             raise AiResponseInvalidError(
                 "message_feedback_speech_artifact_evidence",
             )
     for issue in evidence.actionableIssues:
-        if issue.sourceExcerpt not in request.userMessage:
+        if not _evidence_occurs_once(request.userMessage, issue.sourceExcerpt):
             raise AiResponseInvalidError(
                 "message_feedback_actionable_issue_evidence",
             )
@@ -783,54 +786,46 @@ def _validate_message_feedback_adjudication(
 def _validate_primary_feedback_dimension(
     candidate: MessageFeedbackCandidate,
 ) -> None:
-    primary = candidate.primaryFeedbackDimension
     scores = candidate.scoreEvidence
     if _feedback_type_from_score_evidence(scores) == FeedbackType.GOOD:
-        if primary != MessageFeedbackPrimaryDimension.NONE:
-            raise AiResponseInvalidError("message_feedback_good_primary_dimension")
-        return
-    if primary == MessageFeedbackPrimaryDimension.NONE:
-        raise AiResponseInvalidError("message_feedback_missing_primary_dimension")
-
-    if primary == MessageFeedbackPrimaryDimension.CONTEXT_FIT:
-        has_missing_coverage = any(
-            item.status == MessageFeedbackCoverageStatus.MISSING
-            for item in candidate.coverageEvidence
-        )
-        placeholder_labels = correction_expression_placeholder_labels(
-            candidate.correctionExpression or "",
-        )
-        if scores.contextFit == 2 or not has_missing_coverage or not placeholder_labels:
-            raise AiResponseInvalidError("message_feedback_context_primary_dimension")
         return
 
-    issue_dimension = MessageFeedbackIssueDimension(primary.value)
-    score = (
-        scores.clarity
-        if issue_dimension == MessageFeedbackIssueDimension.CLARITY
-        else scores.languageAccuracy
+    correction_expression = _normalize_spoken_form(
+        candidate.correctionExpression or "",
     )
-    issue = next(
-        (
-            item
-            for item in candidate.actionableIssues
-            if item.dimension == issue_dimension
-        ),
-        None,
+    actionable_matches = 0
+    for issue in candidate.actionableIssues:
+        score = (
+            scores.clarity
+            if issue.dimension == MessageFeedbackIssueDimension.CLARITY
+            else scores.languageAccuracy
+        )
+        correction_excerpt = _normalize_spoken_form(issue.correctionExcerpt)
+        if (
+            score < 2
+            and correction_excerpt
+            and correction_excerpt in correction_expression
+        ):
+            actionable_matches += 1
+
+    has_missing_coverage = any(
+        item.status == MessageFeedbackCoverageStatus.MISSING
+        for item in candidate.coverageEvidence
     )
-    normalized_correction_excerpt = (
-        _normalize_spoken_form(issue.correctionExcerpt)
-        if issue is not None
-        else ""
+    context_matches = int(
+        scores.contextFit < 2
+        and has_missing_coverage
+        and bool(
+            correction_expression_placeholder_labels(
+                candidate.correctionExpression or "",
+            ),
+        )
     )
-    if (
-        score == 2
-        or issue is None
-        or not normalized_correction_excerpt
-        or normalized_correction_excerpt
-        not in _normalize_spoken_form(candidate.correctionExpression or "")
-    ):
-        raise AiResponseInvalidError("message_feedback_actionable_primary_dimension")
+    if actionable_matches + context_matches == 1:
+        return
+    if scores.contextFit < 2 and actionable_matches == 0:
+        raise AiResponseInvalidError("message_feedback_context_primary_dimension")
+    raise AiResponseInvalidError("message_feedback_actionable_primary_dimension")
 
 
 def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, Any]:
@@ -885,7 +880,6 @@ def _assemble_message_feedback(
     feedback_values = content.model_dump(
         exclude={
             "scoreEvidence",
-            "primaryFeedbackDimension",
             "coverageEvidence",
             "ignoredSpeechArtifacts",
             "actionableIssues",
@@ -917,6 +911,32 @@ def _normalize_spoken_form(value: str) -> str:
         for character in normalized
     )
     return " ".join(without_punctuation.split())
+
+
+def _evidence_tokens(value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    comparable = "".join(
+        " " if unicodedata.category(character).startswith("P") else character
+        for character in normalized
+    )
+    return comparable.split()
+
+
+def _evidence_occurs_once(source: str, excerpt: str) -> bool:
+    if not excerpt:
+        return False
+    if excerpt in source:
+        return True
+    source_tokens = _evidence_tokens(source)
+    excerpt_tokens = _evidence_tokens(excerpt)
+    if not excerpt_tokens or len(excerpt_tokens) > len(source_tokens):
+        return False
+    window_size = len(excerpt_tokens)
+    match_count = sum(
+        source_tokens[index : index + window_size] == excerpt_tokens
+        for index in range(len(source_tokens) - window_size + 1)
+    )
+    return match_count == 1
 
 
 def _validate_spoken_message_feedback(
@@ -1890,15 +1910,13 @@ def _message_feedback_evidence_policy() -> str:
         "do not return GOOD, and include one matching LANGUAGE_ACCURACY actionable issue whose correctionExcerpt appears in correctionExpression. "
         "It's nice place has a definite article omission, but a following reason still satisfies a request for why, so keep contextFit at 2 and lower languageAccuracy. "
         "An immediate repetition such as I I like Lego is an ignored speech artifact when the remaining utterance is correct. "
-        "Set primaryFeedbackDimension to NONE for GOOD. For NEEDS_IMPROVEMENT, select one low-scoring dimension as the one primary improvement. "
-        "correctionExpression and correctionReason must address only primaryFeedbackDimension and must not silently rewrite unrelated parts."
+        "For NEEDS_IMPROVEMENT, correctionExpression and correctionReason must address exactly one low-scoring dimension and must not silently rewrite unrelated parts."
     )
 
 
 def _message_feedback_output_schema() -> str:
     return (
         '{"scoreEvidence":{"contextFit":2,"clarity":2,"languageAccuracy":2},'
-        '"primaryFeedbackDimension":"NONE or CONTEXT_FIT or CLARITY or LANGUAGE_ACCURACY",'
         '"coverageEvidence":[{"requestExcerpt":"exact evaluation context substring",'
         '"answerExcerpt":"exact user substring or null","status":"ANSWERED or MISSING"}],'
         '"ignoredSpeechArtifacts":["exact user substring"],'
@@ -1908,7 +1926,6 @@ def _message_feedback_output_schema() -> str:
         '"baseLocaleAnalogy":"“한국어 발화”라고 말하는 것과 같아요.",'
         '"positiveFeedback":"Korean text or null","feedbackDetail":"Korean text or null",'
         '"correctionExpression":"English text or null","correctionReason":"Korean text or null",'
-        '"benchmarkMessage":"Korean text or null",'
         '"detectedPatterns":[{"errorType":"catalog pattern id","status":"correct",'
         '"evidence":"exact user substring"}]}'
     )
@@ -1968,7 +1985,7 @@ def _message_feedback_system_prompt(
             "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
             "For an incomplete self-introduction, write \"안녕하세요, 제 이름은 상민이에요\"라고 이름만 말하고 자기소개를 멈춘 것과 같아요, not 자기소개가 부족하니 내용을 더 말해야 해요. "
             "For GOOD, feedbackDetail is required and positiveFeedback, correctionExpression, and correctionReason are null. "
-            "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail and benchmarkMessage are null. "
+            "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail is null. "
             "correctionReason is natural Korean and must explain the actual change in correctionExpression. Do not expose internal rules with phrases such as 없는 사실, 사실을 만들지, or 임의로 추측. "
             "When correctionExpression changes subject-verb agreement, correctionReason must explicitly identify the subject and the required singular or plural verb form. "
             "detectedPatterns is internal-only. Include an item only when its evidence is an exact substring of the user utterance."
@@ -2044,16 +2061,9 @@ def _message_feedback_repair_instruction(error: Exception) -> str:
             "Choose a low-scoring CLARITY or LANGUAGE_ACCURACY dimension with a matching actionable issue, "
             "and correctionExpression must include that issue's correctionExcerpt."
         ),
-        "message_feedback_good_primary_dimension": (
-            "GOOD requires primaryFeedbackDimension NONE and all scoreEvidence values equal to 2."
-        ),
-        "message_feedback_missing_primary_dimension": (
-            "NEEDS_IMPROVEMENT requires one low-scoring primaryFeedbackDimension; "
-            "do not use NONE."
-        ),
         "message_feedback_context_primary_dimension": (
-            "CONTEXT_FIT requires contextFit below 2, at least one MISSING coverage item, "
-            "and a specific [your ...] placeholder in correctionExpression."
+            "A context improvement requires contextFit below 2, at least one MISSING "
+            "coverage item, and a specific [your ...] placeholder in correctionExpression."
         ),
         "message_feedback_actionable_issue_evidence": (
             "Every actionable issue sourceExcerpt must be copied exactly from the user utterance; "
@@ -2127,8 +2137,8 @@ def _message_feedback_review_system_prompt(
             "baseLocaleAnalogy is required and must compare the user's English with one quoted Korean utterance using the form \"<Korean utterance>\"라고 ... 것과 같아요. Preserve the same naturalness or the same issue. "
             "It is not direct feedback or advice: do not explain what is missing or tell the learner what to say. Do not include 한국어로 치면, 한국어로는, or 한국어로도. "
             "The quoted Korean utterance must faithfully paraphrase only what the user actually said. Do not claim the user stated missing information, such as a reason, when it is absent. "
-            "For GOOD, positiveFeedback, correctionExpression, and correctionReason are null, feedbackDetail is required, and benchmarkMessage is a short non-quantitative Korean message or null. "
-            "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required, feedbackDetail and benchmarkMessage are null. "
+            "For GOOD, positiveFeedback, correctionExpression, and correctionReason are null and feedbackDetail is required. "
+            "For NEEDS_IMPROVEMENT, positiveFeedback, correctionExpression, and correctionReason are required and feedbackDetail is null. "
             "correctionExpression contains one English expression only. "
             "correctionReason must explain the actual change in correctionExpression. "
             "When correctionExpression changes subject-verb agreement, correctionReason must explicitly identify the subject and the required singular or plural verb form. "
