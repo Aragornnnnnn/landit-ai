@@ -2195,7 +2195,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_message_feedback_evidence_repair_failure_uses_generated_feedback(self):
+    def test_message_feedback_consistency_mismatch_skips_repair(self):
         inconsistent_candidate = message_feedback_candidate_with_evidence(
             needs_improvement_message_feedback(1001),
         )
@@ -2222,7 +2222,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["data"]["feedbackStatus"], "PREPARING")
-        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
         feedback = get_cached_message_feedback(100, 1001)
         self.assertIsNotNone(feedback)
         self.assertEqual(
@@ -2231,19 +2231,19 @@ class MessageFeedbackApiTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                "workflow=message_feedback_candidate_repair "
+                "workflow=message_feedback_candidate_consistency_warning "
                 "reason=message_feedback_language_accuracy_evidence"
                 in message
                 for message in logs.output
             ),
         )
-        self.assertTrue(
-            any(
-                "workflow=message_feedback_candidate_fallback "
-                "reason=message_feedback_language_accuracy_evidence"
-                in message
-                for message in logs.output
-            ),
+        entry = next_message_service._get_expected_message_feedback_entries(
+            100,
+            [1001],
+        )[0]
+        self.assertFalse(entry.candidate_was_repaired)
+        self.assertFalse(
+            any("workflow=message_feedback_candidate_repair " in message for message in logs.output),
         )
 
         session_payload = valid_session_feedback_payload()

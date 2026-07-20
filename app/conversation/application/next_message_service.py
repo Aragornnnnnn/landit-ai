@@ -52,6 +52,17 @@ from app.models.conversation import (
 
 _MESSAGE_FEEDBACK_CACHE_TTL_SECONDS = 3 * 60 * 60
 _DEFAULT_GOOD_BENCHMARK_MESSAGE = "질문에 맞는 핵심을 자연스럽게 전달했어요."
+_RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS = frozenset(
+    {
+        "message_feedback_context_evidence",
+        "message_feedback_clarity_evidence",
+        "message_feedback_language_accuracy_evidence",
+        "message_feedback_good_primary_dimension",
+        "message_feedback_missing_primary_dimension",
+        "message_feedback_context_primary_dimension",
+        "message_feedback_actionable_primary_dimension",
+    },
+)
 _BENCHMARK_PATTERN_CATALOG_PATH = (
     Path(__file__).parents[2] / "data" / "benchmark_patterns.json"
 )
@@ -486,7 +497,11 @@ def _generate_message_feedback_candidate(
             max_tokens=768,
             model=candidate_model,
         )
-        parsed = _parse_message_feedback_candidate(candidate_data, request)
+        parsed = _parse_message_feedback_candidate_with_consistency_warning(
+            candidate_data,
+            request,
+            workflow="message_feedback_candidate_consistency_warning",
+        )
         return (*parsed, False)
     except AiResponseInvalidError as exc:
         if candidate_data is None:
@@ -512,22 +527,11 @@ def _generate_message_feedback_candidate(
             max_tokens=768,
             model=candidate_model,
         )
-        try:
-            parsed = _parse_message_feedback_candidate(repaired_data, request)
-        except AiResponseInvalidError as repair_exc:
-            parsed = _parse_message_feedback_candidate(
-                repaired_data,
-                request,
-                enforce_policy=False,
-            )
-            logger.warning(
-                "AI 메시지별 피드백 판정 근거 검증에 실패해 생성 결과를 사용합니다. "
-                "workflow=message_feedback_candidate_fallback reason=%s "
-                "sessionId=%s messageId=%s",
-                repair_exc.reason,
-                request.sessionId,
-                request.messageId,
-            )
+        parsed = _parse_message_feedback_candidate_with_consistency_warning(
+            repaired_data,
+            request,
+            workflow="message_feedback_candidate_consistency_warning",
+        )
         return (*parsed, True)
 
 
@@ -568,9 +572,10 @@ def _review_message_feedback_candidate(
             reviewed_score_evidence,
             reviewed_adjudication_evidence,
             reviewed_patterns,
-        ) = _parse_message_feedback_candidate(
+        ) = _parse_message_feedback_candidate_with_consistency_warning(
             reviewed_data,
             request,
+            workflow="message_feedback_copy_consistency_warning",
             reject_generic_placeholder=True,
         )
         return (
@@ -611,9 +616,10 @@ def _review_message_feedback_candidate(
             reviewed_score_evidence,
             reviewed_adjudication_evidence,
             reviewed_patterns,
-        ) = _parse_message_feedback_candidate(
+        ) = _parse_message_feedback_candidate_with_consistency_warning(
             repaired_data,
             request,
+            workflow="message_feedback_copy_consistency_warning",
             reject_generic_placeholder=True,
         )
         return (
@@ -630,7 +636,7 @@ def _parse_message_feedback_candidate(
     request: MessageFeedbackRequest,
     *,
     reject_generic_placeholder: bool = False,
-    enforce_policy: bool = True,
+    enforce_consistency: bool = True,
 ) -> tuple[
     MessageFeedbackData,
     MessageFeedbackScoreEvidence,
@@ -642,8 +648,11 @@ def _parse_message_feedback_candidate(
     candidate_data = _normalize_message_feedback_placeholders(candidate_data)
     try:
         candidate = MessageFeedbackCandidate.model_validate(candidate_data)
-        if enforce_policy:
-            _validate_message_feedback_adjudication(candidate, request)
+        _validate_message_feedback_adjudication(
+            candidate,
+            request,
+            enforce_consistency=enforce_consistency,
+        )
         candidate = _complete_candidate_fallback_content(candidate)
         score_evidence = candidate.scoreEvidence
         adjudication_evidence = _message_feedback_adjudication_evidence(candidate)
@@ -654,13 +663,50 @@ def _parse_message_feedback_candidate(
         )
     except ValidationError as exc:
         raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
-    if enforce_policy:
-        _validate_spoken_message_feedback(
-            feedback,
-            request.userMessage,
+    _validate_spoken_message_feedback(
+        feedback,
+        request.userMessage,
+        reject_generic_placeholder=reject_generic_placeholder,
+    )
+    return feedback, score_evidence, adjudication_evidence, detected_patterns
+
+
+def _parse_message_feedback_candidate_with_consistency_warning(
+    data: dict[str, Any],
+    request: MessageFeedbackRequest,
+    *,
+    workflow: str,
+    reject_generic_placeholder: bool = False,
+) -> tuple[
+    MessageFeedbackData,
+    MessageFeedbackScoreEvidence,
+    MessageFeedbackAdjudicationEvidence,
+    Any,
+]:
+    try:
+        return _parse_message_feedback_candidate(
+            data,
+            request,
             reject_generic_placeholder=reject_generic_placeholder,
         )
-    return feedback, score_evidence, adjudication_evidence, detected_patterns
+    except AiResponseInvalidError as exc:
+        if exc.reason not in _RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS:
+            raise
+        parsed = _parse_message_feedback_candidate(
+            data,
+            request,
+            reject_generic_placeholder=reject_generic_placeholder,
+            enforce_consistency=False,
+        )
+        logger.warning(
+            "AI 메시지별 피드백 판정 일관성 검증에 실패해 생성 결과를 사용합니다. "
+            "workflow=%s reason=%s sessionId=%s messageId=%s",
+            workflow,
+            exc.reason,
+            request.sessionId,
+            request.messageId,
+        )
+        return parsed
 
 
 def _message_feedback_adjudication_evidence(
@@ -676,6 +722,8 @@ def _message_feedback_adjudication_evidence(
 def _validate_message_feedback_adjudication(
     candidate: MessageFeedbackCandidate,
     request: MessageFeedbackRequest,
+    *,
+    enforce_consistency: bool = True,
 ) -> None:
     evidence = _message_feedback_adjudication_evidence(candidate)
     for coverage in evidence.coverageEvidence:
@@ -699,6 +747,9 @@ def _validate_message_feedback_adjudication(
             )
         if issue.sourceExcerpt in evidence.ignoredSpeechArtifacts:
             raise AiResponseInvalidError("message_feedback_ignored_issue_overlap")
+
+    if not enforce_consistency:
+        return
 
     missing_coverage = any(
         item.status == MessageFeedbackCoverageStatus.MISSING
