@@ -221,6 +221,7 @@ def _evaluate_feedback_case(
             feedback.feedbackDetail,
             feedback.correctionExpression,
             feedback.correctionReason,
+            feedback.benchmarkMessage,
         )
         if value is not None
     )

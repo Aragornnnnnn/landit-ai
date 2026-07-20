@@ -60,6 +60,15 @@ _RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS = frozenset(
         "message_feedback_actionable_primary_dimension",
     },
 )
+_MESSAGE_FEEDBACK_EVIDENCE_REASONS = frozenset(
+    {
+        "message_feedback_request_evidence",
+        "message_feedback_answer_evidence",
+        "message_feedback_speech_artifact_evidence",
+        "message_feedback_actionable_issue_evidence",
+        "message_feedback_ignored_issue_overlap",
+    },
+)
 _BENCHMARK_PATTERN_CATALOG_PATH = (
     Path(__file__).parents[2] / "data" / "benchmark_patterns.json"
 )
@@ -180,6 +189,20 @@ class MessageFeedbackNotReadyError(Exception):
     def __init__(self, missing_message_ids: list[int]):
         self.missing_message_ids = missing_message_ids
         super().__init__(f"message feedback is not ready: {missing_message_ids}")
+
+
+def _message_feedback_validation_type(reason: str) -> str:
+    if reason in _RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS:
+        return "CONSISTENCY"
+    if reason in _MESSAGE_FEEDBACK_EVIDENCE_REASONS:
+        return "EVIDENCE"
+    if reason.startswith("message_feedback_schema") or reason.startswith(
+        "json_object_",
+    ):
+        return "STRUCTURE"
+    if reason in {"completion_content_missing", "completion_content_blank"}:
+        return "EMPTY_RESULT"
+    return "DISPLAY"
 
 
 def generate_next_message(
@@ -427,11 +450,18 @@ def generate_message_feedback(
                     resolved_settings,
                 )
             except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+                reason = getattr(exc, "reason", type(exc).__name__)
+                validation_type = (
+                    "GENERATION"
+                    if isinstance(exc, AiGenerationFailedError)
+                    else _message_feedback_validation_type(reason)
+                )
                 logger.warning(
                     "AI 메시지별 피드백 문구 검수에 실패해 생성 후보를 사용합니다. "
-                    "workflow=message_feedback_copy_fallback reason=%s "
+                    "workflow=message_feedback_copy_fallback reason=%s validationType=%s "
                     "sessionId=%s messageId=%s",
-                    getattr(exc, "reason", type(exc).__name__),
+                    reason,
+                    validation_type,
                     request.sessionId,
                     request.messageId,
                 )
@@ -453,10 +483,18 @@ def generate_message_feedback(
             copy_was_fallback=copy_was_fallback,
         )
     except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+        reason = getattr(exc, "reason", type(exc).__name__)
+        validation_type = (
+            "GENERATION"
+            if isinstance(exc, AiGenerationFailedError)
+            else _message_feedback_validation_type(reason)
+        )
         logger.warning(
             "AI 메시지별 피드백 생성에 실패해 실패 상태를 반환합니다. "
-            "workflow=message_feedback_failed reason=%s sessionId=%s messageId=%s",
-            getattr(exc, "reason", type(exc).__name__),
+            "workflow=message_feedback_failed reason=%s validationType=%s "
+            "sessionId=%s messageId=%s",
+            reason,
+            validation_type,
             request.sessionId,
             request.messageId,
         )
@@ -505,9 +543,10 @@ def _generate_message_feedback_candidate(
             raise
         logger.warning(
             "AI 메시지별 피드백 생성 결과를 구조 복구합니다. "
-            "workflow=message_feedback_candidate_repair reason=%s "
+            "workflow=message_feedback_candidate_repair reason=%s validationType=%s "
             "sessionId=%s messageId=%s",
             exc.reason,
+            _message_feedback_validation_type(exc.reason),
             request.sessionId,
             request.messageId,
         )
@@ -524,12 +563,44 @@ def _generate_message_feedback_candidate(
             max_tokens=768,
             model=candidate_model,
         )
-        parsed = _parse_message_feedback_candidate_with_consistency_warning(
-            repaired_data,
-            request,
-            workflow="message_feedback_candidate_consistency_warning",
-        )
-        return (*parsed, True)
+        try:
+            parsed = _parse_message_feedback_candidate_with_consistency_warning(
+                repaired_data,
+                request,
+                workflow="message_feedback_candidate_consistency_warning",
+            )
+            return (*parsed, True)
+        except AiResponseInvalidError as repair_exc:
+            fallback = None
+            fallback_source = ""
+            for source, fallback_data in (
+                ("REPAIRED", repaired_data),
+                ("ORIGINAL", candidate_data),
+            ):
+                try:
+                    fallback = _parse_displayable_message_feedback_candidate(
+                        fallback_data,
+                        request,
+                    )
+                    fallback_source = source
+                    break
+                except AiResponseInvalidError:
+                    continue
+            if fallback is None:
+                raise repair_exc
+            logger.warning(
+                "AI 메시지별 피드백 복구에 실패해 표시 가능한 생성 후보를 사용합니다. "
+                "workflow=message_feedback_candidate_fallback reason=%s "
+                "validationType=%s fallbackSource=%s originalReason=%s "
+                "sessionId=%s messageId=%s",
+                repair_exc.reason,
+                _message_feedback_validation_type(repair_exc.reason),
+                fallback_source,
+                exc.reason,
+                request.sessionId,
+                request.messageId,
+            )
+            return (*fallback, False)
 
 
 def _review_message_feedback_candidate(
@@ -587,7 +658,10 @@ def _review_message_feedback_candidate(
             raise
         logger.warning(
             "AI 메시지별 피드백 문구 검수 결과를 구조 복구합니다. "
-            "workflow=message_feedback_copy_repair sessionId=%s messageId=%s",
+            "workflow=message_feedback_copy_repair reason=%s validationType=%s "
+            "sessionId=%s messageId=%s",
+            exc.reason,
+            _message_feedback_validation_type(exc.reason),
             request.sessionId,
             request.messageId,
         )
@@ -642,7 +716,7 @@ def _parse_message_feedback_candidate(
 ]:
     candidate_data = dict(data)
     detected_patterns = candidate_data.pop("detectedPatterns", None)
-    candidate_data = _normalize_message_feedback_placeholders(candidate_data)
+    candidate_data = _normalize_message_feedback_candidate(candidate_data)
     try:
         candidate = MessageFeedbackCandidate.model_validate(candidate_data)
         _validate_message_feedback_adjudication(
@@ -665,6 +739,33 @@ def _parse_message_feedback_candidate(
         request.userMessage,
         reject_generic_placeholder=reject_generic_placeholder,
     )
+    return feedback, score_evidence, adjudication_evidence, detected_patterns
+
+
+def _parse_displayable_message_feedback_candidate(
+    data: dict[str, Any],
+    request: MessageFeedbackRequest,
+) -> tuple[
+    MessageFeedbackData,
+    MessageFeedbackScoreEvidence,
+    MessageFeedbackAdjudicationEvidence,
+    Any,
+]:
+    candidate_data = dict(data)
+    detected_patterns = candidate_data.pop("detectedPatterns", None)
+    candidate_data = _normalize_message_feedback_candidate(candidate_data)
+    try:
+        candidate = MessageFeedbackCandidate.model_validate(candidate_data)
+        candidate = _complete_candidate_fallback_content(candidate)
+        score_evidence = candidate.scoreEvidence
+        adjudication_evidence = _message_feedback_adjudication_evidence(candidate)
+        feedback = _assemble_message_feedback(
+            candidate,
+            message_id=request.messageId,
+            score_evidence=score_evidence,
+        )
+    except ValidationError as exc:
+        raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
     return feedback, score_evidence, adjudication_evidence, detected_patterns
 
 
@@ -697,7 +798,8 @@ def _parse_message_feedback_candidate_with_consistency_warning(
         )
         logger.warning(
             "AI 메시지별 피드백 판정 일관성 검증에 실패해 생성 결과를 사용합니다. "
-            "workflow=%s reason=%s sessionId=%s messageId=%s",
+            "workflow=%s reason=%s validationType=CONSISTENCY "
+            "sessionId=%s messageId=%s",
             workflow,
             exc.reason,
             request.sessionId,
@@ -748,6 +850,10 @@ def _validate_message_feedback_adjudication(
             raise AiResponseInvalidError(
                 "message_feedback_actionable_issue_evidence",
             )
+        if _normalize_spoken_form(issue.sourceExcerpt) == _normalize_spoken_form(
+            issue.correctionExcerpt,
+        ):
+            raise AiResponseInvalidError("message_feedback_spoken_form_only")
         if issue.sourceExcerpt in evidence.ignoredSpeechArtifacts:
             raise AiResponseInvalidError("message_feedback_ignored_issue_overlap")
 
@@ -837,6 +943,20 @@ def _normalize_message_feedback_placeholders(data: dict[str, Any]) -> dict[str, 
                 correction_expression,
             )
         )
+    return normalized_data
+
+
+def _normalize_message_feedback_candidate(data: dict[str, Any]) -> dict[str, Any]:
+    normalized_data = _normalize_message_feedback_placeholders(data)
+    coverage_evidence = normalized_data.get("coverageEvidence")
+    if not isinstance(coverage_evidence, list):
+        return normalized_data
+    normalized_data["coverageEvidence"] = [
+        {**item, "answerExcerpt": None}
+        if isinstance(item, dict) and item.get("status") == "MISSING"
+        else item
+        for item in coverage_evidence
+    ]
     return normalized_data
 
 
@@ -1903,6 +2023,8 @@ def _message_feedback_evidence_policy() -> str:
         "Another option about this situation contains a definite collocation error; use another option for this situation. "
         "When the utterance contains \"another option about this situation\", never return GOOD; set languageAccuracy to 1, use that exact phrase as sourceExcerpt, and use correctionExcerpt \"another option for this situation\". "
         "A dependent fragment such as In the early morning, because is actionable when it breaks the sentence. "
+        "An utterance ending in an unfinished phrase or a word that still requires its complement is not a complete GOOD answer. "
+        "A trailing complement-taking phrase such as \"Don't worry about\" is unfinished; lower languageAccuracy and provide a complete correction instead of returning GOOD. "
         "For the full fragment example, use sourceExcerpt \"In the early morning, because I can't wake up early.\" exactly. "
         "Use correctionExcerpt \"I don't want you to wake me up early because I can't wake up early.\" and include it unchanged in correctionExpression. "
         "Explain the fragment as clause structure, never as punctuation or capitalization. "
@@ -1910,7 +2032,10 @@ def _message_feedback_evidence_policy() -> str:
         "do not return GOOD, and include one matching LANGUAGE_ACCURACY actionable issue whose correctionExcerpt appears in correctionExpression. "
         "It's nice place has a definite article omission, but a following reason still satisfies a request for why, so keep contextFit at 2 and lower languageAccuracy. "
         "An immediate repetition such as I I like Lego is an ignored speech artifact when the remaining utterance is correct. "
-        "For NEEDS_IMPROVEMENT, correctionExpression and correctionReason must address exactly one low-scoring dimension and must not silently rewrite unrelated parts."
+        "A transcript boundary such as food Nice to meet you may omit punctuation in text but is not a spoken language error. "
+        "For NEEDS_IMPROVEMENT, correctionExpression and correctionReason must address exactly one low-scoring dimension and must not silently rewrite unrelated parts. "
+        "correctionExpression must be a minimal correction of the user's meaning. "
+        "Do not add a new proposition, result, experience, reason, or evaluation with no counterpart in the user utterance."
     )
 
 

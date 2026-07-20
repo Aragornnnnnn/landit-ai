@@ -1329,6 +1329,31 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 "hi my name is sangmin",
             )
 
+    def test_message_feedback_rejects_punctuation_only_actionable_issue(self):
+        candidate = message_feedback_candidate_with_evidence(
+            needs_improvement_message_feedback(1001),
+            actionable_issues=[
+                {
+                    "dimension": "LANGUAGE_ACCURACY",
+                    "sourceExcerpt": "wanna",
+                    "correctionExcerpt": "wanna.",
+                    "rule": "Add a period.",
+                },
+            ],
+        )
+        request = MessageFeedbackRequest.model_validate(
+            valid_message_feedback_payload(),
+        )
+
+        with self.assertRaisesRegex(
+            next_message_service.AiResponseInvalidError,
+            "message_feedback_spoken_form_only",
+        ):
+            next_message_service._parse_message_feedback_candidate(
+                candidate,
+                request,
+            )
+
     def test_message_feedback_rejects_case_and_punctuation_only_correction(self):
         payload = needs_improvement_message_feedback(1001)
         payload.pop("scoreEvidence")
@@ -2191,6 +2216,85 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
+    def test_message_feedback_uses_displayable_candidate_when_repair_fails(self):
+        displayable_candidate = message_feedback_candidate(good_message_feedback(1001))
+        displayable_candidate["feedbackDetail"] = "대문자 사용은 좋았어요."
+        invalid_repair = dict(displayable_candidate)
+        invalid_repair["feedbackDetail"] = ""
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(displayable_candidate),
+                json.dumps(invalid_repair),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with self.assertLogs(next_message_service.logger.name, level="WARNING") as logs:
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/message-feedback",
+                    json=valid_message_feedback_payload(),
+                )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "PREPARING")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIsNotNone(get_cached_message_feedback(100, 1001))
+        self.assertTrue(
+            any(
+                "workflow=message_feedback_candidate_fallback "
+                "reason=message_feedback_schema: Value error, must not be blank "
+                "validationType=STRUCTURE"
+                in message
+                for message in logs.output
+            ),
+        )
+
+    def test_message_feedback_uses_displayable_repair_when_policy_check_fails(self):
+        invalid_candidate = message_feedback_candidate(good_message_feedback(1001))
+        invalid_candidate.pop("feedbackDetail")
+        displayable_repair = message_feedback_candidate(good_message_feedback(1001))
+        displayable_repair["feedbackDetail"] = "대문자 사용은 좋았어요."
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(invalid_candidate),
+                json.dumps(displayable_repair),
+            ],
+        )
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                message_feedback_review_enabled=False,
+            ),
+        )
+
+        with self.assertLogs(next_message_service.logger.name, level="WARNING") as logs:
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/message-feedback",
+                    json=valid_message_feedback_payload(),
+                )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["data"]["feedbackStatus"], "PREPARING")
+        self.assertIsNotNone(get_cached_message_feedback(100, 1001))
+        self.assertTrue(
+            any(
+                "workflow=message_feedback_candidate_fallback "
+                "reason=message_feedback_written_form_feedback "
+                "validationType=DISPLAY fallbackSource=REPAIRED"
+                in message
+                for message in logs.output
+            ),
+        )
+
     def test_message_feedback_consistency_mismatch_skips_repair(self):
         inconsistent_candidate = message_feedback_candidate_with_evidence(
             needs_improvement_message_feedback(1001),
@@ -2228,7 +2332,8 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "workflow=message_feedback_candidate_consistency_warning "
-                "reason=message_feedback_language_accuracy_evidence"
+                "reason=message_feedback_language_accuracy_evidence "
+                "validationType=CONSISTENCY"
                 in message
                 for message in logs.output
             ),
@@ -2518,6 +2623,11 @@ class MessageFeedbackApiTests(unittest.TestCase):
             self.assertNotIn('"benchmarkMessage"', prompt)
             self.assertIn("exactly one low-scoring dimension", prompt)
             self.assertIn("must not silently rewrite unrelated parts", prompt)
+            self.assertIn("minimal correction of the user's meaning", prompt)
+            self.assertIn("Do not add a new proposition", prompt)
+            self.assertIn("still requires its complement", prompt)
+            self.assertIn('such as "Don\'t worry about"', prompt)
+            self.assertIn("transcript boundary such as food Nice to meet you", prompt)
             self.assertIn("contact number will be in your customer ID", prompt)
             self.assertIn("Another option about this situation", prompt)
             self.assertIn("In the early morning, because", prompt)
@@ -2566,6 +2676,48 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 error,
             )
             self.assertIn(expected_instruction, instruction)
+
+    def test_message_feedback_validation_reasons_have_measurable_types(self):
+        expected_types = {
+            "message_feedback_context_evidence": "CONSISTENCY",
+            "message_feedback_answer_evidence": "EVIDENCE",
+            "message_feedback_schema: missing feedbackDetail": "STRUCTURE",
+            "json_object_invalid": "STRUCTURE",
+            "completion_content_blank": "EMPTY_RESULT",
+            "message_feedback_written_form_feedback": "DISPLAY",
+        }
+
+        for reason, expected_type in expected_types.items():
+            self.assertEqual(
+                next_message_service._message_feedback_validation_type(reason),
+                expected_type,
+            )
+
+    def test_message_feedback_normalizes_missing_answer_excerpt(self):
+        candidate = {
+            "coverageEvidence": [
+                {
+                    "requestExcerpt": "What worked for you before?",
+                    "answerExcerpt": "I don't know",
+                    "status": "MISSING",
+                },
+                {
+                    "requestExcerpt": "How do you like to split cleaning?",
+                    "answerExcerpt": "Everyone should clean up",
+                    "status": "ANSWERED",
+                },
+            ],
+        }
+
+        normalized = next_message_service._normalize_message_feedback_candidate(
+            candidate,
+        )
+
+        self.assertIsNone(normalized["coverageEvidence"][0]["answerExcerpt"])
+        self.assertEqual(
+            normalized["coverageEvidence"][1]["answerExcerpt"],
+            "Everyone should clean up",
+        )
 
     def test_message_feedback_review_prompt_is_compact_and_evidence_first(self):
         candidate_prompt = next_message_service._message_feedback_system_prompt(
