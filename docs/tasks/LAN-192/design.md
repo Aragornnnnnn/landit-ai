@@ -15,6 +15,7 @@ BE는 Spring Boot 기본 콘솔 appender를 사용하며 기본 패턴이 실제
 ## 최종 설계.
 
 - AI 루트 로거와 Uvicorn 로거를 하나의 출력 경로로 통합한다.
+- 루트 레벨은 `WARNING`으로 유지하고 Uvicorn 로거만 `INFO`로 설정해 제3자 라이브러리의 요청 URL을 새로 수집하지 않는다.
 - 출력 형식은 `level=%(levelname)s logger=%(name)s message=%(message)s`로 고정한다.
 - 기존 `logger.warning()`, `logger.error()`, `logger.exception()` 호출은 그대로 유지한다.
 - Grafana AI 오류 조회는 `logfmt`로 `level`을 파싱해 `ERROR`와 `CRITICAL`만 선택한다.
@@ -25,6 +26,7 @@ BE는 Spring Boot 기본 콘솔 appender를 사용하며 기본 패턴이 실제
 - 본문에 `Value error`가 포함된 경고 로그가 `level=WARNING`으로 출력된다.
 - 실제 오류 로그가 `level=ERROR`로 출력된다.
 - Uvicorn 오류와 access 로그도 같은 형식을 사용한다.
+- `httpx` 같은 제3자 로거의 `INFO` 메시지는 활성화되지 않는다.
 - 전체 unittest가 통과한다.
 
 ## 제외 범위.

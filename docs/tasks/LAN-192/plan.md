@@ -16,6 +16,7 @@
 - [x] `app/core/logging.py`에 공통 포맷과 초기화 함수를 추가한다.
 - [x] 앱 생성 시 Sentry 초기화 전에 로깅을 구성한다.
 - [x] Uvicorn 로거가 루트 핸들러로 전파되도록 한다.
+- [x] 루트는 `WARNING`, Uvicorn은 `INFO`로 제한해 제3자 요청 URL 로그를 방지한다.
 
 ### Task 3: 검증.
 

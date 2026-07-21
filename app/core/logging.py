@@ -7,11 +7,12 @@ LOG_FORMAT = "level=%(levelname)s logger=%(name)s message=%(message)s"
 
 def configure_logging() -> None:
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format=LOG_FORMAT,
         force=True,
     )
     for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(logger_name)
         logger.handlers.clear()
+        logger.setLevel(logging.INFO)
         logger.propagate = True

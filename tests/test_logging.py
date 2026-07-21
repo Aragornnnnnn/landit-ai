@@ -43,14 +43,23 @@ class LoggingConfigurationTests(unittest.TestCase):
             configure_logging()
 
         basic_config.assert_called_once_with(
-            level=logging.INFO,
+            level=logging.WARNING,
             format=LOG_FORMAT,
             force=True,
         )
         for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
             logger = logging.getLogger(logger_name)
             self.assertEqual([], logger.handlers)
+            self.assertEqual(logging.INFO, logger.level)
             self.assertTrue(logger.propagate)
+
+    def test_configure_logging_does_not_enable_third_party_info_logs(self):
+        configure_logging()
+
+        self.assertEqual(
+            logging.WARNING,
+            logging.getLogger("httpx").getEffectiveLevel(),
+        )
 
 
 if __name__ == "__main__":
