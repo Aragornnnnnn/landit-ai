@@ -54,6 +54,7 @@ def init_metrics(
             {
                 "service.name": settings.otel_service_name,
                 "service.namespace": "landit",
+                "service.version": settings.app_version,
                 "deployment.environment.name": settings.app_env,
             },
         ),

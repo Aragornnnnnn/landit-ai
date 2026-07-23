@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     app_name: str = "landit-ai"
     app_env: str = "local"
+    app_version: str = "local"
     log_level: str = "INFO"
     llm_provider: str = "openrouter"
     openrouter_api_key: SecretStr | None = None
