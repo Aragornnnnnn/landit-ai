@@ -79,6 +79,7 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
+            --build-arg "APP_VERSION=${GITHUB_SHA}" \
             -t "$ECR_IMAGE_URI:${GITHUB_SHA}" \
             -t "$ECR_IMAGE_URI:latest" \
             .

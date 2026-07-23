@@ -38,6 +38,7 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.app_name, "landit-ai")
         self.assertEqual(settings.app_env, "local")
+        self.assertEqual(settings.app_version, "local")
         self.assertEqual(settings.llm_provider, "openrouter")
         self.assertEqual(settings.openrouter_base_url, "https://openrouter.ai/api/v1")
         self.assertIsNone(settings.openrouter_api_key)
@@ -99,6 +100,17 @@ class AppFactoryTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_startup_logs_deployment_version(self):
+        app = create_app(make_settings(app_version="ai-v1.2.3"))
+
+        with self.assertLogs("app.main", level="INFO") as captured_logs:
+            with make_client(app):
+                pass
+
+        output = "\n".join(captured_logs.output)
+        self.assertIn("workflow=deployment_started", output)
+        self.assertIn("serviceVersion=ai-v1.2.3", output)
 
 
 class CommonResponseTests(unittest.TestCase):

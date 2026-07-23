@@ -114,6 +114,7 @@ class MetricsInitializationTests(unittest.TestCase):
                 otel_metrics_enabled=True,
                 otel_service_name="landit-ai-test",
                 app_env="test",
+                app_version="ai-v1.2.3",
             ),
             metric_reader=metric_reader,
         )
@@ -142,6 +143,7 @@ class MetricsInitializationTests(unittest.TestCase):
             resource_attributes["deployment.environment.name"],
             "test",
         )
+        self.assertEqual(resource_attributes["service.version"], "ai-v1.2.3")
         self.assertNotIn("deployment.environment", resource_attributes)
 
         http_points = list(http_metric.data.data_points)
