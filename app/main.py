@@ -11,7 +11,7 @@ from app.core.observability import init_metrics
 from app.core.sentry import init_sentry
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

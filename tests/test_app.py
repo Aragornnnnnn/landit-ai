@@ -104,7 +104,7 @@ class AppFactoryTests(unittest.TestCase):
     def test_startup_logs_deployment_version(self):
         app = create_app(make_settings(app_version="ai-v1.2.3"))
 
-        with self.assertLogs("app.main", level="INFO") as captured_logs:
+        with self.assertLogs("uvicorn.error", level="INFO") as captured_logs:
             with make_client(app):
                 pass
 
