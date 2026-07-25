@@ -84,6 +84,32 @@ class SettingsTests(unittest.TestCase):
 
 
 class AppFactoryTests(unittest.TestCase):
+    def test_prod_app_disables_automatic_documentation_routes(self):
+        app = create_app(make_settings(app_env="prod"))
+
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            with self.subTest(path=path):
+                response = make_client(app).get(path)
+
+                self.assertEqual(response.status_code, 404)
+
+    def test_non_prod_app_keeps_automatic_documentation_routes_and_schema(self):
+        for app_env in (None, "local", "develop"):
+            with self.subTest(app_env=app_env):
+                settings = (
+                    make_settings()
+                    if app_env is None
+                    else make_settings(app_env=app_env)
+                )
+                app = create_app(settings)
+
+                self.assertEqual(make_client(app).get("/docs").status_code, 200)
+                self.assertEqual(make_client(app).get("/redoc").status_code, 200)
+                openapi_response = make_client(app).get("/openapi.json")
+
+                self.assertEqual(openapi_response.status_code, 200)
+                self.assertIn("/health", openapi_response.json()["paths"])
+
     def test_create_app_registers_health_endpoint(self):
         app = create_app(make_settings())
 

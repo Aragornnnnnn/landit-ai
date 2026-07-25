@@ -18,7 +18,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings()
     init_sentry(resolved_settings)
 
-    fastapi_app = FastAPI(title=resolved_settings.app_name)
+    fastapi_app = FastAPI(
+        title=resolved_settings.app_name,
+        docs_url=None if resolved_settings.app_env == "prod" else "/docs",
+        redoc_url=None if resolved_settings.app_env == "prod" else "/redoc",
+        openapi_url=None if resolved_settings.app_env == "prod" else "/openapi.json",
+    )
     fastapi_app.state.settings = resolved_settings
     fastapi_app.include_router(health_router)
     fastapi_app.include_router(conversation_router)
