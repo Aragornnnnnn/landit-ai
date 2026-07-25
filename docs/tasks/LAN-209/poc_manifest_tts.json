@@ -1,0 +1,86 @@
+{
+  "sentence": "There's nothing like hiking to clear my head.",
+  "reference": [
+    {
+      "order": 1,
+      "word": "There's",
+      "phonemes": "DH EH1 R Z",
+      "syllables": [
+        "there's"
+      ],
+      "stressIndex": 0
+    },
+    {
+      "order": 2,
+      "word": "nothing",
+      "phonemes": "N AH1 TH IH0 NG",
+      "syllables": [
+        "nuh",
+        "thing"
+      ],
+      "stressIndex": 0
+    },
+    {
+      "order": 3,
+      "word": "like",
+      "phonemes": "L AY1 K",
+      "syllables": [
+        "like"
+      ],
+      "stressIndex": 0
+    },
+    {
+      "order": 4,
+      "word": "hiking",
+      "phonemes": "HH AY1 K IH0 NG",
+      "syllables": [
+        "hik",
+        "ing"
+      ],
+      "stressIndex": 0
+    },
+    {
+      "order": 5,
+      "word": "to",
+      "phonemes": "T UW0",
+      "syllables": [
+        "to"
+      ],
+      "stressIndex": -1
+    },
+    {
+      "order": 6,
+      "word": "clear",
+      "phonemes": "K L IH1 R",
+      "syllables": [
+        "clear"
+      ],
+      "stressIndex": 0
+    },
+    {
+      "order": 7,
+      "word": "my",
+      "phonemes": "M AY0",
+      "syllables": [
+        "my"
+      ],
+      "stressIndex": -1
+    },
+    {
+      "order": 8,
+      "word": "head",
+      "phonemes": "HH EH1 D",
+      "syllables": [
+        "head"
+      ],
+      "stressIndex": 0
+    }
+  ],
+  "samples": [
+    {
+      "label": "tts_correct",
+      "audio": "docs/tasks/LAN-209/audio/tts_correct.wav",
+      "expected": []
+    }
+  ]
+}

@@ -1,0 +1,598 @@
+{
+  "model": "google/gemini-3.5-flash",
+  "runs": 2,
+  "results": [
+    {
+      "label": "s1_correct",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 4.5,
+      "raw": "There's nothing like hiking to clear my head.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 4.4,
+      "raw": "There's nothing like hiking to clear my head.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "mode": "compare",
+      "run": 1,
+      "latency": 3.9,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "mode": "compare",
+      "run": 2,
+      "latency": 4.0,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 4.5,
+      "raw": "There's nashing like hiking to clear my head.",
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 4.3,
+      "raw": "There's nashing like hiking to clear my head.",
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "mode": "compare",
+      "run": 1,
+      "latency": 4.9,
+      "raw": "{\"differences\": [{\"word\": \"nothing\", \"type\": \"SOUND\", \"note\": \"pronounced with 's' instead of 'th'\"}]}",
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "mode": "compare",
+      "run": 2,
+      "latency": 6.3,
+      "raw": "{\"differences\": [{\"word\": \"nothing\", \"type\": \"SOUND\", \"note\": \"Pronounced with 'sh' instead of 'th'\"}]}",
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_stress",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 5.8,
+      "raw": "There's nothing like hiking to clear my head.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_stress",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 5.4,
+      "raw": "There's nothing like hiking to clear my head.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_stress",
+      "mode": "compare",
+      "run": 1,
+      "latency": 5.9,
+      "raw": "{\"differences\": [{\"word\": \"hiking\", \"type\": \"STRESS\", \"note\": \"stressed on the second syllable\"}]}",
+      "detected": [
+        "hiking:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_stress",
+      "mode": "compare",
+      "run": 2,
+      "latency": 5.6,
+      "raw": "{\"differences\": [{\"word\": \"hiking\", \"type\": \"STRESS\", \"note\": \"stressed on the second syllable\"}]}",
+      "detected": [
+        "hiking:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_correct",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 4.7,
+      "raw": "I can't wait to try a real American diner.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_correct",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 2.9,
+      "raw": "I can't wait to try a real American diner.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_correct",
+      "mode": "compare",
+      "run": 1,
+      "latency": 5.5,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_correct",
+      "mode": "compare",
+      "run": 2,
+      "latency": 5.2,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_phoneme",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 5.3,
+      "raw": "I can't wait to try out Lil American Diner.",
+      "detected": [
+        "a:SOUND",
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "a:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_phoneme",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 7.8,
+      "raw": "I can't wait to try out Leah American Diner.",
+      "detected": [
+        "a:SOUND",
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "a:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_phoneme",
+      "mode": "compare",
+      "run": 1,
+      "latency": 4.4,
+      "raw": "{\"differences\": [{\"word\": \"real\", \"type\": \"SOUND\", \"note\": \"pronounced as 'lear'\"}]}",
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_phoneme",
+      "mode": "compare",
+      "run": 2,
+      "latency": 6.0,
+      "raw": "{\"differences\": [{\"word\": \"real\", \"type\": \"SOUND\", \"note\": \"pronounced as 'liar' or 'lear'\"}]}",
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 7.5,
+      "raw": "I can't wait to try a rear Americahn diner.",
+      "detected": [
+        "american:SOUND",
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "american:SOUND",
+        "real:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_stress",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 5.0,
+      "raw": "I can't wait to try a real Americahn diner.",
+      "detected": [
+        "american:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "american:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_stress",
+      "mode": "compare",
+      "run": 1,
+      "latency": 5.1,
+      "raw": "{\"differences\": [{\"word\": \"American\", \"type\": \"STRESS\", \"note\": \"stressed on the last syllable 'can' instead of the second 'me'\"}]}",
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "mode": "compare",
+      "run": 2,
+      "latency": 5.0,
+      "raw": "{\"differences\": [{\"word\": \"American\", \"type\": \"STRESS\", \"note\": \"stressed on the last syllable 'can' instead of the second syllable 'mer'\"}]}",
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 3.8,
+      "raw": "I've been feeling under the weather since yesterday.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 4.4,
+      "raw": "I've been feeling under the weather since yesterday.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "mode": "compare",
+      "run": 1,
+      "latency": 4.9,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "mode": "compare",
+      "run": 2,
+      "latency": 5.9,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 4.1,
+      "raw": "I've been peeling under the weather since yesterday.",
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 4.0,
+      "raw": "I've been peeling under the weather since yesterday.",
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "mode": "compare",
+      "run": 1,
+      "latency": 4.9,
+      "raw": "{\"differences\": [{\"word\": \"feeling\", \"type\": \"SOUND\", \"note\": \"pronounced with /p/ instead of /f/\"}]}",
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "mode": "compare",
+      "run": 2,
+      "latency": 4.7,
+      "raw": "{\"differences\": [{\"word\": \"feeling\", \"type\": \"SOUND\", \"note\": \"pronounced with a 'p' instead of 'f'\"}]}",
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 5.7,
+      "raw": "I've been feeling under the weather since yesterday.",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 5.0,
+      "raw": "I've been feeling under the weather since yesterday",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "mode": "compare",
+      "run": 1,
+      "latency": 8.4,
+      "raw": "{\"differences\": [{\"word\": \"yesterday\", \"type\": \"STRESS\", \"note\": \"The learner placed the primary stress on the last syllable instead of the first.\"}]}",
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "mode": "compare",
+      "run": 2,
+      "latency": 9.0,
+      "raw": "{\"differences\": [{\"word\": \"yesterday\", \"type\": \"STRESS\", \"note\": \"The learner placed the primary stress on the last syllable instead of the first.\"}]}",
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 4.0,
+      "raw": "Is there any compensation available by any chance?",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 5.8,
+      "raw": "Is there any compensation available by any chance?",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "mode": "compare",
+      "run": 1,
+      "latency": 9.0,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "mode": "compare",
+      "run": 2,
+      "latency": 5.4,
+      "raw": "{\"differences\": []}",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 5.5,
+      "raw": "Is there any compensation obaylable by any chance",
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 6.7,
+      "raw": "Is there any compensation available by any chance?",
+      "detected": [],
+      "missed": [
+        "available:SOUND"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s4_phoneme",
+      "mode": "compare",
+      "run": 1,
+      "latency": 6.2,
+      "raw": "{\"differences\": [{\"word\": \"available\", \"type\": \"SOUND\", \"note\": \"'v' pronounced as 'b'\"}]}",
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "mode": "compare",
+      "run": 2,
+      "latency": 6.0,
+      "raw": "{\"differences\": [{\"word\": \"available\", \"type\": \"SOUND\", \"note\": \"The 'v' sound was pronounced as 'b'.\"}]}",
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "mode": "transcribe",
+      "run": 1,
+      "latency": 4.2,
+      "raw": "Is there any compensation available by any chance?",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "mode": "transcribe",
+      "run": 2,
+      "latency": 5.2,
+      "raw": "Is there any compensation available by any chance?",
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "mode": "compare",
+      "run": 1,
+      "latency": 7.2,
+      "raw": "{\"differences\": [{\"word\": \"compensation\", \"type\": \"STRESS\", \"note\": \"Stressed on the second syllable 'pen' instead of the third 'sa'\"}]}",
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "mode": "compare",
+      "run": 2,
+      "latency": 7.4,
+      "raw": "{\"differences\": [{\"word\": \"compensation\", \"type\": \"STRESS\", \"note\": \"Stressed on the second syllable 'pen' instead of the third 'sa'\"}]}",
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    }
+  ]
+}
