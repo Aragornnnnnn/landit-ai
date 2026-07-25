@@ -66,6 +66,8 @@ def call(client, model: str, content: list) -> tuple[str, float]:
         temperature=0.0,
         max_tokens=4000,
         messages=[{"role": "user", "content": content}],
+        # 지연 최적화 실험 결과 채택: 정확도 손실 없이 p50 5.7s → 4.5s
+        extra_body={"reasoning": {"effort": "low"}},
     )
     text = (response.choices[0].message.content or "").strip()
     return text, time.time() - start
