@@ -190,10 +190,6 @@ def expression_recommendation(**overrides):
         "targetExpressionText": "There's nothing like",
         "baseExpressionMeaningText": "~만 한 게 없다",
         "usageSummary": "좋아하는 경험을 강조할 때 사용",
-        "contextualExample": {
-            "sentenceText": "There's nothing like hiking with friends.",
-            "sentenceTranslation": "친구들과 등산하는 것만 한 게 없어.",
-        },
     }
     recommendation.update(overrides)
     return recommendation
@@ -736,10 +732,6 @@ class FreeTalkApiTests(unittest.TestCase):
                                     targetExpressionText="I need your feedback",
                                     baseExpressionMeaningText="네 의견이 필요해",
                                     usageSummary="Use it to ask someone for their opinion.",
-                                    contextualExample={
-                                        "sentenceText": "I need your feedback on this plan.",
-                                        "sentenceTranslation": "이 계획에 대한 네 의견이 필요해.",
-                                    },
                                 ),
                             ],
                         },

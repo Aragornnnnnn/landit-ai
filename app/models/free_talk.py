@@ -213,18 +213,6 @@ class ExpressionRecommendationsRequest(BaseModel):
         return _validate_not_blank(value)
 
 
-class ContextualExample(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sentenceText: str
-    sentenceTranslation: str
-
-    @field_validator("sentenceText", "sentenceTranslation")
-    @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
-
-
 class ExpressionRecommendation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -234,7 +222,6 @@ class ExpressionRecommendation(BaseModel):
     targetExpressionText: str
     baseExpressionMeaningText: str
     usageSummary: str
-    contextualExample: ContextualExample
 
     @field_validator(
         "targetExpressionText",

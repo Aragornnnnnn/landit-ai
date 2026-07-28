@@ -98,8 +98,6 @@ def _validate_recommendation_feedback_language(recommendation) -> None:
         recommendation.targetExpressionText,
         recommendation.baseExpressionMeaningText,
         recommendation.usageSummary,
-        recommendation.contextualExample.sentenceText,
-        recommendation.contextualExample.sentenceTranslation,
     )
     if any(
         _PROHIBITED_RECOMMENDATION_FEEDBACK_PATTERN.search(text) is not None
@@ -135,8 +133,7 @@ def _recommendations_system_prompt() -> str:
         "conversation. Return only JSON with recommendations. Prefer an appropriate "
         "existing expression; use NEW only when no existing candidate is appropriate. "
         "Each recommendation requires displayOrder, sourceType, existingExpressionId, "
-        "targetExpressionText, baseExpressionMeaningText, usageSummary, and "
-        "contextualExample with sentenceText and sentenceTranslation. sourceType is "
+        "targetExpressionText, baseExpressionMeaningText, and usageSummary. sourceType is "
         "EXISTING or NEW. EXISTING must use an input expressionId; NEW must use null. "
         "Use displayOrder starting at 1 without gaps. Do not give correction feedback."
     )
