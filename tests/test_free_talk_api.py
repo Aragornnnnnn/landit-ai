@@ -154,6 +154,115 @@ def closing_completion(**overrides):
     return result
 
 
+def valid_expression_recommendations_payload(**overrides):
+    payload = {
+        "sessionId": 300,
+        "targetLocale": "EN",
+        "baseLocale": "KR",
+        "conversationHistory": [
+            {
+                "messageId": 3002,
+                "turnNumber": 1,
+                "role": "USER",
+                "content": "I'm going hiking with my friends.",
+                "translatedContent": None,
+            },
+        ],
+        "existingExpressions": [
+            {
+                "expressionId": 1,
+                "targetExpressionText": "There's nothing like",
+                "baseExpressionMeaningText": "~만 한 게 없다",
+                "usageSummary": "좋아하는 경험을 강조할 때 사용",
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def expression_recommendation(**overrides):
+    recommendation = {
+        "displayOrder": 1,
+        "sourceType": "EXISTING",
+        "existingExpressionId": 1,
+        "targetExpressionText": "There's nothing like",
+        "baseExpressionMeaningText": "~만 한 게 없다",
+        "usageSummary": "좋아하는 경험을 강조할 때 사용",
+        "contextualExample": {
+            "sentenceText": "There's nothing like hiking with friends.",
+            "sentenceTranslation": "친구들과 등산하는 것만 한 게 없어.",
+        },
+    }
+    recommendation.update(overrides)
+    return recommendation
+
+
+def valid_expression_learning_content_payload(**overrides):
+    payload = {
+        "sessionId": 300,
+        "targetLocale": "EN",
+        "baseLocale": "KR",
+        "expressions": [
+            {
+                "targetExpressionText": "I'm up for that",
+                "baseExpressionMeaningText": "좋아, 그거 하자",
+                "usageSummary": "제안에 동의할 때 사용",
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def expression_learning_content(**overrides):
+    content = {
+        "targetExpressionText": "I'm up for that",
+        "baseExpressionMeaningText": "좋아, 그거 하자",
+        "usageSummary": "제안에 동의할 때 사용",
+        "usageDescription": "친근한 대화에서 제안을 흔쾌히 받아들일 때 사용합니다.",
+        "representativeQuestionText": "Do you want to go hiking?",
+        "representativeQuestionTranslation": "등산 갈래?",
+        "representativeSentenceText": "I'm up for that.",
+        "representativeSentenceTranslation": "좋아, 그거 하자.",
+        "representativeSentenceWords": ["I'm", "up", "for", "that"],
+        "representativeSentenceWordChoices": ["that", "I'm", "to", "up", "for"],
+        "representativeImageUrl": None,
+        "practiceExamples": [
+            {
+                "imageUrl": None,
+                "sentenceText": "I'm up for trying that new cafe.",
+                "sentenceWords": [
+                    "I'm",
+                    "up",
+                    "for",
+                    "trying",
+                    "that",
+                    "new",
+                    "cafe",
+                ],
+                "highlightingPart": "I'm up for",
+                "practiceQuestion": "Want to try that new cafe?",
+                "sentenceTranslation": "그 새 카페 가보는 거 좋아.",
+                "sentenceWordChoices": [
+                    "new",
+                    "trying",
+                    "I'm",
+                    "to",
+                    "up",
+                    "cafe",
+                    "for",
+                    "that",
+                ],
+                "practiceQuestionTranslation": "새 카페 가볼래?",
+            }
+            for _ in range(4)
+        ],
+    }
+    content.update(overrides)
+    return content
+
+
 class FreeTalkApiTests(unittest.TestCase):
     def _app(self):
         return create_app(
@@ -428,6 +537,283 @@ class FreeTalkApiTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 200)
 
+    def test_expression_recommendations_returns_one_or_three_recommendations(self):
+        for count in (1, 3):
+            with self.subTest(count=count):
+                recommendations = [
+                    expression_recommendation(displayOrder=index)
+                    for index in range(1, count + 1)
+                ]
+                fake_openai = FakeOpenAI(
+                    contents=[json.dumps({"recommendations": recommendations})],
+                )
+
+                response = self._post(
+                    "/api/v1/free-talk/expression-recommendations",
+                    valid_expression_recommendations_payload(),
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(response.json()["data"]["recommendations"]), count)
+                self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_expression_recommendations_supports_existing_and_new_sources(self):
+        cases = (
+            (
+                expression_recommendation(),
+                valid_expression_recommendations_payload(),
+                "EXISTING",
+            ),
+            (
+                expression_recommendation(
+                    sourceType="NEW",
+                    existingExpressionId=None,
+                    targetExpressionText="I'm up for that",
+                    baseExpressionMeaningText="좋아, 그거 하자",
+                ),
+                valid_expression_recommendations_payload(existingExpressions=[]),
+                "NEW",
+            ),
+        )
+
+        for recommendation, payload, source_type in cases:
+            with self.subTest(source_type=source_type):
+                response = self._post(
+                    "/api/v1/free-talk/expression-recommendations",
+                    payload,
+                    FakeOpenAI(
+                        contents=[json.dumps({"recommendations": [recommendation]})],
+                    ),
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["data"]["recommendations"][0]["sourceType"],
+                    source_type,
+                )
+
+    def test_expression_recommendations_rejects_unknown_existing_expression_id(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        {
+                            "recommendations": [
+                                expression_recommendation(existingExpressionId=999),
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_expression_recommendations_rejects_changed_existing_expression_content(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        {
+                            "recommendations": [
+                                expression_recommendation(
+                                    usageSummary="다른 표현의 용법 설명",
+                                ),
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_expression_recommendations_rejects_direct_feedback_language(self):
+        prohibited_summaries = (
+            "Your grammar is incorrect.",
+            "Correct your grammar before using it.",
+            "Your grammar is wrong; correct it this way.",
+            "Your score is low.",
+            "This is feedback on your mistakes.",
+        )
+
+        for usage_summary in prohibited_summaries:
+            with self.subTest(usage_summary=usage_summary):
+                response = self._post(
+                    "/api/v1/free-talk/expression-recommendations",
+                    valid_expression_recommendations_payload(existingExpressions=[]),
+                    FakeOpenAI(
+                        contents=[
+                            json.dumps(
+                                {
+                                    "recommendations": [
+                                        expression_recommendation(
+                                            sourceType="NEW",
+                                            existingExpressionId=None,
+                                            usageSummary=usage_summary,
+                                        ),
+                                    ],
+                                },
+                            ),
+                        ],
+                    ),
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(
+                    response.json()["error"]["code"],
+                    "AI_RESPONSE_INVALID",
+                )
+
+    def test_expression_recommendations_allows_natural_usage_description(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(existingExpressions=[]),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        {
+                            "recommendations": [
+                                expression_recommendation(
+                                    sourceType="NEW",
+                                    existingExpressionId=None,
+                                    usageSummary="A natural way to enthusiastically agree.",
+                                ),
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_expression_recommendations_allows_score_a_goal_expression(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(existingExpressions=[]),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        {
+                            "recommendations": [
+                                expression_recommendation(
+                                    sourceType="NEW",
+                                    existingExpressionId=None,
+                                    targetExpressionText="score a goal",
+                                    baseExpressionMeaningText="골을 넣다",
+                                    usageSummary="Use it when talking about sports.",
+                                ),
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_expression_recommendations_allows_feedback_request_expression(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(existingExpressions=[]),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        {
+                            "recommendations": [
+                                expression_recommendation(
+                                    sourceType="NEW",
+                                    existingExpressionId=None,
+                                    targetExpressionText="I need your feedback",
+                                    baseExpressionMeaningText="네 의견이 필요해",
+                                    usageSummary="Use it to ask someone for their opinion.",
+                                    contextualExample={
+                                        "sentenceText": "I need your feedback on this plan.",
+                                        "sentenceTranslation": "이 계획에 대한 네 의견이 필요해.",
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_expression_learning_content_returns_complete_text_only_content(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-learning-content",
+            valid_expression_learning_content_payload(),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        {"expressions": [expression_learning_content()]},
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.json()["data"]["expressions"][0]
+        self.assertIsNone(content["representativeImageUrl"])
+        self.assertEqual(len(content["practiceExamples"]), 4)
+        self.assertTrue(
+            all(example["imageUrl"] is None for example in content["practiceExamples"]),
+        )
+
+    def test_expression_learning_content_rejects_invalid_response_without_retry(self):
+        invalid_content = expression_learning_content()
+        invalid_content["practiceExamples"] = invalid_content["practiceExamples"][:3]
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps({"expressions": [invalid_content]}),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/expression-learning-content",
+            valid_expression_learning_content_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_expression_learning_content_rejects_invalid_json_without_retry(self):
+        fake_openai = FakeOpenAI(
+            contents=["not json"],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/expression-learning-content",
+            valid_expression_learning_content_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_expression_learning_content_maps_generation_failure_to_503(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-learning-content",
+            valid_expression_learning_content_payload(),
+            FakeOpenAI(error=RuntimeError("provider unavailable")),
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+
     def test_sdk_failure_maps_to_generation_failed(self):
         response = self._post(
             "/api/v1/free-talk/opening",
@@ -455,6 +841,8 @@ class FreeTalkApiTests(unittest.TestCase):
             "/api/v1/free-talk/opening",
             "/api/v1/free-talk/turn",
             "/api/v1/free-talk/closing",
+            "/api/v1/free-talk/expression-recommendations",
+            "/api/v1/free-talk/expression-learning-content",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, paths)
