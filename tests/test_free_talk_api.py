@@ -155,13 +155,13 @@ def closing_completion(**overrides):
 
 
 class FreeTalkApiTests(unittest.TestCase):
-    def _app(self):
-        return create_app(
-            make_settings(
-                openrouter_api_key="test-openrouter-key",
-                openrouter_model="openrouter-test-model",
-            ),
-        )
+    def _app(self, **overrides):
+        settings = {
+            "openrouter_api_key": "test-openrouter-key",
+            "openrouter_model": "openrouter-test-model",
+        }
+        settings.update(overrides)
+        return create_app(make_settings(**settings))
 
     def _post(self, path, payload, fake_openai):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
@@ -242,7 +242,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 )
 
     def test_turn_requires_korean_inferred_title_on_first_user_turn(self):
-        invalid_titles = (None, "Weekend 주말")
+        invalid_titles = (None, "Weekend 주말", "123")
 
         for title in invalid_titles:
             with self.subTest(title=title):
@@ -366,6 +366,29 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(len(fake_openai.completions.calls), 1)
 
     def test_closing_rejects_question_form_message(self):
+        question_messages = (
+            "Would you like to talk again?",
+            "Would you like to talk again? 😊",
+        )
+
+        for message in question_messages:
+            with self.subTest(message=message):
+                response = self._post(
+                    "/api/v1/free-talk/closing",
+                    valid_closing_payload(),
+                    FakeOpenAI(
+                        contents=[
+                            json.dumps(closing_completion(aiMessage=message)),
+                        ],
+                    ),
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(
+                    response.json()["error"]["code"], "AI_RESPONSE_INVALID"
+                )
+
+    def test_closing_rejects_feedback_style_inner_thought(self):
         response = self._post(
             "/api/v1/free-talk/closing",
             valid_closing_payload(),
@@ -373,7 +396,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 contents=[
                     json.dumps(
                         closing_completion(
-                            aiMessage="Would you like to talk again?",
+                            innerThought="문법을 교정하면 더 자연스러워질 텐데.",
                         ),
                     ),
                 ],
@@ -437,6 +460,30 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+
+    def test_invalid_llm_settings_fail_before_openai_call(self):
+        invalid_settings = (
+            {"openrouter_api_key": None},
+            {"openrouter_api_key": "   "},
+            {"openrouter_model": None},
+            {"openrouter_model": "   "},
+            {"llm_provider": "unsupported"},
+        )
+
+        for settings in invalid_settings:
+            with self.subTest(settings=settings), patch(
+                "app.core.openai_client.OpenAI"
+            ) as openai:
+                response = make_client(self._app(**settings)).post(
+                    "/api/v1/free-talk/opening",
+                    json=valid_opening_payload(),
+                )
+
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(
+                    response.json()["error"]["code"], "AI_GENERATION_FAILED"
+                )
+                openai.assert_not_called()
 
     def test_invalid_json_contract_maps_to_response_invalid(self):
         response = self._post(

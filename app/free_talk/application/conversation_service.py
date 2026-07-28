@@ -25,6 +25,7 @@ from app.models.free_talk import (
 
 
 _KOREAN_TITLE_PATTERN = re.compile(r"[가-힣0-9\s·-]+$")
+_KOREAN_CHARACTER_PATTERN = re.compile(r"[가-힣]")
 _PROHIBITED_INNER_THOUGHT_PATTERN = re.compile(
     r"문법|자연스러(?:움|운)|점수|교정|피드백|"
     r"grammar|naturalness|score|correction|feedback",
@@ -157,7 +158,8 @@ def generate_closing(
                 candidate.directedAttack,
             ),
         )
-    except ValidationError as exc:
+        _validate_inner_thought(response.innerThought)
+    except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
     if _is_invalid_closing_message(response.aiMessage) or _is_invalid_closing_message(
         response.translatedMessage,
@@ -185,6 +187,7 @@ def _validate_inferred_title(
         or not title.strip()
         or len(title.strip()) > 30
         or _KOREAN_TITLE_PATTERN.fullmatch(title.strip()) is None
+        or _KOREAN_CHARACTER_PATTERN.search(title) is None
     ):
         raise ValueError("first user turn requires a short Korean inferred title")
 
@@ -232,7 +235,8 @@ def _closing_system_prompt() -> str:
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
         "Return aiMessage, translatedMessage, emotion, innerThought, answerCoverage, "
-        "relationshipTone, and directedAttack."
+        "relationshipTone, and directedAttack. innerThought is a private reaction only. "
+        "Do not mention grammar, naturalness, scores, corrections, feedback, or learning advice."
     )
 
 
@@ -251,7 +255,7 @@ def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
 def _is_invalid_closing_message(message: str) -> bool:
     normalized = re.sub(r"\s+", " ", message).strip()
     return (
-        normalized.endswith(("?", "？"))
+        re.search(r"[?？][\s\W_]*$", normalized) is not None
         or _CLOSING_META_PATTERN.search(normalized) is not None
         or _NEW_TOPIC_CLOSING_PATTERN.search(normalized) is not None
     )
