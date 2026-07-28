@@ -34,6 +34,11 @@ class FreeTalkClosingReason(StrEnum):
     TIME_LIMIT_REACHED = "TIME_LIMIT_REACHED"
 
 
+class ExpressionSourceType(StrEnum):
+    EXISTING = "EXISTING"
+    NEW = "NEW"
+
+
 class FreeTalkTopicContext(BaseModel):
     topicId: int | None = Field(default=None, gt=0)
     title: str
@@ -177,3 +182,190 @@ class FreeTalkClosingResponse(BaseModel):
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+class ExistingExpression(BaseModel):
+    expressionId: int = Field(gt=0)
+    targetExpressionText: str
+    baseExpressionMeaningText: str
+    usageSummary: str
+
+    @field_validator(
+        "targetExpressionText",
+        "baseExpressionMeaningText",
+        "usageSummary",
+    )
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ExpressionRecommendationsRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    targetLocale: str
+    baseLocale: str
+    conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
+    existingExpressions: list[ExistingExpression]
+
+    @field_validator("targetLocale", "baseLocale")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ContextualExample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sentenceText: str
+    sentenceTranslation: str
+
+    @field_validator("sentenceText", "sentenceTranslation")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ExpressionRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    displayOrder: int = Field(gt=0)
+    sourceType: ExpressionSourceType
+    existingExpressionId: int | None = Field(default=None, gt=0)
+    targetExpressionText: str
+    baseExpressionMeaningText: str
+    usageSummary: str
+    contextualExample: ContextualExample
+
+    @field_validator(
+        "targetExpressionText",
+        "baseExpressionMeaningText",
+        "usageSummary",
+    )
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @model_validator(mode="after")
+    def existing_expression_id_must_match_source_type(self) -> Self:
+        if (
+            self.sourceType == ExpressionSourceType.EXISTING
+            and self.existingExpressionId is None
+        ):
+            raise ValueError("EXISTING recommendation requires existingExpressionId")
+        if (
+            self.sourceType == ExpressionSourceType.NEW
+            and self.existingExpressionId is not None
+        ):
+            raise ValueError("NEW recommendation must not contain existingExpressionId")
+        return self
+
+
+class ExpressionRecommendationsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recommendations: list[ExpressionRecommendation] = Field(min_length=1, max_length=3)
+
+
+class LearningExpressionRequest(BaseModel):
+    targetExpressionText: str
+    baseExpressionMeaningText: str
+    usageSummary: str
+
+    @field_validator(
+        "targetExpressionText",
+        "baseExpressionMeaningText",
+        "usageSummary",
+    )
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ExpressionLearningContentRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    targetLocale: str
+    baseLocale: str
+    expressions: list[LearningExpressionRequest] = Field(min_length=1)
+
+    @field_validator("targetLocale", "baseLocale")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ExpressionPracticeExample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    imageUrl: None = None
+    sentenceText: str
+    sentenceWords: list[str] = Field(min_length=1)
+    highlightingPart: str
+    practiceQuestion: str
+    sentenceTranslation: str
+    sentenceWordChoices: list[str] = Field(min_length=1)
+    practiceQuestionTranslation: str
+
+    @field_validator(
+        "sentenceText",
+        "highlightingPart",
+        "practiceQuestion",
+        "sentenceTranslation",
+        "practiceQuestionTranslation",
+    )
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("sentenceWords", "sentenceWordChoices")
+    @classmethod
+    def word_fields_must_not_contain_blank_values(cls, value: list[str]) -> list[str]:
+        for word in value:
+            _validate_not_blank(word)
+        return value
+
+
+class ExpressionLearningContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    targetExpressionText: str
+    baseExpressionMeaningText: str
+    usageSummary: str
+    usageDescription: str
+    representativeQuestionText: str
+    representativeQuestionTranslation: str
+    representativeSentenceText: str
+    representativeSentenceTranslation: str
+    representativeSentenceWords: list[str] = Field(min_length=1)
+    representativeSentenceWordChoices: list[str] = Field(min_length=1)
+    representativeImageUrl: None = None
+    practiceExamples: list[ExpressionPracticeExample] = Field(min_length=1)
+
+    @field_validator(
+        "targetExpressionText",
+        "baseExpressionMeaningText",
+        "usageSummary",
+        "usageDescription",
+        "representativeQuestionText",
+        "representativeQuestionTranslation",
+        "representativeSentenceText",
+        "representativeSentenceTranslation",
+    )
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator(
+        "representativeSentenceWords",
+        "representativeSentenceWordChoices",
+    )
+    @classmethod
+    def word_fields_must_not_contain_blank_values(cls, value: list[str]) -> list[str]:
+        for word in value:
+            _validate_not_blank(word)
+        return value
+
+
+class ExpressionLearningContentResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expressions: list[ExpressionLearningContent] = Field(min_length=1)
