@@ -14,6 +14,15 @@ logger = logging.getLogger(__name__)
 class AiResponseInvalidError(Exception):
     """AI 응답이 JSON 계약을 만족하지 않을 때 발생한다."""
 
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        raw_content: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_content = raw_content
+
 
 class AiGenerationFailedError(Exception):
     """AI 호출 자체가 실패했을 때 발생한다."""
@@ -68,7 +77,13 @@ def _parse_json_object(content: str) -> dict[str, object]:
     try:
         data = json.loads(content)
     except JSONDecodeError as exc:
-        raise AiResponseInvalidError("completion is not valid JSON") from exc
+        raise AiResponseInvalidError(
+            "completion is not valid JSON",
+            raw_content=content,
+        ) from exc
     if not isinstance(data, dict):
-        raise AiResponseInvalidError("completion must be a JSON object")
+        raise AiResponseInvalidError(
+            "completion must be a JSON object",
+            raw_content=content,
+        )
     return data
