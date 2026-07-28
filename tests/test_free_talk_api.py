@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import Settings
+from app.free_talk.llm.json_completion import AiResponseInvalidError
 from app.main import create_app
 
 
@@ -750,16 +751,17 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_expression_learning_content_returns_complete_text_only_content(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {"expressions": [expression_learning_content()]},
+                ),
+            ],
+        )
         response = self._post(
             "/api/v1/free-talk/expression-learning-content",
             valid_expression_learning_content_payload(),
-            FakeOpenAI(
-                contents=[
-                    json.dumps(
-                        {"expressions": [expression_learning_content()]},
-                    ),
-                ],
-            ),
+            fake_openai,
         )
 
         self.assertEqual(response.status_code, 200)
@@ -768,6 +770,10 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(len(content["practiceExamples"]), 4)
         self.assertTrue(
             all(example["imageUrl"] is None for example in content["practiceExamples"]),
+        )
+        self.assertIn(
+            "expressions in the input order",
+            fake_openai.completions.calls[0]["messages"][0]["content"],
         )
 
     def test_expression_learning_content_rejects_invalid_response_without_retry(self):
@@ -788,6 +794,9 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
         self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_invalid_ai_response_without_message_is_not_rendered_as_none(self):
+        self.assertEqual(str(AiResponseInvalidError()), "")
 
     def test_expression_learning_content_rejects_invalid_json_without_retry(self):
         fake_openai = FakeOpenAI(

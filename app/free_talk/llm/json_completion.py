@@ -20,7 +20,10 @@ class AiResponseInvalidError(Exception):
         *,
         raw_content: str | None = None,
     ) -> None:
-        super().__init__(message)
+        if message is None:
+            super().__init__()
+        else:
+            super().__init__(message)
         self.raw_content = raw_content
 
 

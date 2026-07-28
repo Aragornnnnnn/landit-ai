@@ -115,7 +115,9 @@ def _validate_learning_content(
     response = ExpressionLearningContentResponse.model_validate(data)
     if len(response.expressions) != len(payload.expressions):
         raise ValueError("learning content must match every requested expression")
-    for requested_expression, content in zip(payload.expressions, response.expressions):
+    for requested_expression, content in zip(
+        payload.expressions, response.expressions, strict=True
+    ):
         if (
             content.targetExpressionText != requested_expression.targetExpressionText
             or content.baseExpressionMeaningText
@@ -143,7 +145,8 @@ def _recommendations_system_prompt() -> str:
 def _learning_content_system_prompt() -> str:
     return (
         "Generate complete text-only learning content for each requested English "
-        "expression. Return only JSON with expressions. Preserve every requested "
+        "expression. Return only JSON with expressions in the input order. "
+        "Preserve every requested "
         "targetExpressionText, baseExpressionMeaningText, and usageSummary. Each item "
         "requires usageDescription, representativeQuestionText, "
         "representativeQuestionTranslation, representativeSentenceText, "
