@@ -19,8 +19,6 @@ def valid_turn_response(**overrides):
         "aiMessage": "That sounds fun!",
         "translatedMessage": "재밌겠다!",
         "emotion": "HAPPY",
-        "innerThought": "즐거워 보이네.",
-        "innerThoughtType": "GOOD",
     }
     response.update(overrides)
     return response
@@ -98,8 +96,6 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
             "aiMessage": "See you!",
             "translatedMessage": "또 봐!",
             "emotion": "HAPPY",
-            "innerThought": "아쉽지만 이해해.",
-            "innerThoughtType": "GOOD",
         }
 
         for field, value in generated_fields.items():
@@ -108,8 +104,6 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
                 aiMessage=None,
                 translatedMessage=None,
                 emotion=None,
-                innerThought=None,
-                innerThoughtType=None,
             )
             payload[field] = value
             with self.subTest(field=field), self.assertRaises(ValidationError):
@@ -123,8 +117,6 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
                 aiMessage=None,
                 translatedMessage=None,
                 emotion=None,
-                innerThought=None,
-                innerThoughtType=None,
             )
         )
 
@@ -135,8 +127,6 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
             "aiMessage",
             "translatedMessage",
             "emotion",
-            "innerThought",
-            "innerThoughtType",
         )
 
         for field in generated_fields:
