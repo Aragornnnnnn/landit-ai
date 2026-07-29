@@ -51,8 +51,6 @@ def valid_opening_payload():
         "sessionId": 300,
         "targetLocale": "EN",
         "baseLocale": "KR",
-        "partnerDisplayName": "Harper",
-        "accentLocale": "EN_US",
         "topic": {
             "topicId": 2,
             "title": "주말 계획",
@@ -68,8 +66,6 @@ def valid_turn_payload(**overrides):
         "submittedTurnNumber": 1,
         "targetLocale": "EN",
         "baseLocale": "KR",
-        "partnerDisplayName": "Harper",
-        "accentLocale": "EN_US",
         "responseMode": "NORMAL",
         "isFirstUserTurn": True,
         "topic": None,
@@ -94,8 +90,6 @@ def valid_closing_payload(**overrides):
         "submittedTurnNumber": 5,
         "targetLocale": "EN",
         "baseLocale": "KR",
-        "partnerDisplayName": "Harper",
-        "accentLocale": "EN_US",
         "closingReason": "USER_CONFIRMED",
         "topic": {"title": "주말 등산 이야기"},
         "conversationHistory": [
@@ -108,6 +102,14 @@ def valid_closing_payload(**overrides):
             },
         ],
     }
+    payload.update(overrides)
+    return payload
+
+
+def valid_inner_thought_payload(**overrides):
+    payload = valid_turn_payload()
+    payload.pop("responseMode")
+    payload.pop("isFirstUserTurn")
     payload.update(overrides)
     return payload
 
@@ -129,11 +131,6 @@ def normal_turn_completion(**overrides):
         "aiMessage": "That sounds fun! Where are you going hiking?",
         "translatedMessage": "재밌겠다! 어디로 등산 가?",
         "emotion": "HAPPY",
-        "innerThought": "친구들과 등산을 간다니 꽤 기대하고 있나 보네.",
-        "innerThoughtType": "BAD",
-        "answerCoverage": "COMPLETE",
-        "relationshipTone": "WARM",
-        "directedAttack": False,
     }
     result.update(overrides)
     return result
@@ -144,8 +141,14 @@ def closing_completion(**overrides):
         "aiMessage": "No problem. It was great talking with you.",
         "translatedMessage": "그럼. 이야기해서 즐거웠어.",
         "emotion": "HAPPY",
-        "innerThought": "이제 가봐야 하나 보네. 즐겁게 얘기해서 좋았다.",
-        "innerThoughtType": "BAD",
+    }
+    result.update(overrides)
+    return result
+
+
+def inner_thought_completion(**overrides):
+    result = {
+        "innerThought": "친구들과 등산을 간다니 꽤 기대하고 있나 보네.",
         "answerCoverage": "COMPLETE",
         "relationshipTone": "WARM",
         "directedAttack": False,
@@ -199,7 +202,18 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
-    def test_turn_normal_returns_real_derived_inner_thought_type(self):
+    def test_opening_rejects_internal_partner_name_field(self):
+        payload = valid_opening_payload()
+        payload["partnerDisplayName"] = "Harper"
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            payload,
+            FakeOpenAI(contents=[json.dumps(opening_completion())]),
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_turn_normal_returns_visible_message_without_inner_thought(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
         response = self._post(
             "/api/v1/free-talk/turn",
@@ -208,12 +222,28 @@ class FreeTalkApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
         self.assertEqual(
             response.json()["data"]["aiMessage"],
             "That sounds fun! Where are you going hiking?",
         )
+        self.assertNotIn("innerThought", response.json()["data"])
         self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_inner_thought_returns_derived_type_separately_from_turn(self):
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            FakeOpenAI(contents=[json.dumps(inner_thought_completion())]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "innerThought": "친구들과 등산을 간다니 꽤 기대하고 있나 보네.",
+                "innerThoughtType": "GOOD",
+            },
+        )
 
     def test_turn_rejects_korean_or_english_feedback_style_inner_thought(self):
         prohibited_inner_thoughts = (
@@ -224,12 +254,12 @@ class FreeTalkApiTests(unittest.TestCase):
         for inner_thought in prohibited_inner_thoughts:
             with self.subTest(inner_thought=inner_thought):
                 response = self._post(
-                    "/api/v1/free-talk/turn",
-                    valid_turn_payload(),
+                    "/api/v1/free-talk/inner-thought",
+                    valid_inner_thought_payload(),
                     FakeOpenAI(
                         contents=[
                             json.dumps(
-                                normal_turn_completion(innerThought=inner_thought),
+                                inner_thought_completion(innerThought=inner_thought),
                             ),
                         ],
                     ),
@@ -285,11 +315,6 @@ class FreeTalkApiTests(unittest.TestCase):
                             aiMessage=None,
                             translatedMessage=None,
                             emotion=None,
-                            innerThought=None,
-                            innerThoughtType=None,
-                            answerCoverage=None,
-                            relationshipTone=None,
-                            directedAttack=None,
                         ),
                     ),
                 ],
@@ -305,8 +330,6 @@ class FreeTalkApiTests(unittest.TestCase):
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
-                "innerThought": None,
-                "innerThoughtType": None,
             },
         )
 
@@ -349,7 +372,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertFalse(response.json()["data"]["userExitIntentDetected"])
         self.assertIsNone(response.json()["data"]["inferredTitle"])
 
-    def test_closing_supports_both_reasons_and_derives_inner_thought_type(self):
+    def test_closing_supports_both_reasons_without_inner_thought(self):
         for reason in ("USER_CONFIRMED", "TIME_LIMIT_REACHED"):
             with self.subTest(reason=reason):
                 fake_openai = FakeOpenAI(
@@ -362,7 +385,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 )
 
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
+                self.assertNotIn("innerThought", response.json()["data"])
                 self.assertEqual(len(fake_openai.completions.calls), 1)
 
     def test_closing_rejects_question_form_message(self):
@@ -390,12 +413,12 @@ class FreeTalkApiTests(unittest.TestCase):
 
     def test_closing_rejects_feedback_style_inner_thought(self):
         response = self._post(
-            "/api/v1/free-talk/closing",
-            valid_closing_payload(),
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
             FakeOpenAI(
                 contents=[
                     json.dumps(
-                        closing_completion(
+                        inner_thought_completion(
                             innerThought="문법을 교정하면 더 자연스러워질 텐데.",
                         ),
                     ),
@@ -501,6 +524,7 @@ class FreeTalkApiTests(unittest.TestCase):
         for path in (
             "/api/v1/free-talk/opening",
             "/api/v1/free-talk/turn",
+            "/api/v1/free-talk/inner-thought",
             "/api/v1/free-talk/closing",
         ):
             with self.subTest(path=path):

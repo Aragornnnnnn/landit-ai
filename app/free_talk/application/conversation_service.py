@@ -16,6 +16,8 @@ from app.models.free_talk import (
     Emotion,
     FreeTalkClosingRequest,
     FreeTalkClosingResponse,
+    FreeTalkInnerThoughtRequest,
+    FreeTalkInnerThoughtResponse,
     FreeTalkOpeningRequest,
     FreeTalkOpeningResponse,
     FreeTalkResponseMode,
@@ -54,17 +56,15 @@ class _TurnCandidate(BaseModel):
     aiMessage: str | None = None
     translatedMessage: str | None = None
     emotion: Emotion | None = None
-    innerThought: str | None = None
-    innerThoughtType: object | None = None
-    answerCoverage: AnswerCoverage | None = None
-    relationshipTone: RelationshipTone | None = None
-    directedAttack: bool | None = None
 
 
 class _ClosingCandidate(BaseModel):
     aiMessage: str
     translatedMessage: str
     emotion: Emotion
+
+
+class _InnerThoughtCandidate(BaseModel):
     innerThought: str
     answerCoverage: AnswerCoverage
     relationshipTone: RelationshipTone
@@ -113,10 +113,7 @@ def generate_turn(
                 aiMessage=candidate.aiMessage,
                 translatedMessage=candidate.translatedMessage,
                 emotion=candidate.emotion,
-                innerThought=candidate.innerThought,
-                innerThoughtType=candidate.innerThoughtType,
             )
-        _validate_inner_thought(candidate.innerThought)
         return FreeTalkTurnResponse(
             userExitIntentDetected=False,
             inferredTitle=(
@@ -125,12 +122,6 @@ def generate_turn(
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
             emotion=candidate.emotion,
-            innerThought=candidate.innerThought,
-            innerThoughtType=derive_inner_thought_type(
-                _required_evidence(candidate.answerCoverage),
-                _required_evidence(candidate.relationshipTone),
-                _required_evidence(candidate.directedAttack),
-            ),
         )
     except (TypeError, ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -151,14 +142,7 @@ def generate_closing(
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
             emotion=candidate.emotion,
-            innerThought=candidate.innerThought,
-            innerThoughtType=derive_inner_thought_type(
-                candidate.answerCoverage,
-                candidate.relationshipTone,
-                candidate.directedAttack,
-            ),
         )
-        _validate_inner_thought(response.innerThought)
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
     if _is_invalid_closing_message(response.aiMessage) or _is_invalid_closing_message(
@@ -168,10 +152,28 @@ def generate_closing(
     return response
 
 
-def _required_evidence(value: object) -> object:
-    if value is None:
-        raise ValueError("normal turn requires evaluation evidence")
-    return value
+def generate_inner_thought(
+    payload: FreeTalkInnerThoughtRequest,
+    settings: Settings,
+) -> FreeTalkInnerThoughtResponse:
+    data = request_json_completion(
+        settings=settings,
+        system_prompt=_inner_thought_system_prompt(),
+        user_prompt=_inner_thought_user_prompt(payload),
+    )
+    try:
+        candidate = _InnerThoughtCandidate.model_validate(data)
+        _validate_inner_thought(candidate.innerThought)
+        return FreeTalkInnerThoughtResponse(
+            innerThought=candidate.innerThought,
+            innerThoughtType=derive_inner_thought_type(
+                candidate.answerCoverage,
+                candidate.relationshipTone,
+                candidate.directedAttack,
+            ),
+        )
+    except (ValidationError, ValueError) as exc:
+        raise AiResponseInvalidError from exc
 
 
 def _validate_inferred_title(
@@ -218,14 +220,9 @@ def _turn_system_prompt(response_mode: FreeTalkResponseMode) -> str:
         "Generate one free-talk turn as JSON. "
         f"{exit_policy} "
         "When userExitIntentDetected is true, leave all generated message fields null. "
-        "Otherwise return aiMessage, translatedMessage, emotion, innerThought, "
-        "answerCoverage, relationshipTone, and directedAttack. "
+        "Otherwise return aiMessage, translatedMessage, and emotion. "
         "For a first user turn, inferredTitle must be a short Korean title; "
-        "for later turns, inferredTitle must be null. "
-        "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
-        "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
-        "innerThought is a private reaction only. Do not mention grammar, naturalness, "
-        "scores, corrections, feedback, or learning advice."
+        "for later turns, inferredTitle must be null."
     )
 
 
@@ -234,9 +231,18 @@ def _closing_system_prompt() -> str:
         "Generate a natural final free-talk message as JSON. Do not ask a question, "
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
-        "Return aiMessage, translatedMessage, emotion, innerThought, answerCoverage, "
-        "relationshipTone, and directedAttack. innerThought is a private reaction only. "
-        "Do not mention grammar, naturalness, scores, corrections, feedback, or learning advice."
+        "Return aiMessage, translatedMessage, and emotion."
+    )
+
+
+def _inner_thought_system_prompt() -> str:
+    return (
+        "Generate the free-talk counterpart's private reaction to the last user message as JSON. "
+        "Return innerThought, answerCoverage, relationshipTone, and directedAttack. "
+        "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
+        "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
+        "innerThought is Korean and must not mention grammar, naturalness, scores, corrections, "
+        "feedback, or learning advice."
     )
 
 
@@ -249,6 +255,10 @@ def _turn_user_prompt(payload: FreeTalkTurnRequest) -> str:
 
 
 def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
+    return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
     return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
 
 

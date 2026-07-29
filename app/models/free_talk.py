@@ -48,18 +48,16 @@ class FreeTalkTopicContext(BaseModel):
 
 
 class FreeTalkContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     sessionId: int = Field(gt=0)
     targetLocale: str
     baseLocale: str
-    partnerDisplayName: str
-    accentLocale: str
     topic: FreeTalkTopicContext | None = None
 
     @field_validator(
         "targetLocale",
         "baseLocale",
-        "partnerDisplayName",
-        "accentLocale",
     )
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
@@ -118,10 +116,8 @@ class FreeTalkTurnResponse(BaseModel):
     aiMessage: str | None
     translatedMessage: str | None
     emotion: Emotion | None
-    innerThought: str | None
-    innerThoughtType: InnerThoughtType | None
 
-    @field_validator("inferredTitle", "aiMessage", "translatedMessage", "innerThought")
+    @field_validator("inferredTitle", "aiMessage", "translatedMessage")
     @classmethod
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
         if value is None:
@@ -134,8 +130,6 @@ class FreeTalkTurnResponse(BaseModel):
             self.aiMessage,
             self.translatedMessage,
             self.emotion,
-            self.innerThought,
-            self.innerThoughtType,
         )
         if self.userExitIntentDetected:
             if any(field is not None for field in generated_fields):
@@ -143,6 +137,35 @@ class FreeTalkTurnResponse(BaseModel):
         elif any(field is None for field in generated_fields):
             raise ValueError("normal response requires generated fields")
         return self
+
+
+class FreeTalkInnerThoughtRequest(FreeTalkContext):
+    submittedMessageId: int = Field(gt=0)
+    submittedTurnNumber: int = Field(gt=0)
+    conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def submitted_message_must_match_latest_history(self) -> Self:
+        latest_message = self.conversationHistory[-1]
+        if (
+            latest_message.role != "USER"
+            or latest_message.messageId != self.submittedMessageId
+            or latest_message.turnNumber != self.submittedTurnNumber
+        ):
+            raise ValueError("submitted message must match latest user history")
+        return self
+
+
+class FreeTalkInnerThoughtResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    innerThought: str
+    innerThoughtType: InnerThoughtType
+
+    @field_validator("innerThought")
+    @classmethod
+    def inner_thought_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
 
 
 class FreeTalkClosingRequest(FreeTalkContext):
@@ -170,10 +193,8 @@ class FreeTalkClosingResponse(BaseModel):
     aiMessage: str
     translatedMessage: str
     emotion: Emotion
-    innerThought: str
-    innerThoughtType: InnerThoughtType
 
-    @field_validator("aiMessage", "translatedMessage", "innerThought")
+    @field_validator("aiMessage", "translatedMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)

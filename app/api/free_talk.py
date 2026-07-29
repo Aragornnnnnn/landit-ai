@@ -7,12 +7,15 @@ from app.free_talk.application.conversation_service import (
     AiGenerationFailedError,
     AiResponseInvalidError,
     generate_closing,
+    generate_inner_thought,
     generate_opening,
     generate_turn,
 )
 from app.models.free_talk import (
     FreeTalkClosingRequest,
     FreeTalkClosingResponse,
+    FreeTalkInnerThoughtRequest,
+    FreeTalkInnerThoughtResponse,
     FreeTalkOpeningRequest,
     FreeTalkOpeningResponse,
     FreeTalkTurnRequest,
@@ -37,6 +40,14 @@ def create_turn(
     request: Request,
 ) -> ApiResponse[FreeTalkTurnResponse]:
     return success_response(_generate(payload, request, generate_turn))
+
+
+@router.post("/inner-thought", response_model=ApiResponse[FreeTalkInnerThoughtResponse])
+def create_inner_thought(
+    payload: FreeTalkInnerThoughtRequest,
+    request: Request,
+) -> ApiResponse[FreeTalkInnerThoughtResponse]:
+    return success_response(_generate(payload, request, generate_inner_thought))
 
 
 @router.post("/closing", response_model=ApiResponse[FreeTalkClosingResponse])
