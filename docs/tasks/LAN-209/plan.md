@@ -120,6 +120,14 @@ Gemini 2.5 Flash(OpenRouter)가 사전 구축 기준 데이터 대비 음소·�
 | **reasoning effort low** | **6/6** | **4.5s** | **채택** — 정확도 손실 없이 1.2s 절약 |
 | gemini-3.5-flash-lite | 2/6 | 2.5s | 빠르지만 오류를 전혀 감지 못함 — 탈락 |
 
+재현성 메모. compare 24회의 p50은 스크립트가 정렬된 배열의
+`lat[len(lat) // 2]`를 선택해 계산하므로 5.6초다. 원본의 6회
+`reasoning effort low` 결과 JSON은 실험 당시 보존하지 못했다. 현재 요청 설정은
+`google/gemini-3.5-flash`, `temperature=0.0`, `max_tokens=4000`,
+`extra_body={"reasoning": {"effort": "low"}}`이며 compare 모드에서 TTS 참조 음성과
+학습자 음성을 함께 전송한다. 실제 기능 구현 전에는 같은 s1 3샘플 2회 조건으로 다시
+측정해 원본 JSON을 함께 보존한다.
+
 결론: `gemini-3.5-flash` + `reasoning: {effort: low}`로 확정, 예상 지연 4~5초대.
 추가 단축은 서버가 아니라 UX에서: 녹음 종료 즉시 업로드 시작, 분석 중 화면에
 실시간 STT 자막 결과 재활용 등.
