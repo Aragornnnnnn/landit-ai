@@ -8,6 +8,7 @@ from app.api.free_talk import router as free_talk_router
 from app.api.health import router as health_router
 from app.common.exception_handlers import register_exception_handlers
 from app.core.config import Settings
+from app.core.logging import configure_logging
 from app.core.observability import init_metrics
 from app.core.sentry import init_sentry
 
@@ -17,6 +18,7 @@ logger = logging.getLogger("uvicorn.error")
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings()
+    configure_logging()
     init_sentry(resolved_settings)
 
     fastapi_app = FastAPI(
