@@ -38,6 +38,7 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.app_name, "landit-ai")
         self.assertEqual(settings.app_env, "local")
+        self.assertEqual(settings.app_version, "local")
         self.assertEqual(settings.llm_provider, "openrouter")
         self.assertEqual(settings.openrouter_base_url, "https://openrouter.ai/api/v1")
         self.assertIsNone(settings.openrouter_api_key)
@@ -83,6 +84,32 @@ class SettingsTests(unittest.TestCase):
 
 
 class AppFactoryTests(unittest.TestCase):
+    def test_prod_app_disables_automatic_documentation_routes(self):
+        app = create_app(make_settings(app_env="prod"))
+
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            with self.subTest(path=path):
+                response = make_client(app).get(path)
+
+                self.assertEqual(response.status_code, 404)
+
+    def test_non_prod_app_keeps_automatic_documentation_routes_and_schema(self):
+        for app_env in (None, "local", "develop"):
+            with self.subTest(app_env=app_env):
+                settings = (
+                    make_settings()
+                    if app_env is None
+                    else make_settings(app_env=app_env)
+                )
+                app = create_app(settings)
+
+                self.assertEqual(make_client(app).get("/docs").status_code, 200)
+                self.assertEqual(make_client(app).get("/redoc").status_code, 200)
+                openapi_response = make_client(app).get("/openapi.json")
+
+                self.assertEqual(openapi_response.status_code, 200)
+                self.assertIn("/health", openapi_response.json()["paths"])
+
     def test_create_app_registers_health_endpoint(self):
         app = create_app(make_settings())
 
@@ -99,6 +126,17 @@ class AppFactoryTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_startup_logs_deployment_version(self):
+        app = create_app(make_settings(app_version="ai-v1.2.3"))
+
+        with self.assertLogs("uvicorn.error", level="INFO") as captured_logs:
+            with make_client(app):
+                pass
+
+        output = "\n".join(captured_logs.output)
+        self.assertIn("workflow=deployment_started", output)
+        self.assertIn("serviceVersion=ai-v1.2.3", output)
 
 
 class CommonResponseTests(unittest.TestCase):

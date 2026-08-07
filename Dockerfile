@@ -1,7 +1,10 @@
 # Landit AI 앱 이미지를 빌드하는 최소 Dockerfile
 FROM python:3.12-slim
 
-ENV TZ=Asia/Seoul \
+ARG APP_VERSION=local
+
+ENV APP_VERSION=${APP_VERSION} \
+    TZ=Asia/Seoul \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
