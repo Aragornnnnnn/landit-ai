@@ -21,6 +21,7 @@ jobs:
       ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
       ECS_SERVICE: ${{ vars.ECS_SERVICE }}
       ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
 
     steps:
       - name: Checkout
@@ -36,6 +37,7 @@ jobs:
           test -n "$ECS_CLUSTER"
           test -n "$ECS_SERVICE"
           test -n "$ECS_CONTAINER_NAME"
+          test -n "$EC2_INSTANCE_ID"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -142,3 +144,6 @@ jobs:
           else
             echo "desired count is 0; skipping services-stable wait"
           fi
+
+      - name: Deploy the same image to develop EC2
+        run: bash .github/scripts/deploy-ec2-service.sh ai "$GITHUB_SHA"
