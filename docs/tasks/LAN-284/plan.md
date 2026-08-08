@@ -16,3 +16,4 @@
 - `bash .github/scripts/test/deploy-ec2-service_test.sh`가 통과했다.
 - `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 241개 테스트를 실행해 통과했다.
 - `bash -n`, workflow 단계 순서·입력 전달 정적 확인, `git diff --check`가 통과했다.
+- Task 7 재검증에서 shell test와 기존 가상환경을 읽기 전용으로 사용한 `PYTHONDONTWRITEBYTECODE=1 /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 다시 통과했고 unittest 241개를 실행했다. IaC·BE와 교차 검토해 ECS 검증 다음에 같은 SHA만 EC2로 전달되고, 실제 `EC2_INSTANCE_ID` 등록·EC2 배포·DNS·health 관찰은 미실행임을 확인했다.
