@@ -7,6 +7,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: deploy-develop-worker
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Build and deploy dev worker

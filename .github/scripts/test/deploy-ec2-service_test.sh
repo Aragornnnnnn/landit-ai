@@ -175,4 +175,18 @@ if [ "$secret_status" -eq 0 ] || grep -Fq "super-secret" <<< "$secret_output"; t
   exit 1
 fi
 
+WORKFLOW="$ROOT_DIR/.github/workflows/deploy-dev-worker.yml"
+workflow_concurrency="$(sed -n '/^concurrency:/,/^jobs:/p' "$WORKFLOW")"
+if ! rg -q '^concurrency:' <<<"$workflow_concurrency" || ! rg -q 'group:[[:space:]]*deploy-develop-worker' <<<"$workflow_concurrency" || ! rg -q 'cancel-in-progress:[[:space:]]*false' <<<"$workflow_concurrency"; then
+  echo 'develop worker workflow must serialize runs without cancellation.' >&2
+  exit 1
+fi
+
+ecs_verify_line="$(rg -n -F 'name: Verify ECS service' "$WORKFLOW" | cut -d: -f1)"
+ec2_mirror_line="$(rg -n -F 'name: Deploy the same image to develop EC2' "$WORKFLOW" | cut -d: -f1)"
+if [ -z "$ecs_verify_line" ] || [ -z "$ec2_mirror_line" ] || [ "$ecs_verify_line" -ge "$ec2_mirror_line" ]; then
+  echo 'develop worker workflow must mirror to EC2 only after ECS verification.' >&2
+  exit 1
+fi
+
 echo "deploy-ec2-service tests passed"
