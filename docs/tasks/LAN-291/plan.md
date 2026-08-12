@@ -15,7 +15,7 @@
 
 ## 3. 전체 검증
 
-- [x] `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`를 실행했다. 226 tests OK.
+- [x] worktree root에서 프로젝트 Python 3.12 가상환경 `.venv`를 사용해 `.venv/bin/python -m unittest discover -s tests`를 실행했다. 226 tests OK.
 - [x] FastAPI OpenAPI에 임베딩 endpoint와 제거된 학습 콘텐츠 endpoint가 없는지 확인했다.
 - [x] `git diff --check`, `git status --short`를 확인했다.
 - [x] 검증 결과를 이 문서에 기록했다.
