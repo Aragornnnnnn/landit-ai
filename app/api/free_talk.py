@@ -12,12 +12,9 @@ from app.free_talk.application.conversation_service import (
     generate_turn,
 )
 from app.free_talk.application.expression_service import (
-    generate_expression_learning_content,
     recommend_expressions,
 )
 from app.models.free_talk import (
-    ExpressionLearningContentRequest,
-    ExpressionLearningContentResponse,
     ExpressionRecommendationsRequest,
     ExpressionRecommendationsResponse,
     FreeTalkClosingRequest,
@@ -75,19 +72,6 @@ def create_expression_recommendations(
     request: Request,
 ) -> ApiResponse[ExpressionRecommendationsResponse]:
     return success_response(_generate(payload, request, recommend_expressions))
-
-
-@router.post(
-    "/expression-learning-content",
-    response_model=ApiResponse[ExpressionLearningContentResponse],
-)
-def create_expression_learning_content(
-    payload: ExpressionLearningContentRequest,
-    request: Request,
-) -> ApiResponse[ExpressionLearningContentResponse]:
-    return success_response(
-        _generate(payload, request, generate_expression_learning_content),
-    )
 
 
 def _generate(payload, request: Request, generator):
