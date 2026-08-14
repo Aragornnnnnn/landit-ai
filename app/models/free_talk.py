@@ -251,3 +251,39 @@ class ExpressionRecommendationsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recommendations: list[ExpressionRecommendation] = Field(min_length=1, max_length=3)
+
+
+class ConversationEmbeddingsRequest(BaseModel):
+    sessionId: int = Field(gt=0)
+    targetLocale: str
+    baseLocale: str
+    conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
+
+    @field_validator("targetLocale", "baseLocale")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @model_validator(mode="after")
+    def history_must_contain_user_message(self) -> Self:
+        if all(message.role != "USER" for message in self.conversationHistory):
+            raise ValueError("conversation history requires at least one user message")
+        return self
+
+
+class ConversationExcerpt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    excerptText: str
+    embedding: list[float] = Field(min_length=1536, max_length=1536)
+
+    @field_validator("excerptText")
+    @classmethod
+    def excerpt_text_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class ConversationEmbeddingsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    excerpts: list[ConversationExcerpt] = Field(min_length=1, max_length=4)

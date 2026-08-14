@@ -24,7 +24,7 @@ POST /api/v1/free-talk/conversation-embeddings
     {
       "messageId": 1,
       "turnNumber": 1,
-      "role": "ASSISTANT",
+      "role": "AI",
       "content": "Do you like cooking?",
       "translatedContent": "요리하는 거 좋아해?"
     },
@@ -48,6 +48,7 @@ POST /api/v1/free-talk/conversation-embeddings
      의미를 해석하기 위한 맥락으로만 사용한다.
    - 짧은 맞장구는 직전 AI 발화의 문맥을 반영해 의미가 드러나는 형태로 정리해도 된다
      (예: "Yeah, totally" → "I totally agree that the exam was hard").
+   - 추출한 excerpt는 대화의 학습 언어(targetLocale) 그대로 작성한다 (기반 언어로 요약 금지).
 2. **임베딩**: 추출한 각 문장을 OpenRouter `openai/text-embedding-3-small`로 임베딩한다.
    - 모델 고정: 표현 측 임베딩(V52, LAN-291)과 같은 모델이어야 코사인 유사도가 성립한다.
    - 차원은 1,536이다.

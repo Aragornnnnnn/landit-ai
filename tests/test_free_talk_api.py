@@ -41,10 +41,49 @@ class FakeCompletions:
         )
 
 
+class FakeEmbeddings:
+    def __init__(self, *, vectors=None, error=None, indices=None):
+        self.vectors = vectors
+        self.error = error
+        self.indices = indices
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        vectors = self.vectors
+        if vectors is None:
+            vectors = [
+                [0.001 * (position + 1)] * 1536
+                for position in range(len(kwargs["input"]))
+            ]
+        indices = self.indices if self.indices is not None else range(len(vectors))
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(index=index, embedding=vector)
+                for index, vector in zip(indices, vectors, strict=True)
+            ],
+        )
+
+
 class FakeOpenAI:
-    def __init__(self, *, contents=None, error=None):
+    def __init__(
+        self,
+        *,
+        contents=None,
+        error=None,
+        embedding_vectors=None,
+        embedding_error=None,
+        embedding_indices=None,
+    ):
         self.completions = FakeCompletions(contents=contents, error=error)
         self.chat = SimpleNamespace(completions=self.completions)
+        self.embeddings = FakeEmbeddings(
+            vectors=embedding_vectors,
+            error=embedding_error,
+            indices=embedding_indices,
+        )
 
 
 def valid_opening_payload():
@@ -195,6 +234,32 @@ def expression_recommendation(**overrides):
     }
     recommendation.update(overrides)
     return recommendation
+
+
+def valid_conversation_embeddings_payload(**overrides):
+    payload = {
+        "sessionId": 300,
+        "targetLocale": "EN",
+        "baseLocale": "KR",
+        "conversationHistory": [
+            {
+                "messageId": 3001,
+                "turnNumber": 1,
+                "role": "AI",
+                "content": "Do you like cooking?",
+                "translatedContent": "요리하는 거 좋아해?",
+            },
+            {
+                "messageId": 3002,
+                "turnNumber": 1,
+                "role": "USER",
+                "content": "That's easy for me. I cook every day.",
+                "translatedContent": None,
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
 
 
 class FreeTalkApiTests(unittest.TestCase):
@@ -649,6 +714,132 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
+    def test_conversation_embeddings_returns_one_to_four_excerpts(self):
+        for count in (1, 4):
+            with self.subTest(count=count):
+                excerpts = [f"That's easy for me {index}." for index in range(count)]
+                fake_openai = FakeOpenAI(
+                    contents=[json.dumps({"excerpts": excerpts})],
+                )
+
+                response = self._post(
+                    "/api/v1/free-talk/conversation-embeddings",
+                    valid_conversation_embeddings_payload(),
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()["data"]
+                self.assertEqual(
+                    [excerpt["excerptText"] for excerpt in data["excerpts"]],
+                    excerpts,
+                )
+                for excerpt in data["excerpts"]:
+                    self.assertEqual(len(excerpt["embedding"]), 1536)
+                embedding_call = fake_openai.embeddings.calls[0]
+                self.assertEqual(
+                    embedding_call["model"], "openai/text-embedding-3-small"
+                )
+                self.assertEqual(embedding_call["input"], excerpts)
+
+    def test_conversation_embeddings_rejects_out_of_range_excerpt_count(self):
+        for excerpts in ([], [f"Sentence {index}." for index in range(5)]):
+            with self.subTest(count=len(excerpts)):
+                fake_openai = FakeOpenAI(
+                    contents=[json.dumps({"excerpts": excerpts})],
+                )
+
+                response = self._post(
+                    "/api/v1/free-talk/conversation-embeddings",
+                    valid_conversation_embeddings_payload(),
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(
+                    response.json()["error"]["code"], "AI_RESPONSE_INVALID"
+                )
+                self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_conversation_embeddings_rejects_blank_excerpt(self):
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            FakeOpenAI(contents=[json.dumps({"excerpts": ["   "]})]),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_conversation_embeddings_rejects_wrong_dimensions(self):
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            FakeOpenAI(
+                contents=[json.dumps({"excerpts": ["That's easy for me."]})],
+                embedding_vectors=[[0.1] * 1535],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_conversation_embeddings_reorders_vectors_by_index(self):
+        first_vector = [0.1] * 1536
+        second_vector = [0.2] * 1536
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps({"excerpts": ["First sentence.", "Second one."]})],
+            embedding_vectors=[second_vector, first_vector],
+            embedding_indices=[1, 0],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        excerpts = response.json()["data"]["excerpts"]
+        self.assertEqual(excerpts[0]["excerptText"], "First sentence.")
+        self.assertEqual(excerpts[0]["embedding"], first_vector)
+        self.assertEqual(excerpts[1]["embedding"], second_vector)
+
+    def test_conversation_embeddings_maps_embedding_failure_to_503(self):
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            FakeOpenAI(
+                contents=[json.dumps({"excerpts": ["That's easy for me."]})],
+                embedding_error=RuntimeError("provider unavailable"),
+            ),
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+
+    def test_conversation_embeddings_rejects_invalid_extraction_json(self):
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            FakeOpenAI(contents=["not json"]),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_conversation_embeddings_requires_user_message_in_history(self):
+        payload = valid_conversation_embeddings_payload()
+        payload["conversationHistory"] = [payload["conversationHistory"][0]]
+
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            payload,
+            FakeOpenAI(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+
     def test_openapi_exposes_all_free_talk_generation_routes(self):
         paths = self._app().openapi()["paths"]
 
@@ -658,6 +849,7 @@ class FreeTalkApiTests(unittest.TestCase):
             "/api/v1/free-talk/inner-thought",
             "/api/v1/free-talk/closing",
             "/api/v1/free-talk/expression-recommendations",
+            "/api/v1/free-talk/conversation-embeddings",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, paths)
