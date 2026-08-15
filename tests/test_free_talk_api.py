@@ -89,6 +89,7 @@ class FakeOpenAI:
 def valid_opening_payload():
     return {
         "sessionId": 300,
+        "characterId": "chloe",
         "targetLocale": "EN",
         "baseLocale": "KR",
         "topic": {
@@ -102,6 +103,7 @@ def valid_opening_payload():
 def valid_turn_payload(**overrides):
     payload = {
         "sessionId": 300,
+        "characterId": "chloe",
         "submittedMessageId": 3002,
         "submittedTurnNumber": 1,
         "targetLocale": "EN",
@@ -126,6 +128,7 @@ def valid_turn_payload(**overrides):
 def valid_closing_payload(**overrides):
     payload = {
         "sessionId": 300,
+        "characterId": "chloe",
         "submittedMessageId": 3010,
         "submittedTurnNumber": 5,
         "targetLocale": "EN",
@@ -286,26 +289,105 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json()["data"],
-            opening_completion(),
+            opening_completion(emotion=None),
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_opening_maps_blank_or_invalid_enum_llm_response_to_502(self):
-        invalid_responses = (
-            opening_completion(aiMessage="   "),
-            opening_completion(emotion="EXCITED"),
-        )
+    def test_opening_requires_supported_character(self):
+        for character_id in (None, "unknown"):
+            with self.subTest(character_id=character_id):
+                payload = valid_opening_payload()
+                if character_id is None:
+                    payload.pop("characterId")
+                else:
+                    payload["characterId"] = character_id
 
-        for completion in invalid_responses:
-            with self.subTest(completion=completion):
                 response = self._post(
                     "/api/v1/free-talk/opening",
-                    valid_opening_payload(),
-                    FakeOpenAI(contents=[json.dumps(completion)]),
+                    payload,
+                    FakeOpenAI(contents=[json.dumps(opening_completion())]),
                 )
 
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+                self.assertEqual(response.status_code, 400)
+
+    def test_character_persona_and_dialect_are_added_to_generation_prompts(self):
+        cases = (
+            ("chloe", "American English", "friendly and upbeat"),
+            ("marco", "Australian English", "relaxed and playful"),
+            ("teddy", "British English", "calm and kind"),
+        )
+
+        for character_id, dialect, persona in cases:
+            with self.subTest(character_id=character_id):
+                fake_openai = FakeOpenAI(contents=[json.dumps(opening_completion())])
+                response = self._post(
+                    "/api/v1/free-talk/opening",
+                    valid_opening_payload() | {"characterId": character_id},
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+                self.assertIn(dialect, system_prompt)
+                self.assertIn(persona, system_prompt)
+                self.assertIn("avoid obscure slang", system_prompt)
+
+    def test_character_policy_applies_to_turn_closing_and_inner_thought(self):
+        cases = (
+            (
+                "/api/v1/free-talk/turn",
+                valid_turn_payload(characterId="teddy"),
+                normal_turn_completion(),
+                "British English",
+            ),
+            (
+                "/api/v1/free-talk/closing",
+                valid_closing_payload(characterId="marco"),
+                closing_completion(),
+                "Australian English",
+            ),
+            (
+                "/api/v1/free-talk/inner-thought",
+                valid_inner_thought_payload(characterId="chloe"),
+                inner_thought_completion(),
+                "friendly and upbeat",
+            ),
+        )
+
+        for path, payload, completion, expected_prompt in cases:
+            with self.subTest(path=path):
+                fake_openai = FakeOpenAI(contents=[json.dumps(completion)])
+                response = self._post(path, payload, fake_openai)
+
+                self.assertEqual(response.status_code, 200)
+                system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+                self.assertIn(expected_prompt, system_prompt)
+                if path.endswith("inner-thought"):
+                    self.assertNotIn("American English", system_prompt)
+
+    def test_opening_maps_blank_llm_response_to_502(self):
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload(),
+            FakeOpenAI(
+                contents=[json.dumps(opening_completion(aiMessage="   "))],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_opening_ignores_unsupported_emotion(self):
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload(),
+            FakeOpenAI(
+                contents=[json.dumps(opening_completion(emotion="friendly"))],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["emotion"])
 
     def test_opening_rejects_internal_partner_name_field(self):
         payload = valid_opening_payload()
@@ -332,7 +414,20 @@ class FreeTalkApiTests(unittest.TestCase):
             "That sounds fun! Where are you going hiking?",
         )
         self.assertNotIn("innerThought", response.json()["data"])
+        self.assertIsNone(response.json()["data"]["emotion"])
         self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_turn_ignores_unsupported_emotion(self):
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            FakeOpenAI(
+                contents=[json.dumps(normal_turn_completion(emotion="friendly"))],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["emotion"])
 
     def test_inner_thought_returns_derived_type_separately_from_turn(self):
         response = self._post(
@@ -491,7 +586,20 @@ class FreeTalkApiTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 200)
                 self.assertNotIn("innerThought", response.json()["data"])
+                self.assertIsNone(response.json()["data"]["emotion"])
                 self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_closing_ignores_unsupported_emotion(self):
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(),
+            FakeOpenAI(
+                contents=[json.dumps(closing_completion(emotion="friendly"))],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["emotion"])
 
     def test_closing_rejects_question_form_message(self):
         question_messages = (

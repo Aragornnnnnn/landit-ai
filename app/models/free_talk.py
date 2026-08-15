@@ -34,6 +34,12 @@ class FreeTalkClosingReason(StrEnum):
     TIME_LIMIT_REACHED = "TIME_LIMIT_REACHED"
 
 
+class FreeTalkCharacter(StrEnum):
+    CHLOE = "chloe"
+    MARCO = "marco"
+    TEDDY = "teddy"
+
+
 class FreeTalkTopicContext(BaseModel):
     topicId: int | None = Field(default=None, gt=0)
     title: str
@@ -51,6 +57,7 @@ class FreeTalkContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessionId: int = Field(gt=0)
+    characterId: FreeTalkCharacter
     targetLocale: str
     baseLocale: str
     topic: FreeTalkTopicContext | None = None
@@ -81,7 +88,7 @@ class FreeTalkOpeningResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: Emotion | None
 
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
@@ -129,7 +136,6 @@ class FreeTalkTurnResponse(BaseModel):
         generated_fields = (
             self.aiMessage,
             self.translatedMessage,
-            self.emotion,
         )
         if self.userExitIntentDetected:
             if any(field is not None for field in generated_fields):
@@ -192,7 +198,7 @@ class FreeTalkClosingResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: Emotion | None
 
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
