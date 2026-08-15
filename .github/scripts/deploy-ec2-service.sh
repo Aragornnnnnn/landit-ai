@@ -30,8 +30,8 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-30}"
 
 if ! command_id="$(aws ssm send-command \
   --instance-ids "$EC2_INSTANCE_ID" \
-  --document-name AWS-RunShellScript \
-  --parameters "commands=sudo /opt/landit/bin/deploy-service $service $image_tag" \
+  --document-name develop-landit-ec2-deploy \
+  --parameters "service=$service,imageSha=$image_tag" \
   --query 'Command.CommandId' \
   --output text 2>&1)"; then
   echo "Unable to start SSM deployment command" >&2

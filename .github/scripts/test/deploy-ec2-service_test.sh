@@ -92,7 +92,7 @@ EC2_INSTANCE_ID=i-123 MOCK_STATUSES=Success assert_failure_without_aws_call inva
 
 rm -f "$TMP_DIR/aws-calls" "$TMP_DIR/invocation-count"
 success_output="$(EC2_INSTANCE_ID=i-123 MOCK_STATUSES=Pending,InProgress,Success run_helper ai "$SHA")"
-expected_command="ssm send-command --instance-ids i-123 --document-name AWS-RunShellScript --parameters commands=sudo /opt/landit/bin/deploy-service ai $SHA --query Command.CommandId --output text"
+expected_command="ssm send-command --instance-ids i-123 --document-name develop-landit-ec2-deploy --parameters service=ai,imageSha=$SHA --query Command.CommandId --output text"
 
 if ! grep -Fxq "$expected_command" "$TMP_DIR/aws-calls"; then
   echo "send-command did not receive only the expected deployment command"
