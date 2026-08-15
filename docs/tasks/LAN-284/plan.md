@@ -14,6 +14,8 @@
 ## 검증 결과.
 
 - `bash .github/scripts/test/deploy-ec2-service_test.sh`가 통과했다.
-- `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 241개 테스트를 실행해 통과했다.
+- `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 최신 `develop` 기준 243개 테스트를 실행해 통과했다.
 - `bash -n`, workflow 단계 순서·입력 전달 정적 확인, `git diff --check`가 통과했다.
-- Task 7 재검증에서 shell test와 기존 가상환경을 읽기 전용으로 사용한 `PYTHONDONTWRITEBYTECODE=1 /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 다시 통과했고 unittest 241개를 실행했다. IaC·BE와 교차 검토해 ECS 검증 다음에 같은 SHA만 EC2로 전달되고, 실제 `EC2_INSTANCE_ID` 등록·EC2 배포·DNS·health 관찰은 미실행임을 확인했다.
+- IaC 적용으로 개발 EC2와 전용 SSM 문서를 생성했고, AI `develop` Environment에 `EC2_INSTANCE_ID`를 등록했다. 임시 도메인의 HTTPS와 API→AI 내부 health도 확인했다.
+- 최신 `develop` 기준 통합 검증에서 shell test와 기존 가상환경을 읽기 전용으로 사용한 `PYTHONDONTWRITEBYTECODE=1 /Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`가 통과했다. 배포 workflow는 ECS를 검증한 뒤 같은 SHA를 EC2에 전달한다.
+- 이 PR 병합 후 `workflow_dispatch`로 실제 재배포를 검증한다. 기존 ECS·ALB는 해당 검증과 개발 DNS 전환이 끝날 때까지 유지한다.
