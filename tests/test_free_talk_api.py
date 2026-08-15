@@ -89,6 +89,7 @@ class FakeOpenAI:
 def valid_opening_payload():
     return {
         "sessionId": 300,
+        "characterId": "chloe",
         "targetLocale": "EN",
         "baseLocale": "KR",
         "topic": {
@@ -102,6 +103,7 @@ def valid_opening_payload():
 def valid_turn_payload(**overrides):
     payload = {
         "sessionId": 300,
+        "characterId": "chloe",
         "submittedMessageId": 3002,
         "submittedTurnNumber": 1,
         "targetLocale": "EN",
@@ -126,6 +128,7 @@ def valid_turn_payload(**overrides):
 def valid_closing_payload(**overrides):
     payload = {
         "sessionId": 300,
+        "characterId": "chloe",
         "submittedMessageId": 3010,
         "submittedTurnNumber": 5,
         "targetLocale": "EN",
@@ -289,6 +292,78 @@ class FreeTalkApiTests(unittest.TestCase):
             opening_completion(),
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_opening_requires_supported_character(self):
+        for character_id in (None, "unknown"):
+            with self.subTest(character_id=character_id):
+                payload = valid_opening_payload()
+                if character_id is None:
+                    payload.pop("characterId")
+                else:
+                    payload["characterId"] = character_id
+
+                response = self._post(
+                    "/api/v1/free-talk/opening",
+                    payload,
+                    FakeOpenAI(contents=[json.dumps(opening_completion())]),
+                )
+
+                self.assertEqual(response.status_code, 400)
+
+    def test_character_persona_and_dialect_are_added_to_generation_prompts(self):
+        cases = (
+            ("chloe", "American English", "friendly and upbeat"),
+            ("marco", "Australian English", "relaxed and playful"),
+            ("teddy", "British English", "calm and kind"),
+        )
+
+        for character_id, dialect, persona in cases:
+            with self.subTest(character_id=character_id):
+                fake_openai = FakeOpenAI(contents=[json.dumps(opening_completion())])
+                response = self._post(
+                    "/api/v1/free-talk/opening",
+                    valid_opening_payload() | {"characterId": character_id},
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+                self.assertIn(dialect, system_prompt)
+                self.assertIn(persona, system_prompt)
+                self.assertIn("avoid obscure slang", system_prompt)
+
+    def test_character_policy_applies_to_turn_closing_and_inner_thought(self):
+        cases = (
+            (
+                "/api/v1/free-talk/turn",
+                valid_turn_payload(characterId="teddy"),
+                normal_turn_completion(),
+                "British English",
+            ),
+            (
+                "/api/v1/free-talk/closing",
+                valid_closing_payload(characterId="marco"),
+                closing_completion(),
+                "Australian English",
+            ),
+            (
+                "/api/v1/free-talk/inner-thought",
+                valid_inner_thought_payload(characterId="chloe"),
+                inner_thought_completion(),
+                "friendly and upbeat",
+            ),
+        )
+
+        for path, payload, completion, expected_prompt in cases:
+            with self.subTest(path=path):
+                fake_openai = FakeOpenAI(contents=[json.dumps(completion)])
+                response = self._post(path, payload, fake_openai)
+
+                self.assertEqual(response.status_code, 200)
+                system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+                self.assertIn(expected_prompt, system_prompt)
+                if path.endswith("inner-thought"):
+                    self.assertNotIn("American English", system_prompt)
 
     def test_opening_maps_blank_or_invalid_enum_llm_response_to_502(self):
         invalid_responses = (

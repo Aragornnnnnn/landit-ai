@@ -34,6 +34,12 @@ class FreeTalkClosingReason(StrEnum):
     TIME_LIMIT_REACHED = "TIME_LIMIT_REACHED"
 
 
+class FreeTalkCharacter(StrEnum):
+    CHLOE = "chloe"
+    MARCO = "marco"
+    TEDDY = "teddy"
+
+
 class FreeTalkTopicContext(BaseModel):
     topicId: int | None = Field(default=None, gt=0)
     title: str
@@ -51,6 +57,7 @@ class FreeTalkContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessionId: int = Field(gt=0)
+    characterId: FreeTalkCharacter
     targetLocale: str
     baseLocale: str
     topic: FreeTalkTopicContext | None = None

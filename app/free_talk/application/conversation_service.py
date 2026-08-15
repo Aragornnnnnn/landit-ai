@@ -14,6 +14,7 @@ from app.free_talk.llm.json_completion import (
 from app.models.conversation import AnswerCoverage, RelationshipTone
 from app.models.free_talk import (
     Emotion,
+    FreeTalkCharacter,
     FreeTalkClosingRequest,
     FreeTalkClosingResponse,
     FreeTalkInnerThoughtRequest,
@@ -77,7 +78,7 @@ def generate_opening(
 ) -> FreeTalkOpeningResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_opening_system_prompt(),
+        system_prompt=_opening_system_prompt(payload.characterId),
         user_prompt=_opening_user_prompt(payload),
     )
     try:
@@ -92,7 +93,7 @@ def generate_turn(
 ) -> FreeTalkTurnResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_turn_system_prompt(payload.responseMode),
+        system_prompt=_turn_system_prompt(payload.responseMode, payload.characterId),
         user_prompt=_turn_user_prompt(payload),
     )
     try:
@@ -133,7 +134,7 @@ def generate_closing(
 ) -> FreeTalkClosingResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_closing_system_prompt(),
+        system_prompt=_closing_system_prompt(payload.characterId),
         user_prompt=_closing_user_prompt(payload),
     )
     try:
@@ -158,7 +159,7 @@ def generate_inner_thought(
 ) -> FreeTalkInnerThoughtResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_inner_thought_system_prompt(),
+        system_prompt=_inner_thought_system_prompt(payload.characterId),
         user_prompt=_inner_thought_user_prompt(payload),
     )
     try:
@@ -202,22 +203,53 @@ def _validate_inner_thought(inner_thought: str | None) -> None:
         raise ValueError("inner thought must not include feedback language")
 
 
-def _opening_system_prompt() -> str:
+def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) -> str:
+    persona, dialect = {
+        FreeTalkCharacter.CHLOE: (
+            "friendly and upbeat Chloe from Los Angeles, who is highly talkative "
+            "and reassures learners that imperfect English is okay",
+            "American English",
+        ),
+        FreeTalkCharacter.MARCO: (
+            "relaxed and playful Marco, a Spanish Australian living in Sydney "
+            "who speaks Spanish at home and English elsewhere",
+            "Australian English",
+        ),
+        FreeTalkCharacter.TEDDY: (
+            "calm and kind Teddy, a bear living in London who does odd jobs for honey",
+            "British English",
+        ),
+    }[character]
+    prompt = f"Act as a {persona} conversation partner. "
+    if include_dialect:
+        prompt += (
+            f"Use natural {dialect} vocabulary and phrasing, but avoid obscure slang "
+            "or exaggerated stereotypes. "
+        )
+    return prompt
+
+
+def _opening_system_prompt(character: FreeTalkCharacter) -> str:
     return (
-        "Generate one natural opening question for an English free talk. "
+        _character_prompt(character, include_dialect=True)
+        + "Generate one natural opening question for an English free talk. "
         "Return only JSON with aiMessage, translatedMessage, and emotion. "
         "emotion must be NEUTRAL, HAPPY, SURPRISED, SAD, or ANGRY."
     )
 
 
-def _turn_system_prompt(response_mode: FreeTalkResponseMode) -> str:
+def _turn_system_prompt(
+    response_mode: FreeTalkResponseMode,
+    character: FreeTalkCharacter,
+) -> str:
     exit_policy = (
         "Decide whether the user clearly wants to end the conversation."
         if response_mode == FreeTalkResponseMode.NORMAL
         else "The user declined ending. Do not judge exit intent."
     )
     return (
-        "Generate one free-talk turn as JSON. "
+        _character_prompt(character, include_dialect=True)
+        + "Generate one free-talk turn as JSON. "
         f"{exit_policy} "
         "When userExitIntentDetected is true, leave all generated message fields null. "
         "Otherwise return aiMessage, translatedMessage, and emotion. "
@@ -226,18 +258,20 @@ def _turn_system_prompt(response_mode: FreeTalkResponseMode) -> str:
     )
 
 
-def _closing_system_prompt() -> str:
+def _closing_system_prompt(character: FreeTalkCharacter) -> str:
     return (
-        "Generate a natural final free-talk message as JSON. Do not ask a question, "
+        _character_prompt(character, include_dialect=True)
+        + "Generate a natural final free-talk message as JSON. Do not ask a question, "
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
         "Return aiMessage, translatedMessage, and emotion."
     )
 
 
-def _inner_thought_system_prompt() -> str:
+def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
     return (
-        "Generate the free-talk counterpart's private reaction to the last user message as JSON. "
+        _character_prompt(character, include_dialect=False)
+        + "Generate the free-talk counterpart's private reaction to the last user message as JSON. "
         "Return innerThought, answerCoverage, relationshipTone, and directedAttack. "
         "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
         "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
