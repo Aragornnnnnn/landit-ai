@@ -80,4 +80,5 @@ POST /api/v1/free-talk/conversation-embeddings
 
 ## 오류
 
-- 생성 실패 시 기존과 동일하게 502 + `AI_RESPONSE_INVALID` 코드 규약을 따른다.
+- AI 응답 계약 위반 시 502 + `AI_RESPONSE_INVALID` 코드 규약을 따른다.
+- 제공자 호출 또는 생성 실패 시 503 + `AI_GENERATION_FAILED` 코드 규약을 따른다.

@@ -805,6 +805,34 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(excerpts[0]["embedding"], first_vector)
         self.assertEqual(excerpts[1]["embedding"], second_vector)
 
+    def test_conversation_embeddings_rejects_duplicate_embedding_indices(self):
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            FakeOpenAI(
+                contents=[json.dumps({"excerpts": ["First sentence.", "Second one."]})],
+                embedding_vectors=[[0.1] * 1536, [0.2] * 1536],
+                embedding_indices=[0, 0],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_conversation_embeddings_rejects_non_contiguous_embedding_indices(self):
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            FakeOpenAI(
+                contents=[json.dumps({"excerpts": ["First sentence.", "Second one."]})],
+                embedding_vectors=[[0.1] * 1536, [0.2] * 1536],
+                embedding_indices=[0, 2],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
     def test_conversation_embeddings_maps_embedding_failure_to_503(self):
         response = self._post(
             "/api/v1/free-talk/conversation-embeddings",

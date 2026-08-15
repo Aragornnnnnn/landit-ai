@@ -40,10 +40,15 @@ def _validated_vectors(response, *, expected_count: int) -> list[list[float]]:
     try:
         # 응답 순서는 보장되지 않으므로 index 기준으로 재정렬해 입력 문장과 짝을 맞춘다.
         items = sorted(response.data, key=lambda item: item.index)
+        indices = [item.index for item in items]
         vectors = [list(item.embedding) for item in items]
     except (AttributeError, TypeError) as exc:
         raise AiResponseInvalidError("embedding response is malformed") from exc
 
+    if any(type(index) is not int for index in indices) or indices != list(
+        range(expected_count),
+    ):
+        raise AiResponseInvalidError("embedding indices must match input order")
     if len(vectors) != expected_count:
         raise AiResponseInvalidError("embedding count must match input count")
     for vector in vectors:
