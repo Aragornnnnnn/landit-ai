@@ -11,10 +11,15 @@ from app.free_talk.application.conversation_service import (
     generate_opening,
     generate_turn,
 )
+from app.free_talk.application.embedding_service import (
+    generate_conversation_embeddings,
+)
 from app.free_talk.application.expression_service import (
     recommend_expressions,
 )
 from app.models.free_talk import (
+    ConversationEmbeddingsRequest,
+    ConversationEmbeddingsResponse,
     ExpressionRecommendationsRequest,
     ExpressionRecommendationsResponse,
     FreeTalkClosingRequest,
@@ -72,6 +77,17 @@ def create_expression_recommendations(
     request: Request,
 ) -> ApiResponse[ExpressionRecommendationsResponse]:
     return success_response(_generate(payload, request, recommend_expressions))
+
+
+@router.post(
+    "/conversation-embeddings",
+    response_model=ApiResponse[ConversationEmbeddingsResponse],
+)
+def create_conversation_embeddings(
+    payload: ConversationEmbeddingsRequest,
+    request: Request,
+) -> ApiResponse[ConversationEmbeddingsResponse]:
+    return success_response(_generate(payload, request, generate_conversation_embeddings))
 
 
 def _generate(payload, request: Request, generator):
