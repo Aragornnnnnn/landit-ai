@@ -133,7 +133,6 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
         generated_fields = {
             "aiMessage": "See you!",
             "translatedMessage": "또 봐!",
-            "emotion": "HAPPY",
         }
 
         for field, value in generated_fields.items():
@@ -160,16 +159,22 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
 
         self.assertEqual(response.inferredTitle, "주말 등산 이야기")
 
-    def test_normal_response_requires_every_generated_field(self):
+    def test_normal_response_requires_visible_message_fields(self):
         generated_fields = (
             "aiMessage",
             "translatedMessage",
-            "emotion",
         )
 
         for field in generated_fields:
             with self.subTest(field=field), self.assertRaises(ValidationError):
                 FreeTalkTurnResponse.model_validate(valid_turn_response(**{field: None}))
+
+    def test_normal_response_allows_missing_emotion(self):
+        response = FreeTalkTurnResponse.model_validate(
+            valid_turn_response(emotion=None),
+        )
+
+        self.assertIsNone(response.emotion)
 
 
 if __name__ == "__main__":

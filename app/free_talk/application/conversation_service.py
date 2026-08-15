@@ -13,7 +13,6 @@ from app.free_talk.llm.json_completion import (
 )
 from app.models.conversation import AnswerCoverage, RelationshipTone
 from app.models.free_talk import (
-    Emotion,
     FreeTalkCharacter,
     FreeTalkClosingRequest,
     FreeTalkClosingResponse,
@@ -51,18 +50,24 @@ _NEW_TOPIC_CLOSING_PATTERN = re.compile(
 )
 
 
+class _OpeningCandidate(BaseModel):
+    aiMessage: str
+    translatedMessage: str
+    emotion: object | None = None
+
+
 class _TurnCandidate(BaseModel):
     userExitIntentDetected: bool | None = None
     inferredTitle: str | None = None
     aiMessage: str | None = None
     translatedMessage: str | None = None
-    emotion: Emotion | None = None
+    emotion: object | None = None
 
 
 class _ClosingCandidate(BaseModel):
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: object | None = None
 
 
 class _InnerThoughtCandidate(BaseModel):
@@ -82,7 +87,12 @@ def generate_opening(
         user_prompt=_opening_user_prompt(payload),
     )
     try:
-        return FreeTalkOpeningResponse.model_validate(data)
+        candidate = _OpeningCandidate.model_validate(data)
+        return FreeTalkOpeningResponse(
+            aiMessage=candidate.aiMessage,
+            translatedMessage=candidate.translatedMessage,
+            emotion=None,
+        )
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
 
@@ -113,7 +123,7 @@ def generate_turn(
                 ),
                 aiMessage=candidate.aiMessage,
                 translatedMessage=candidate.translatedMessage,
-                emotion=candidate.emotion,
+                emotion=None,
             )
         return FreeTalkTurnResponse(
             userExitIntentDetected=False,
@@ -122,7 +132,7 @@ def generate_turn(
             ),
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
-            emotion=candidate.emotion,
+            emotion=None,
         )
     except (TypeError, ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -142,7 +152,7 @@ def generate_closing(
         response = FreeTalkClosingResponse(
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
-            emotion=candidate.emotion,
+            emotion=None,
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -233,8 +243,7 @@ def _opening_system_prompt(character: FreeTalkCharacter) -> str:
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate one natural opening question for an English free talk. "
-        "Return only JSON with aiMessage, translatedMessage, and emotion. "
-        "emotion must be NEUTRAL, HAPPY, SURPRISED, SAD, or ANGRY."
+        "Return only JSON with aiMessage and translatedMessage."
     )
 
 
@@ -252,7 +261,7 @@ def _turn_system_prompt(
         + "Generate one free-talk turn as JSON. "
         f"{exit_policy} "
         "When userExitIntentDetected is true, leave all generated message fields null. "
-        "Otherwise return aiMessage, translatedMessage, and emotion. "
+        "Otherwise return aiMessage and translatedMessage. "
         "For a first user turn, inferredTitle must be a short Korean title; "
         "for later turns, inferredTitle must be null."
     )
@@ -264,7 +273,7 @@ def _closing_system_prompt(character: FreeTalkCharacter) -> str:
         + "Generate a natural final free-talk message as JSON. Do not ask a question, "
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
-        "Return aiMessage, translatedMessage, and emotion."
+        "Return aiMessage and translatedMessage."
     )
 
 

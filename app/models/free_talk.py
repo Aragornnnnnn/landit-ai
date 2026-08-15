@@ -88,7 +88,7 @@ class FreeTalkOpeningResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: Emotion | None
 
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
@@ -136,7 +136,6 @@ class FreeTalkTurnResponse(BaseModel):
         generated_fields = (
             self.aiMessage,
             self.translatedMessage,
-            self.emotion,
         )
         if self.userExitIntentDetected:
             if any(field is not None for field in generated_fields):
@@ -199,7 +198,7 @@ class FreeTalkClosingResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: Emotion | None
 
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
