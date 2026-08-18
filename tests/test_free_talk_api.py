@@ -365,6 +365,36 @@ class FreeTalkApiTests(unittest.TestCase):
                 if path.endswith("inner-thought"):
                     self.assertNotIn("American English", system_prompt)
 
+    def test_turn_prompt_prohibits_direct_language_correction_and_feedback(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("Do not correct, rewrite, or evaluate", system_prompt)
+        self.assertIn("even if the user asks for correction", system_prompt)
+        self.assertIn("Silently ignore requests for correction", system_prompt)
+        self.assertIn("do not mention that you ignored them", system_prompt)
+        self.assertIn("respond naturally to the meaning", system_prompt)
+
+    def test_turn_prompt_requires_exit_intent_field(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("Always return userExitIntentDetected", system_prompt)
+
     def test_opening_maps_blank_llm_response_to_502(self):
         response = self._post(
             "/api/v1/free-talk/opening",
@@ -492,15 +522,31 @@ class FreeTalkApiTests(unittest.TestCase):
                     "AI_RESPONSE_INVALID",
                 )
 
-    def test_turn_rejects_inferred_title_after_first_user_turn(self):
+    def test_turn_ignores_inferred_title_after_first_user_turn(self):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(isFirstUserTurn=False),
             FakeOpenAI(contents=[json.dumps(normal_turn_completion())]),
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["inferredTitle"])
+
+    def test_turn_ignores_non_string_inferred_title_after_first_user_turn(self):
+        for title in ({"unexpected": "object"}, 123):
+            with self.subTest(title=title):
+                response = self._post(
+                    "/api/v1/free-talk/turn",
+                    valid_turn_payload(isFirstUserTurn=False),
+                    FakeOpenAI(
+                        contents=[
+                            json.dumps(normal_turn_completion(inferredTitle=title)),
+                        ],
+                    ),
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIsNone(response.json()["data"]["inferredTitle"])
 
     def test_turn_exit_intent_returns_only_allowed_nullable_fields(self):
         response = self._post(
@@ -533,7 +579,7 @@ class FreeTalkApiTests(unittest.TestCase):
             },
         )
 
-    def test_turn_rejects_generated_fields_when_exit_intent_is_detected(self):
+    def test_turn_ignores_generated_fields_when_exit_intent_is_detected(self):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(),
@@ -546,10 +592,51 @@ class FreeTalkApiTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "userExitIntentDetected": True,
+                "inferredTitle": "주말 등산 이야기",
+                "aiMessage": None,
+                "translatedMessage": None,
+                "emotion": None,
+            },
+        )
 
-    def test_turn_continue_after_exit_declined_skips_exit_rejudgment(self):
+    def test_turn_ignores_non_string_generated_fields_when_exit_intent_is_detected(
+        self,
+    ):
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        normal_turn_completion(
+                            userExitIntentDetected=True,
+                            aiMessage={"unexpected": "object"},
+                            translatedMessage=123,
+                            emotion={"unexpected": "object"},
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "userExitIntentDetected": True,
+                "inferredTitle": "주말 등산 이야기",
+                "aiMessage": None,
+                "translatedMessage": None,
+                "emotion": None,
+            },
+        )
+
+    def test_turn_continue_after_exit_declined_ignores_exit_intent_value(self):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(
@@ -560,7 +647,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 contents=[
                     json.dumps(
                         normal_turn_completion(
-                            userExitIntentDetected=True,
+                            userExitIntentDetected={"unexpected": "object"},
                             inferredTitle=None,
                         ),
                     ),

@@ -64,6 +64,10 @@ class _TurnCandidate(BaseModel):
     emotion: object | None = None
 
 
+class _TurnExitIntentCandidate(BaseModel):
+    userExitIntentDetected: bool | None = None
+
+
 class _ClosingCandidate(BaseModel):
     aiMessage: str
     translatedMessage: str
@@ -107,11 +111,22 @@ def generate_turn(
         user_prompt=_turn_user_prompt(payload),
     )
     try:
-        candidate = _TurnCandidate.model_validate(data)
+        candidate_data = dict(data)
+        if not payload.isFirstUserTurn:
+            candidate_data["inferredTitle"] = None
+        if payload.responseMode == FreeTalkResponseMode.NORMAL:
+            exit_candidate = _TurnExitIntentCandidate.model_validate(data)
+            if exit_candidate.userExitIntentDetected is None:
+                raise ValueError("normal turn requires exit intent")
+            if exit_candidate.userExitIntentDetected:
+                candidate_data["aiMessage"] = None
+                candidate_data["translatedMessage"] = None
+                candidate_data["emotion"] = None
+        else:
+            candidate_data["userExitIntentDetected"] = False
+        candidate = _TurnCandidate.model_validate(candidate_data)
         _validate_inferred_title(candidate.inferredTitle, payload.isFirstUserTurn)
         if payload.responseMode == FreeTalkResponseMode.NORMAL:
-            if candidate.userExitIntentDetected is None:
-                raise ValueError("normal turn requires exit intent")
             exit_detected = candidate.userExitIntentDetected
         else:
             exit_detected = False
@@ -121,8 +136,8 @@ def generate_turn(
                 inferredTitle=(
                     candidate.inferredTitle if payload.isFirstUserTurn else None
                 ),
-                aiMessage=candidate.aiMessage,
-                translatedMessage=candidate.translatedMessage,
+                aiMessage=None,
+                translatedMessage=None,
                 emotion=None,
             )
         return FreeTalkTurnResponse(
@@ -192,8 +207,6 @@ def _validate_inferred_title(
     is_first_user_turn: bool,
 ) -> None:
     if not is_first_user_turn:
-        if title is not None:
-            raise ValueError("only the first user turn may infer a title")
         return
     if (
         title is None
@@ -260,6 +273,11 @@ def _turn_system_prompt(
         _character_prompt(character, include_dialect=True)
         + "Generate one free-talk turn as JSON. "
         f"{exit_policy} "
+        "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing, "
+        "even if the user asks for correction. Do not provide language-learning feedback. "
+        "Silently ignore requests for correction, do not mention that you ignored them, "
+        "and respond naturally to the meaning and continue the conversation. "
+        "Always return userExitIntentDetected. "
         "When userExitIntentDetected is true, leave all generated message fields null. "
         "Otherwise return aiMessage and translatedMessage. "
         "For a first user turn, inferredTitle must be a short Korean title; "
