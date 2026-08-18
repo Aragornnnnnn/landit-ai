@@ -4,7 +4,7 @@
 
 **Goal:** 프리톡 후속 턴과 종료 감지 응답에서 서버가 사용하지 않는 모델 필드를 폐기해 불필요한 502를 방지한다.
 
-**Architecture:** 기존 `generate_turn()`의 JSON 및 필수 콘텐츠 검증은 유지한다. 요청 컨텍스트상 사용하지 않는 `inferredTitle`과 종료 감지 후의 생성 메시지만 응답 조립 단계에서 `None`으로 정규화한다.
+**Architecture:** 기존 `generate_turn()`의 JSON 및 필수 콘텐츠 검증은 유지한다. 요청 컨텍스트상 사용하지 않는 `inferredTitle`과 종료 감지 후의 생성 메시지만 후보 타입 검증 전에 `None`으로 정규화한다.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, `unittest`.
 
@@ -49,6 +49,8 @@
       self.assertIsNone(response.json()["data"]["inferredTitle"])
   ```
 
+  비문자열 객체·숫자 `inferredTitle`도 후속 턴에서 무시하는 경계 테스트를 추가했다.
+
 - [x] **Step 2: 후속 턴 제목 테스트가 기존 코드에서 실패하는지 확인**
 
   Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_inferred_title_after_first_user_turn`
@@ -85,6 +87,8 @@
           },
       )
   ```
+
+  비문자열 객체·숫자 `aiMessage`, `translatedMessage`도 종료 감지 시 무시하는 경계 테스트를 추가했다.
 
 - [x] **Step 4: 종료 감지 테스트가 기존 코드에서 실패하는지 확인**
 
@@ -140,7 +144,7 @@
 
   Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`
 
-  Expected: `243`개 이상의 테스트가 실패 없이 통과한다.
+  Expected: `245`개 이상의 테스트가 실패 없이 통과한다.
 
 - [x] **Step 9: 구현 결과 기록 및 커밋**
 
@@ -154,6 +158,7 @@
 ### 검증 결과
 
 - TDD RED: 두 신규 회귀 테스트가 기존 코드에서 각각 502 응답으로 실패했다.
-- TDD GREEN: 두 focused 테스트가 각각 `OK`로 통과했다.
-- 프리톡 API 회귀: 41개 테스트 `OK`.
-- 전체 테스트: 243개 테스트 `OK`.
+- 리뷰 경계 RED: 비문자열 `inferredTitle` 및 종료 감지 생성 필드 테스트가 기존 후보 타입 검증으로 502 응답으로 실패했다.
+- TDD GREEN: 신규 경계 focused 테스트 2개와 기존 정규화 focused 테스트 2개가 모두 `OK`로 통과했다.
+- 프리톡 API 회귀: 43개 테스트 `OK`.
+- 전체 테스트: 245개 테스트 `OK`.

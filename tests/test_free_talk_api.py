@@ -502,6 +502,22 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["data"]["inferredTitle"])
 
+    def test_turn_ignores_non_string_inferred_title_after_first_user_turn(self):
+        for title in ({"unexpected": "object"}, 123):
+            with self.subTest(title=title):
+                response = self._post(
+                    "/api/v1/free-talk/turn",
+                    valid_turn_payload(isFirstUserTurn=False),
+                    FakeOpenAI(
+                        contents=[
+                            json.dumps(normal_turn_completion(inferredTitle=title)),
+                        ],
+                    ),
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertIsNone(response.json()["data"]["inferredTitle"])
+
     def test_turn_exit_intent_returns_only_allowed_nullable_fields(self):
         response = self._post(
             "/api/v1/free-talk/turn",
@@ -541,6 +557,38 @@ class FreeTalkApiTests(unittest.TestCase):
                 contents=[
                     json.dumps(
                         normal_turn_completion(userExitIntentDetected=True),
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "userExitIntentDetected": True,
+                "inferredTitle": "주말 등산 이야기",
+                "aiMessage": None,
+                "translatedMessage": None,
+                "emotion": None,
+            },
+        )
+
+    def test_turn_ignores_non_string_generated_fields_when_exit_intent_is_detected(
+        self,
+    ):
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        normal_turn_completion(
+                            userExitIntentDetected=True,
+                            aiMessage={"unexpected": "object"},
+                            translatedMessage=123,
+                            emotion={"unexpected": "object"},
+                        ),
                     ),
                 ],
             ),

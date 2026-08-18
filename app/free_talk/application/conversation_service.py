@@ -64,6 +64,10 @@ class _TurnCandidate(BaseModel):
     emotion: object | None = None
 
 
+class _TurnExitIntentCandidate(BaseModel):
+    userExitIntentDetected: bool | None = None
+
+
 class _ClosingCandidate(BaseModel):
     aiMessage: str
     translatedMessage: str
@@ -107,11 +111,20 @@ def generate_turn(
         user_prompt=_turn_user_prompt(payload),
     )
     try:
-        candidate = _TurnCandidate.model_validate(data)
+        candidate_data = dict(data)
+        if not payload.isFirstUserTurn:
+            candidate_data["inferredTitle"] = None
+        if payload.responseMode == FreeTalkResponseMode.NORMAL:
+            exit_candidate = _TurnExitIntentCandidate.model_validate(data)
+            if exit_candidate.userExitIntentDetected is None:
+                raise ValueError("normal turn requires exit intent")
+            if exit_candidate.userExitIntentDetected:
+                candidate_data["aiMessage"] = None
+                candidate_data["translatedMessage"] = None
+                candidate_data["emotion"] = None
+        candidate = _TurnCandidate.model_validate(candidate_data)
         _validate_inferred_title(candidate.inferredTitle, payload.isFirstUserTurn)
         if payload.responseMode == FreeTalkResponseMode.NORMAL:
-            if candidate.userExitIntentDetected is None:
-                raise ValueError("normal turn requires exit intent")
             exit_detected = candidate.userExitIntentDetected
         else:
             exit_detected = False
