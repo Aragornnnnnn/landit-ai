@@ -636,7 +636,7 @@ class FreeTalkApiTests(unittest.TestCase):
             },
         )
 
-    def test_turn_continue_after_exit_declined_skips_exit_rejudgment(self):
+    def test_turn_continue_after_exit_declined_ignores_exit_intent_value(self):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(
@@ -647,7 +647,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 contents=[
                     json.dumps(
                         normal_turn_completion(
-                            userExitIntentDetected=True,
+                            userExitIntentDetected={"unexpected": "object"},
                             inferredTitle=None,
                         ),
                     ),

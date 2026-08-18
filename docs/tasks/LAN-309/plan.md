@@ -8,11 +8,39 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, `unittest`.
 
-**Spec:** `docs/tasks/LAN-309/issue.md`
+## 요구사항
+
+- 프리톡 AI 응답에서 현재 요청 흐름에 사용하지 않는 필드는 오류로 처리하지 않고 무시한다.
+- 첫 사용자 턴이 아닌 경우 모델이 `inferredTitle`을 반환해도 해당 값을 버리고 `null`로 응답한다.
+- 종료 의사가 감지된 응답에 `aiMessage`, `translatedMessage`가 포함되어도 사용하지 않고 `null`로 응답한다.
+- `CONTINUE_AFTER_EXIT_DECLINED`에서는 모델의 `userExitIntentDetected`를 사용하지 않고 `false`로 정규화한다.
+- 서버가 사용하지 않는 필드는 제거하거나 정규화하고, 화면 표시·흐름 제어·저장에 필요한 필드는 기존 검증을 유지한다.
+- JSON 객체 형식과 필수 응답 계약은 계속 검증한다.
+- 프리톡 대화 응답은 대화 상대 역할만 수행하고, 사용자의 문법·어휘·표현을 선제적으로 교정하거나 학습 피드백을 제공하지 않는다.
+
+## 완료 기준
+
+- [x] 후속 턴에서 `inferredTitle`이 생성되어도 502가 발생하지 않고 `null`로 응답한다.
+- [x] 종료 의사가 감지된 응답에 대화 메시지가 포함되어도 메시지를 제거하고 정상 응답한다.
+- [x] 계속 대화 모드의 `userExitIntentDetected`가 비불리언이어도 무시하고 `false`로 응답한다.
+- [x] 첫 사용자 턴의 `inferredTitle` 형식 검증은 유지한다.
+- [x] 일반 대화 응답의 `userExitIntentDetected`, `aiMessage`, `translatedMessage` 필수 검증은 유지한다.
+- [x] 프리톡 대화 응답 필드별 검증 기준을 테스트로 명시한다.
+- [x] 사용자의 영어에 오류가 있거나 사용자가 교정을 요청해도 프리톡 응답은 교정·평가 없이 대화를 이어간다.
+- [x] `.venv/bin/python -m unittest discover -s tests`가 통과한다.
+
+## 작업 메모
+
+- develop 로그에서 후속 턴에 모델이 `inferredTitle`을 반환해 `502 AI_RESPONSE_INVALID`가 발생한 사례를 2건 확인했다.
+- 감정값으로 `friendly`, `enthusiastic`을 반환한 오류는 감정 검증을 비활성화한 기존 변경으로 해결됐다.
+- `response_format={"type": "json_object"}`는 유효한 JSON 객체만 보장하며, 필드값과 조건부 계약까지 보장하지 않는다.
+- 모델이 프롬프트를 벗어난 부가 필드를 반환하더라도 서버가 사용하지 않는 값이라면 요청 전체를 실패시키지 않는다.
+- 표현 추천과 임베딩 검증은 데이터 연결과 저장 정합성에 영향을 주므로 이번 작업 범위에서 제외한다.
+- 실제 모델 스모크 테스트에서 문법 오류가 포함된 사용자 발화를 선제적으로 교정한 사례가 1건 확인되어, 메시지 피드백 기능과 역할이 겹치지 않도록 프롬프트 계약을 추가했다.
 
 ## Global Constraints
 
-- 변경 범위는 `app/free_talk/application/conversation_service.py`와 `tests/test_free_talk_api.py`로 제한한다.
+- 구현 코드 범위는 `app/free_talk/application/conversation_service.py`와 `tests/test_free_talk_api.py`로 제한한다.
 - 첫 사용자 턴의 `inferredTitle`은 짧은 한국어 제목이어야 한다는 기존 검증을 유지한다.
 - `NORMAL` 응답의 `userExitIntentDetected`와 계속 대화할 때의 `aiMessage`, `translatedMessage` 필수 검증을 유지한다.
 - `CONTINUE_AFTER_EXIT_DECLINED`가 종료 의사를 다시 판단하지 않는 기존 동작을 유지한다.
@@ -53,7 +81,7 @@
 
 - [x] **Step 2: 후속 턴 제목 테스트가 기존 코드에서 실패하는지 확인**
 
-  Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_inferred_title_after_first_user_turn`
+  Run: `.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_inferred_title_after_first_user_turn`
 
   Expected: 응답 상태가 `502`여서 `200` assertion이 실패한다.
 
@@ -92,7 +120,7 @@
 
 - [x] **Step 4: 종료 감지 테스트가 기존 코드에서 실패하는지 확인**
 
-  Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_generated_fields_when_exit_intent_is_detected`
+  Run: `.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_generated_fields_when_exit_intent_is_detected`
 
   Expected: 응답 상태가 `502`여서 `200` assertion이 실패한다.
 
@@ -136,13 +164,13 @@
 
 - [x] **Step 7: 프리톡 API 회귀 테스트 실행**
 
-  Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api`
+  Run: `.venv/bin/python -m unittest tests.test_free_talk_api`
 
   Expected: 모든 프리톡 API 테스트가 통과한다. 특히 첫 사용자 턴의 잘못된 제목과 일반 응답의 누락 메시지는 계속 `502`로 검증된다.
 
 - [x] **Step 8: 전체 테스트 실행**
 
-  Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`
+  Run: `.venv/bin/python -m unittest discover -s tests`
 
   Expected: `245`개 이상의 테스트가 실패 없이 통과한다.
 
@@ -172,3 +200,11 @@
 - TDD GREEN: 교정 금지와 필수 종료 필드 focused 테스트, 프리톡 API 45개 테스트가 통과했다.
 - 실제 모델 재검증: 일반 문법 오류와 명시적 교정 요청 2건 모두 200으로 응답했고, 교정이나 교정 거절 언급 없이 대화를 이어갔다.
 - 최종 전체 회귀: 247개 테스트 `OK`.
+
+### 리뷰 반영 결과
+
+- TDD RED: 계속 대화 모드에서 비불리언 `userExitIntentDetected`가 후보 검증으로 502를 반환했다.
+- TDD GREEN: 계속 대화 모드에서 해당 값을 `false`로 정규화하고 focused 테스트가 통과했다.
+- 프리톡 API 회귀: 45개 테스트 `OK`.
+- 전체 회귀: 247개 테스트 `OK`.
+- `plan.md`를 요구사항과 완료 기준의 단일 기준 문서로 통합하고, 검증 명령을 작업 트리 기준 상대 경로로 정리했다.

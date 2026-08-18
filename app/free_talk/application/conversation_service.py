@@ -122,6 +122,8 @@ def generate_turn(
                 candidate_data["aiMessage"] = None
                 candidate_data["translatedMessage"] = None
                 candidate_data["emotion"] = None
+        else:
+            candidate_data["userExitIntentDetected"] = False
         candidate = _TurnCandidate.model_validate(candidate_data)
         _validate_inferred_title(candidate.inferredTitle, payload.isFirstUserTurn)
         if payload.responseMode == FreeTalkResponseMode.NORMAL:
