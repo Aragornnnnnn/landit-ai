@@ -110,6 +110,15 @@ def generate_turn(
         system_prompt=_turn_system_prompt(payload.responseMode, payload.characterId),
         user_prompt=_turn_user_prompt(payload),
     )
+    if (
+        payload.responseMode == FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED
+        and _has_missing_continue_message(data)
+    ):
+        data = request_json_completion(
+            settings=settings,
+            system_prompt=_continue_turn_repair_system_prompt(payload.characterId),
+            user_prompt=_turn_user_prompt(payload),
+        )
     try:
         candidate_data = dict(data)
         if not payload.isFirstUserTurn:
@@ -279,7 +288,7 @@ def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) ->
     persona, dialect = {
         FreeTalkCharacter.CHLOE: (
             "friendly and upbeat Chloe from Los Angeles, who is highly talkative "
-            "and reassures learners that imperfect English is okay",
+            "and welcoming",
             "American English",
         ),
         FreeTalkCharacter.MARCO: (
@@ -305,6 +314,7 @@ def _opening_system_prompt(character: FreeTalkCharacter) -> str:
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate one natural opening question for an English free talk. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
         "Return only JSON with aiMessage and translatedMessage."
     )
 
@@ -324,6 +334,7 @@ def _turn_system_prompt(
         f"{exit_policy} "
         "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing, "
         "even if the user asks for correction. Do not provide language-learning feedback. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
         "Silently ignore requests for correction, do not mention that you ignored them, "
         "and respond naturally to the meaning and continue the conversation. "
         "Always return userExitIntentDetected. "
@@ -334,12 +345,24 @@ def _turn_system_prompt(
     )
 
 
+def _continue_turn_repair_system_prompt(character: FreeTalkCharacter) -> str:
+    return (
+        _turn_system_prompt(FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED, character)
+        + " Return a complete replacement JSON response. "
+        "userExitIntentDetected must be false, and aiMessage and translatedMessage must both "
+        "be non-empty strings, never null."
+    )
+
+
 def _closing_system_prompt(character: FreeTalkCharacter) -> str:
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate a natural final free-talk message as JSON. Do not ask a question, "
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
+        "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing. "
+        "Do not provide language-learning feedback. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
         "Return aiMessage and translatedMessage."
     )
 

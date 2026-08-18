@@ -385,6 +385,34 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("do not mention that you ignored them", system_prompt)
         self.assertIn("respond naturally to the meaning", system_prompt)
 
+    def test_closing_prompt_prohibits_language_feedback(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(closing_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("Do not correct, rewrite, or evaluate", system_prompt)
+        self.assertIn("Do not provide language-learning feedback", system_prompt)
+        self.assertIn("Do not mention English proficiency", system_prompt)
+
+    def test_opening_prompt_prohibits_language_proficiency_feedback(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(opening_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("Do not mention English proficiency", system_prompt)
+
     def test_turn_prompt_requires_exit_intent_field(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
 
@@ -866,6 +894,110 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["data"]["userExitIntentDetected"])
         self.assertIsNone(response.json()["data"]["inferredTitle"])
+
+    def test_turn_continue_after_exit_declined_repairs_missing_visible_messages(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    normal_turn_completion(
+                        userExitIntentDetected=False,
+                        inferredTitle=None,
+                        aiMessage=None,
+                        translatedMessage=None,
+                    ),
+                ),
+                json.dumps(
+                    normal_turn_completion(
+                        userExitIntentDetected=False,
+                        inferredTitle=None,
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(
+                responseMode="CONTINUE_AFTER_EXIT_DECLINED",
+                isFirstUserTurn=False,
+            ),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["aiMessage"],
+            "That sounds fun! Where are you going hiking?",
+        )
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_turn_continue_after_exit_declined_repairs_blank_or_non_string_messages(self):
+        invalid_messages = (
+            (" ", "번역문"),
+            ("다음 대사", 123),
+        )
+
+        for ai_message, translated_message in invalid_messages:
+            with self.subTest(
+                ai_message=ai_message,
+                translated_message=translated_message,
+            ):
+                fake_openai = FakeOpenAI(
+                    contents=[
+                        json.dumps(
+                            normal_turn_completion(
+                                userExitIntentDetected=False,
+                                inferredTitle=None,
+                                aiMessage=ai_message,
+                                translatedMessage=translated_message,
+                            ),
+                        ),
+                        json.dumps(
+                            normal_turn_completion(
+                                userExitIntentDetected=False,
+                                inferredTitle=None,
+                            ),
+                        ),
+                    ],
+                )
+
+                response = self._post(
+                    "/api/v1/free-talk/turn",
+                    valid_turn_payload(
+                        responseMode="CONTINUE_AFTER_EXIT_DECLINED",
+                        isFirstUserTurn=False,
+                    ),
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_turn_continue_after_exit_declined_rejects_missing_messages_after_repair(
+        self,
+    ):
+        invalid_completion = normal_turn_completion(
+            userExitIntentDetected=False,
+            inferredTitle=None,
+            aiMessage=None,
+            translatedMessage=None,
+        )
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(invalid_completion), json.dumps(invalid_completion)],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(
+                responseMode="CONTINUE_AFTER_EXIT_DECLINED",
+                isFirstUserTurn=False,
+            ),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_closing_supports_both_reasons_without_inner_thought(self):
         for reason in ("USER_CONFIRMED", "TIME_LIMIT_REACHED"):
