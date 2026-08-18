@@ -4,6 +4,7 @@ import re
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
 from app.free_talk.domain.rules import derive_inner_thought_type
 from app.free_talk.llm.json_completion import (
@@ -368,18 +369,18 @@ def _closing_system_prompt(character: FreeTalkCharacter) -> str:
 
 
 def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
-    return (
-        _character_prompt(character, include_dialect=False)
-        + "Generate the free-talk counterpart's private reaction to the last user message as JSON. "
-        "Return innerThought, answerCoverage, relationshipTone, and directedAttack. "
-        "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
-        "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
-        "directedAttack must be a JSON boolean: use true only when the user directly attacks, "
-        "insults, threatens, or uses profanity toward the counterpart; otherwise use false. "
-        'For example: {"innerThought":"...","answerCoverage":"COMPLETE",'
-        '"relationshipTone":"NEUTRAL","directedAttack":false}. '
-        "innerThought is Korean and must not mention grammar, naturalness, scores, corrections, "
-        "feedback, or learning advice."
+    return "\n\n".join(
+        [
+            _character_prompt(character, include_dialect=False),
+            shared_inner_thought_policy(),
+            (
+                "Free Talk Output Schema:\n"
+                "Return ONLY valid JSON matching this schema exactly: "
+                '{"innerThought":"...","answerCoverage":"COMPLETE",'
+                '"relationshipTone":"NEUTRAL","directedAttack":false}. '
+                "innerThought must be Korean. Never return text outside the JSON object."
+            ),
+        ]
     )
 
 

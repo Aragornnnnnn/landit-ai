@@ -6,6 +6,7 @@
 - 판단할 수 없는 `directedAttack`과 계속 대화의 누락된 표시 메시지는 전체 응답을 한 번만 재생성한다.
 - 재생성도 형식 계약을 만족하지 못하면 기존 `AI_RESPONSE_INVALID` 응답을 유지한다.
 - 프리톡은 대화 상대 역할만 수행하며, opening·turn·closing에서 사용자의 영어 실력이나 언어 오류를 언급하지 않는다.
+- 시나리오와 프리톡의 속마음 판정 정책은 한 곳에서 관리하고, 각 기능의 맥락과 출력 스키마만 분리한다.
 
 ## 완료 기준
 
@@ -16,6 +17,8 @@
 - [x] 로컬 현재 코드에서 실제 OpenRouter 10세션 이상의 opening → turn → inner-thought → closing 흐름을 검증한다.
 - [x] opening·turn·closing 프롬프트에서 영어 실력, 실수, 정확성, 완벽함, 향상을 언급하지 않도록 명시한다.
 - [x] 속마음의 금지된 피드백 표현도 전체 응답을 1회 재생성하고, 재실패하면 502를 유지한다.
+- [x] 공통 속마음 정책에 분류 기준, `directedAttack` boolean 계약, 발화 형식 평가 금지를 모은다.
+- [x] 시나리오의 `innerThoughtType` 출력 계약과 프리톡의 서버 유형 파생 계약은 각각 유지한다.
 
 ## 작업 메모
 
@@ -25,6 +28,8 @@
 - 화면·저장에 쓰이는 두 메시지는 LAN-309의 미사용 필드처럼 폐기하지 않고, 유효한 쌍을 한 번 재생성한다.
 - 실제 샘플에서 closing이 사용자의 영어가 자연스럽다거나 완벽하지 않아도 된다는 식의 언어 숙련도 평가를 했다. Chloe 페르소나의 상충 문구를 제거하고 모든 보이는 프리톡 프롬프트에 금지 계약을 추가했다.
 - 최종 10세션 첫 실행에서 속마음에 금지된 피드백 표현이 섞여 502가 발생했다. JSON 후보 검증 뒤의 정책 검증 실패에는 재생성 경로가 없던 것이 원인이다.
+- 기존 프리톡은 축약된 속마음 정책을 별도로 관리해 boolean 계약이 빠졌고, 시나리오는 더 긴 정책과 근거 필드 폴백을 사용했다.
+- 공통 정책은 `app/common/inner_thought_prompt.py`로 추출했다. 시나리오는 역할별 상황 예시와 `innerThoughtType` 출력 스키마를, 프리톡은 캐릭터와 4필드 출력 스키마를 각각 유지한다.
 
 ## 검증 결과
 
@@ -41,3 +46,6 @@
 - 전체 회귀: `../../.venv/bin/python -m unittest discover -s tests` 262개 통과.
 - 실제 OpenRouter 검증: 로컬 현재 코드에서 10세션, 총 50개 호출의 opening → turn → inner-thought → continue turn → closing이 HTTP 200으로 완료됐다. closing의 언어 피드백 금지 검사도 통과했다.
 - 변경 공백 검증: `git diff --check` 통과.
+- 공통 정책 RED: 프리톡 속마음 요청이 답변 충실도와 관계 톤을 별도로 판단하도록 요구하지 않아 실패하는 테스트를 추가했다.
+- 공통 정책 회귀: `../../.venv/bin/python -m unittest tests.test_free_talk_api tests.test_conversation_api`와 `../../.venv/bin/python -m unittest discover -s tests` 265개가 통과했다.
+- 실제 OpenRouter 재검증: 공통 정책 적용 후 프리톡 속마음 10회가 모두 HTTP 200으로 완료됐고 재생성은 0회였다. 평균 1.92초였으며, 1회 6.27초 provider 지연은 재생성과 무관했다.

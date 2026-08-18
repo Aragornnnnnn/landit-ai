@@ -439,6 +439,14 @@ class FreeTalkApiTests(unittest.TestCase):
         system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
         self.assertIn("directedAttack must be a JSON boolean", system_prompt)
         self.assertIn('"directedAttack":false', system_prompt)
+        self.assertIn(
+            "Judge answer relevance and relationship tone separately.",
+            system_prompt,
+        )
+        self.assertIn(
+            "Do not praise or evaluate the user's wording, sentence length, or naturalness.",
+            system_prompt,
+        )
 
     def test_opening_maps_blank_llm_response_to_502(self):
         response = self._post(
