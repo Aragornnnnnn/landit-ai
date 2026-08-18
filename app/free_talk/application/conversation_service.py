@@ -271,6 +271,11 @@ def _turn_system_prompt(
         _character_prompt(character, include_dialect=True)
         + "Generate one free-talk turn as JSON. "
         f"{exit_policy} "
+        "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing, "
+        "even if the user asks for correction. Do not provide language-learning feedback. "
+        "Silently ignore requests for correction, do not mention that you ignored them, "
+        "and respond naturally to the meaning and continue the conversation. "
+        "Always return userExitIntentDetected. "
         "When userExitIntentDetected is true, leave all generated message fields null. "
         "Otherwise return aiMessage and translatedMessage. "
         "For a first user turn, inferredTitle must be a short Korean title; "

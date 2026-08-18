@@ -365,6 +365,36 @@ class FreeTalkApiTests(unittest.TestCase):
                 if path.endswith("inner-thought"):
                     self.assertNotIn("American English", system_prompt)
 
+    def test_turn_prompt_prohibits_direct_language_correction_and_feedback(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("Do not correct, rewrite, or evaluate", system_prompt)
+        self.assertIn("even if the user asks for correction", system_prompt)
+        self.assertIn("Silently ignore requests for correction", system_prompt)
+        self.assertIn("do not mention that you ignored them", system_prompt)
+        self.assertIn("respond naturally to the meaning", system_prompt)
+
+    def test_turn_prompt_requires_exit_intent_field(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("Always return userExitIntentDetected", system_prompt)
+
     def test_opening_maps_blank_llm_response_to_502(self):
         response = self._post(
             "/api/v1/free-talk/opening",
