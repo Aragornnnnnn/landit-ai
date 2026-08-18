@@ -447,6 +447,24 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIsNone(response.json()["data"]["emotion"])
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
+    def test_turn_treats_all_null_topic_as_absent(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(
+                topic={
+                    "topicId": None,
+                    "title": None,
+                    "promptDescription": None,
+                },
+            ),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        user_prompt = fake_openai.completions.calls[0]["messages"][1]["content"]
+        self.assertIsNone(json.loads(user_prompt)["topic"])
+
     def test_turn_ignores_unsupported_emotion(self):
         response = self._post(
             "/api/v1/free-talk/turn",
@@ -474,6 +492,21 @@ class FreeTalkApiTests(unittest.TestCase):
                 "innerThoughtType": "GOOD",
             },
         )
+
+    def test_inner_thought_treats_all_null_topic_as_absent(self):
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(
+                topic={
+                    "topicId": None,
+                    "title": None,
+                    "promptDescription": None,
+                },
+            ),
+            FakeOpenAI(contents=[json.dumps(inner_thought_completion())]),
+        )
+
+        self.assertEqual(response.status_code, 200)
 
     def test_turn_rejects_korean_or_english_feedback_style_inner_thought(self):
         prohibited_inner_thoughts = (

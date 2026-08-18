@@ -17,6 +17,7 @@
 - 서버가 사용하지 않는 필드는 제거하거나 정규화하고, 화면 표시·흐름 제어·저장에 필요한 필드는 기존 검증을 유지한다.
 - JSON 객체 형식과 필수 응답 계약은 계속 검증한다.
 - 프리톡 대화 응답은 대화 상대 역할만 수행하고, 사용자의 문법·어휘·표현을 선제적으로 교정하거나 학습 피드백을 제공하지 않는다.
+- 사용자 선시작에서 BE가 전달하는 모든 값이 `null`인 `topic` 객체는 주제 없음으로 처리한다.
 
 ## 완료 기준
 
@@ -27,6 +28,7 @@
 - [x] 일반 대화 응답의 `userExitIntentDetected`, `aiMessage`, `translatedMessage` 필수 검증은 유지한다.
 - [x] 프리톡 대화 응답 필드별 검증 기준을 테스트로 명시한다.
 - [x] 사용자의 영어에 오류가 있거나 사용자가 교정을 요청해도 프리톡 응답은 교정·평가 없이 대화를 이어간다.
+- [x] 모든 값이 `null`인 `topic` 객체로도 첫 사용자 턴과 속마음 요청이 400 없이 처리된다.
 - [x] `.venv/bin/python -m unittest discover -s tests`가 통과한다.
 
 ## 작업 메모
@@ -37,10 +39,11 @@
 - 모델이 프롬프트를 벗어난 부가 필드를 반환하더라도 서버가 사용하지 않는 값이라면 요청 전체를 실패시키지 않는다.
 - 표현 추천과 임베딩 검증은 데이터 연결과 저장 정합성에 영향을 주므로 이번 작업 범위에서 제외한다.
 - 실제 모델 스모크 테스트에서 문법 오류가 포함된 사용자 발화를 선제적으로 교정한 사례가 1건 확인되어, 메시지 피드백 기능과 역할이 겹치지 않도록 프롬프트 계약을 추가했다.
+- develop에서 2026-08-18 14:40:53, 14:42:04 KST에 `/api/v1/free-talk/turn` 요청이 400을 반환했다. 사용자 선시작에서 BE가 `topic`의 세 필드를 모두 `null`로 보낸 반면 AI가 `topic.title`을 문자열로 검증해 모델 호출 전에 거부한 것이 원인이었다.
 
 ## Global Constraints
 
-- 구현 코드 범위는 `app/free_talk/application/conversation_service.py`와 `tests/test_free_talk_api.py`로 제한한다.
+- 구현 코드 범위는 `app/free_talk/application/conversation_service.py`, `app/models/free_talk.py`, `tests/test_free_talk_api.py`로 제한한다.
 - 첫 사용자 턴의 `inferredTitle`은 짧은 한국어 제목이어야 한다는 기존 검증을 유지한다.
 - `NORMAL` 응답의 `userExitIntentDetected`와 계속 대화할 때의 `aiMessage`, `translatedMessage` 필수 검증을 유지한다.
 - `CONTINUE_AFTER_EXIT_DECLINED`가 종료 의사를 다시 판단하지 않는 기존 동작을 유지한다.
@@ -208,3 +211,10 @@
 - 프리톡 API 회귀: 45개 테스트 `OK`.
 - 전체 회귀: 247개 테스트 `OK`.
 - `plan.md`를 요구사항과 완료 기준의 단일 기준 문서로 통합하고, 검증 명령을 작업 트리 기준 상대 경로로 정리했다.
+
+### 추가 장애 대응: all-null 주제 정규화
+
+- TDD RED: 실제 BE 요청 형태인 `topic={"topicId": null, "title": null, "promptDescription": null}`로 첫 사용자 턴과 속마음 API를 호출했을 때 두 테스트가 모두 400으로 실패했다.
+- TDD GREEN: 공통 프리톡 요청 모델에서 알려진 주제 필드가 모두 `null`인 객체만 `None`으로 정규화했다. 알 수 없는 필드나 일부만 잘못된 주제는 기존 검증을 유지한다.
+- 프리톡 API 회귀: 47개 테스트 `OK`.
+- 전체 회귀: 249개 테스트 `OK`.

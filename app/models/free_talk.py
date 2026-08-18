@@ -62,6 +62,18 @@ class FreeTalkContext(BaseModel):
     baseLocale: str
     topic: FreeTalkTopicContext | None = None
 
+    @field_validator("topic", mode="before")
+    @classmethod
+    def all_null_topic_must_be_treated_as_absent(cls, value: object) -> object:
+        topic_fields = {"topicId", "title", "promptDescription"}
+        if (
+            isinstance(value, dict)
+            and set(value).issubset(topic_fields)
+            and all(value.get(field) is None for field in topic_fields)
+        ):
+            return None
+        return value
+
     @field_validator(
         "targetLocale",
         "baseLocale",
