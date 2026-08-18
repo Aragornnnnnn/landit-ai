@@ -492,15 +492,15 @@ class FreeTalkApiTests(unittest.TestCase):
                     "AI_RESPONSE_INVALID",
                 )
 
-    def test_turn_rejects_inferred_title_after_first_user_turn(self):
+    def test_turn_ignores_inferred_title_after_first_user_turn(self):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(isFirstUserTurn=False),
             FakeOpenAI(contents=[json.dumps(normal_turn_completion())]),
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["inferredTitle"])
 
     def test_turn_exit_intent_returns_only_allowed_nullable_fields(self):
         response = self._post(
@@ -533,7 +533,7 @@ class FreeTalkApiTests(unittest.TestCase):
             },
         )
 
-    def test_turn_rejects_generated_fields_when_exit_intent_is_detected(self):
+    def test_turn_ignores_generated_fields_when_exit_intent_is_detected(self):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(),
@@ -546,8 +546,17 @@ class FreeTalkApiTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "userExitIntentDetected": True,
+                "inferredTitle": "주말 등산 이야기",
+                "aiMessage": None,
+                "translatedMessage": None,
+                "emotion": None,
+            },
+        )
 
     def test_turn_continue_after_exit_declined_skips_exit_rejudgment(self):
         response = self._post(

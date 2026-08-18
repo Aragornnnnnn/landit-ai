@@ -33,7 +33,7 @@
 - Consumes: `generate_turn(payload: FreeTalkTurnRequest, settings: Settings) -> FreeTalkTurnResponse`.
 - Produces: 후속 턴의 `inferredTitle`과 종료 감지 응답의 `aiMessage`, `translatedMessage`, `emotion`을 `None`으로 정규화한 기존 `FreeTalkTurnResponse` 계약.
 
-- [ ] **Step 1: 후속 턴 제목 정규화 실패 테스트 작성**
+- [x] **Step 1: 후속 턴 제목 정규화 실패 테스트 작성**
 
   `test_turn_rejects_inferred_title_after_first_user_turn`을 다음 동작 검증으로 변경한다.
 
@@ -49,13 +49,13 @@
       self.assertIsNone(response.json()["data"]["inferredTitle"])
   ```
 
-- [ ] **Step 2: 후속 턴 제목 테스트가 기존 코드에서 실패하는지 확인**
+- [x] **Step 2: 후속 턴 제목 테스트가 기존 코드에서 실패하는지 확인**
 
   Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_inferred_title_after_first_user_turn`
 
   Expected: 응답 상태가 `502`여서 `200` assertion이 실패한다.
 
-- [ ] **Step 3: 종료 감지 후 생성 필드 정규화 실패 테스트 작성**
+- [x] **Step 3: 종료 감지 후 생성 필드 정규화 실패 테스트 작성**
 
   `test_turn_rejects_generated_fields_when_exit_intent_is_detected`를 다음 동작 검증으로 변경한다.
 
@@ -86,13 +86,13 @@
       )
   ```
 
-- [ ] **Step 4: 종료 감지 테스트가 기존 코드에서 실패하는지 확인**
+- [x] **Step 4: 종료 감지 테스트가 기존 코드에서 실패하는지 확인**
 
   Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api.FreeTalkApiTests.test_turn_ignores_generated_fields_when_exit_intent_is_detected`
 
   Expected: 응답 상태가 `502`여서 `200` assertion이 실패한다.
 
-- [ ] **Step 5: 후속 턴 제목 검증을 첫 사용자 턴에만 적용**
+- [x] **Step 5: 후속 턴 제목 검증을 첫 사용자 턴에만 적용**
 
   `_validate_inferred_title()`에서 `is_first_user_turn`이 `False`이면 모델이 반환한 제목과 관계없이 즉시 반환한다. 첫 사용자 턴의 기존 한국어·길이·공백 검증은 그대로 둔다.
 
@@ -113,7 +113,7 @@
           raise ValueError("first user turn requires a short Korean inferred title")
   ```
 
-- [ ] **Step 6: 종료 감지 응답의 생성 필드를 폐기**
+- [x] **Step 6: 종료 감지 응답의 생성 필드를 폐기**
 
   `exit_detected` 분기에서 모델의 `aiMessage`, `translatedMessage`, `emotion`을 전달하지 않고 모두 `None`으로 조립한다. 첫 사용자 턴의 유효한 `inferredTitle`은 기존처럼 유지한다.
 
@@ -130,19 +130,19 @@
       )
   ```
 
-- [ ] **Step 7: 프리톡 API 회귀 테스트 실행**
+- [x] **Step 7: 프리톡 API 회귀 테스트 실행**
 
   Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest tests.test_free_talk_api`
 
   Expected: 모든 프리톡 API 테스트가 통과한다. 특히 첫 사용자 턴의 잘못된 제목과 일반 응답의 누락 메시지는 계속 `502`로 검증된다.
 
-- [ ] **Step 8: 전체 테스트 실행**
+- [x] **Step 8: 전체 테스트 실행**
 
   Run: `/Users/sangmin8817/Soma/landit-ai/.venv/bin/python -m unittest discover -s tests`
 
   Expected: `243`개 이상의 테스트가 실패 없이 통과한다.
 
-- [ ] **Step 9: 구현 결과 기록 및 커밋**
+- [x] **Step 9: 구현 결과 기록 및 커밋**
 
   `docs/tasks/LAN-309/plan.md`의 완료 항목과 검증 결과를 갱신한 뒤 다음 파일만 커밋한다.
 
@@ -150,3 +150,10 @@
   git add app/free_talk/application/conversation_service.py tests/test_free_talk_api.py docs/tasks/LAN-309/plan.md
   git commit -m "fix: 프리톡 미사용 응답 필드를 안전하게 무시"
   ```
+
+### 검증 결과
+
+- TDD RED: 두 신규 회귀 테스트가 기존 코드에서 각각 502 응답으로 실패했다.
+- TDD GREEN: 두 focused 테스트가 각각 `OK`로 통과했다.
+- 프리톡 API 회귀: 41개 테스트 `OK`.
+- 전체 테스트: 243개 테스트 `OK`.

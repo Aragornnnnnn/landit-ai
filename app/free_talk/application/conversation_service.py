@@ -121,8 +121,8 @@ def generate_turn(
                 inferredTitle=(
                     candidate.inferredTitle if payload.isFirstUserTurn else None
                 ),
-                aiMessage=candidate.aiMessage,
-                translatedMessage=candidate.translatedMessage,
+                aiMessage=None,
+                translatedMessage=None,
                 emotion=None,
             )
         return FreeTalkTurnResponse(
@@ -192,8 +192,6 @@ def _validate_inferred_title(
     is_first_user_turn: bool,
 ) -> None:
     if not is_first_user_turn:
-        if title is not None:
-            raise ValueError("only the first user turn may infer a title")
         return
     if (
         title is None
