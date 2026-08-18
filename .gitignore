@@ -9,3 +9,6 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# LAN-209 PoC 골든 셋 (개인 음성 — 커밋 제외)
+docs/tasks/LAN-209/audio/

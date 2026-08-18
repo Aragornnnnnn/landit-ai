@@ -1,0 +1,898 @@
+{
+  "model": "google/gemini-2.5-flash",
+  "runs": 3,
+  "samples": [
+    {
+      "label": "correct",
+      "audio": "docs/tasks/LAN-209/audio/correct.wav",
+      "expected": [],
+      "exactMatchRate": 1.0,
+      "consistent": true,
+      "runs": [
+        {
+          "run": 1,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [],
+          "falsePositives": [],
+          "exactMatch": true,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hik ing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 2,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [],
+          "falsePositives": [],
+          "exactMatch": true,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hik ing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 3,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [],
+          "falsePositives": [],
+          "exactMatch": true,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh-thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hik-ing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "th_to_s",
+      "audio": "docs/tasks/LAN-209/audio/th_to_s.wav",
+      "expected": [
+        "nothing:PHONEME"
+      ],
+      "exactMatchRate": 0.0,
+      "consistent": true,
+      "runs": [
+        {
+          "run": 1,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "nothing:PHONEME"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hi king",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 2,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "nothing:PHONEME"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hi king",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 3,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "nothing:PHONEME"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hi king",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "stress_hiking",
+      "audio": "docs/tasks/LAN-209/audio/stress_hiking.wav",
+      "expected": [
+        "hiking:STRESS"
+      ],
+      "exactMatchRate": 0.0,
+      "consistent": true,
+      "runs": [
+        {
+          "run": 1,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "hiking:STRESS"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh-thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hi-king",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 2,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "hiking:STRESS"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh-thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hi-king",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 3,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "hiking:STRESS"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh-thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hi-king",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "label": "combined",
+      "audio": "docs/tasks/LAN-209/audio/combined.wav",
+      "expected": [
+        "hiking:STRESS",
+        "nothing:PHONEME"
+      ],
+      "exactMatchRate": 0.0,
+      "consistent": true,
+      "runs": [
+        {
+          "run": 1,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "hiking:STRESS",
+            "nothing:PHONEME"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hik ing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 2,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "hiking:STRESS",
+            "nothing:PHONEME"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hik ing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        },
+        {
+          "run": 3,
+          "overallScore": 95,
+          "detected": [],
+          "missed": [
+            "hiking:STRESS",
+            "nothing:PHONEME"
+          ],
+          "falsePositives": [],
+          "exactMatch": false,
+          "raw": {
+            "overallScore": 95,
+            "words": [
+              {
+                "word": "There's",
+                "order": 1,
+                "heard": "there's",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "nothing",
+                "order": 2,
+                "heard": "nuh thing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "like",
+                "order": 3,
+                "heard": "like",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "hiking",
+                "order": 4,
+                "heard": "hik ing",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "to",
+                "order": 5,
+                "heard": "to",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "clear",
+                "order": 6,
+                "heard": "clear",
+                "heardStressIndex": 0,
+                "ok": true
+              },
+              {
+                "word": "my",
+                "order": 7,
+                "heard": "my",
+                "heardStressIndex": -1,
+                "ok": true
+              },
+              {
+                "word": "head",
+                "order": 8,
+                "heard": "head",
+                "heardStressIndex": 0,
+                "ok": true
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

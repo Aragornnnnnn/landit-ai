@@ -1,0 +1,44 @@
+{
+  "sentences": [
+    {
+      "id": "s1",
+      "text": "There's nothing like hiking to clear my head.",
+      "tts": "docs/tasks/LAN-209/audio/s1_tts.wav",
+      "samples": [
+        {"label": "s1_correct", "audio": "docs/tasks/LAN-209/audio/correct.wav", "expected": []},
+        {"label": "s1_phoneme", "audio": "docs/tasks/LAN-209/audio/th_to_s2.wav", "expected": [{"word": "nothing", "type": "SOUND"}]},
+        {"label": "s1_stress", "audio": "docs/tasks/LAN-209/audio/stress_hiking.wav", "expected": [{"word": "hiking", "type": "STRESS"}]}
+      ]
+    },
+    {
+      "id": "s2",
+      "text": "I can't wait to try a real American diner.",
+      "tts": "docs/tasks/LAN-209/audio/s2_tts.wav",
+      "samples": [
+        {"label": "s2_correct", "audio": "docs/tasks/LAN-209/audio/s2_correct.wav", "expected": []},
+        {"label": "s2_phoneme", "audio": "docs/tasks/LAN-209/audio/s2_phoneme.wav", "expected": [{"word": "real", "type": "SOUND"}]},
+        {"label": "s2_stress", "audio": "docs/tasks/LAN-209/audio/s2_stress.wav", "expected": [{"word": "american", "type": "STRESS"}]}
+      ]
+    },
+    {
+      "id": "s3",
+      "text": "I've been feeling under the weather since yesterday.",
+      "tts": "docs/tasks/LAN-209/audio/s3_tts.wav",
+      "samples": [
+        {"label": "s3_correct", "audio": "docs/tasks/LAN-209/audio/s3_correct.wav", "expected": []},
+        {"label": "s3_phoneme", "audio": "docs/tasks/LAN-209/audio/s3_phoneme.wav", "expected": [{"word": "feeling", "type": "SOUND"}]},
+        {"label": "s3_stress", "audio": "docs/tasks/LAN-209/audio/s3_stress.wav", "expected": [{"word": "yesterday", "type": "STRESS"}]}
+      ]
+    },
+    {
+      "id": "s4",
+      "text": "Is there any compensation available, by any chance?",
+      "tts": "docs/tasks/LAN-209/audio/s4_tts.wav",
+      "samples": [
+        {"label": "s4_correct", "audio": "docs/tasks/LAN-209/audio/s4_correct.wav", "expected": []},
+        {"label": "s4_phoneme", "audio": "docs/tasks/LAN-209/audio/s4_phoneme.wav", "expected": [{"word": "available", "type": "SOUND"}]},
+        {"label": "s4_stress", "audio": "docs/tasks/LAN-209/audio/s4_stress.wav", "expected": [{"word": "compensation", "type": "STRESS"}]}
+      ]
+    }
+  ]
+}
