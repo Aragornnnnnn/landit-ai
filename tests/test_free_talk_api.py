@@ -398,6 +398,20 @@ class FreeTalkApiTests(unittest.TestCase):
         system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
         self.assertIn("Always return userExitIntentDetected", system_prompt)
 
+    def test_inner_thought_prompt_requires_boolean_directed_attack(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(inner_thought_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("directedAttack must be a JSON boolean", system_prompt)
+        self.assertIn('"directedAttack":false', system_prompt)
+
     def test_opening_maps_blank_llm_response_to_502(self):
         response = self._post(
             "/api/v1/free-talk/opening",
@@ -496,6 +510,139 @@ class FreeTalkApiTests(unittest.TestCase):
             },
         )
 
+    def test_inner_thought_normalizes_known_negative_directed_attack_values(self):
+        negative_values = (None, "", "NONE", "none", "no attack", "없음")
+
+        for directed_attack in negative_values:
+            with self.subTest(directed_attack=directed_attack):
+                response = self._post(
+                    "/api/v1/free-talk/inner-thought",
+                    valid_inner_thought_payload(),
+                    FakeOpenAI(
+                        contents=[
+                            json.dumps(
+                                inner_thought_completion(
+                                    directedAttack=directed_attack,
+                                ),
+                            ),
+                        ],
+                    ),
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
+
+    def test_inner_thought_repairs_unrecognized_directed_attack_value(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    inner_thought_completion(
+                        directedAttack="User directed a personal insult at the assistant.",
+                    ),
+                ),
+                json.dumps(
+                    inner_thought_completion(
+                        directedAttack=True,
+                        relationshipTone="HOSTILE",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "BAD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_inner_thought_repairs_missing_directed_attack(self):
+        missing_directed_attack = inner_thought_completion()
+        missing_directed_attack.pop("directedAttack")
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(missing_directed_attack),
+                json.dumps(inner_thought_completion(directedAttack=True)),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "BAD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_inner_thought_rejects_unrecognized_directed_attack_after_repair(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(inner_thought_completion(directedAttack="unknown")),
+                json.dumps(inner_thought_completion(directedAttack="still unknown")),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_inner_thought_repairs_malformed_json_response(self):
+        fake_openai = FakeOpenAI(
+            contents=["not JSON", json.dumps(inner_thought_completion())],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_inner_thought_rejects_malformed_json_after_repair(self):
+        fake_openai = FakeOpenAI(contents=["not JSON", "still not JSON"])
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_inner_thought_repairs_invalid_enum_response(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(inner_thought_completion(answerCoverage="UNKNOWN")),
+                json.dumps(inner_thought_completion()),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
     def test_inner_thought_treats_all_null_topic_as_absent(self):
         response = self._post(
             "/api/v1/free-talk/inner-thought",
@@ -527,6 +674,9 @@ class FreeTalkApiTests(unittest.TestCase):
                             json.dumps(
                                 inner_thought_completion(innerThought=inner_thought),
                             ),
+                            json.dumps(
+                                inner_thought_completion(innerThought=inner_thought),
+                            ),
                         ],
                     ),
                 )
@@ -536,6 +686,28 @@ class FreeTalkApiTests(unittest.TestCase):
                     response.json()["error"]["code"],
                     "AI_RESPONSE_INVALID",
                 )
+
+    def test_inner_thought_repairs_prohibited_feedback_language(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    inner_thought_completion(
+                        innerThought="문법을 교정하면 더 자연스러워질 텐데.",
+                    ),
+                ),
+                json.dumps(inner_thought_completion()),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/inner-thought",
+            valid_inner_thought_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_turn_requires_korean_inferred_title_on_first_user_turn(self):
         invalid_titles = (None, "Weekend 주말", "123")
@@ -753,6 +925,11 @@ class FreeTalkApiTests(unittest.TestCase):
             valid_inner_thought_payload(),
             FakeOpenAI(
                 contents=[
+                    json.dumps(
+                        inner_thought_completion(
+                            innerThought="문법을 교정하면 더 자연스러워질 텐데.",
+                        ),
+                    ),
                     json.dumps(
                         inner_thought_completion(
                             innerThought="문법을 교정하면 더 자연스러워질 텐데.",

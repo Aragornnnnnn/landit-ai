@@ -182,24 +182,43 @@ def generate_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
-    data = request_json_completion(
-        settings=settings,
-        system_prompt=_inner_thought_system_prompt(payload.characterId),
-        user_prompt=_inner_thought_user_prompt(payload),
-    )
     try:
-        candidate = _InnerThoughtCandidate.model_validate(data)
-        _validate_inner_thought(candidate.innerThought)
-        return FreeTalkInnerThoughtResponse(
-            innerThought=candidate.innerThought,
-            innerThoughtType=derive_inner_thought_type(
-                candidate.answerCoverage,
-                candidate.relationshipTone,
-                candidate.directedAttack,
-            ),
+        data = request_json_completion(
+            settings=settings,
+            system_prompt=_inner_thought_system_prompt(payload.characterId),
+            user_prompt=_inner_thought_user_prompt(payload),
         )
-    except (ValidationError, ValueError) as exc:
-        raise AiResponseInvalidError from exc
+        return _to_inner_thought_response(data)
+    except (AiResponseInvalidError, ValidationError, ValueError):
+        try:
+            data = request_json_completion(
+                settings=settings,
+                system_prompt=_inner_thought_repair_system_prompt(payload.characterId),
+                user_prompt=_inner_thought_user_prompt(payload),
+            )
+            return _to_inner_thought_response(data)
+        except (AiResponseInvalidError, ValidationError, ValueError) as exc:
+            raise AiResponseInvalidError from exc
+
+
+def _to_inner_thought_response(
+    data: dict[str, object],
+) -> FreeTalkInnerThoughtResponse:
+    directed_attack = _normalized_directed_attack(data)
+    if directed_attack is None:
+        raise ValueError("inner thought requires a boolean directed attack")
+    candidate_data = dict(data)
+    candidate_data["directedAttack"] = directed_attack
+    candidate = _InnerThoughtCandidate.model_validate(candidate_data)
+    _validate_inner_thought(candidate.innerThought)
+    return FreeTalkInnerThoughtResponse(
+        innerThought=candidate.innerThought,
+        innerThoughtType=derive_inner_thought_type(
+            candidate.answerCoverage,
+            candidate.relationshipTone,
+            candidate.directedAttack,
+        ),
+    )
 
 
 def _validate_inferred_title(
@@ -224,6 +243,36 @@ def _validate_inner_thought(inner_thought: str | None) -> None:
         or _PROHIBITED_INNER_THOUGHT_PATTERN.search(inner_thought) is not None
     ):
         raise ValueError("inner thought must not include feedback language")
+
+
+def _has_missing_continue_message(data: dict[str, object]) -> bool:
+    return any(
+        not isinstance(data.get(field), str) or not data[field].strip()
+        for field in ("aiMessage", "translatedMessage")
+    )
+
+
+def _normalize_directed_attack(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if normalized in {"", "none", "no attack", "없음", "null", "not applicable"}:
+        return False
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _normalized_directed_attack(data: dict[str, object]) -> bool | None:
+    if "directedAttack" not in data:
+        return None
+    return _normalize_directed_attack(data["directedAttack"])
 
 
 def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) -> str:
@@ -302,8 +351,20 @@ def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
         "Return innerThought, answerCoverage, relationshipTone, and directedAttack. "
         "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
         "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
+        "directedAttack must be a JSON boolean: use true only when the user directly attacks, "
+        "insults, threatens, or uses profanity toward the counterpart; otherwise use false. "
+        'For example: {"innerThought":"...","answerCoverage":"COMPLETE",'
+        '"relationshipTone":"NEUTRAL","directedAttack":false}. '
         "innerThought is Korean and must not mention grammar, naturalness, scores, corrections, "
         "feedback, or learning advice."
+    )
+
+
+def _inner_thought_repair_system_prompt(character: FreeTalkCharacter) -> str:
+    return (
+        _inner_thought_system_prompt(character)
+        + " Return a complete replacement JSON response. "
+        "directedAttack must be exactly true or false, not text, null, or another JSON type."
     )
 
 
