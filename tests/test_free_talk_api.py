@@ -227,16 +227,19 @@ def valid_expression_recommendations_payload(**overrides):
     return payload
 
 
-def expression_recommendation(**overrides):
-    recommendation = {
-        "displayOrder": 1,
-        "existingExpressionId": 1,
-        "targetExpressionText": "There's nothing like",
-        "baseExpressionMeaningText": "~만 한 게 없다",
-        "usageSummary": "좋아하는 경험을 강조할 때 사용",
+def expression_selection(*expression_ids):
+    return json.dumps({"expressionIds": list(expression_ids)})
+
+
+def existing_expression(expression_id, **overrides):
+    expression = {
+        "expressionId": expression_id,
+        "targetExpressionText": f"There's nothing like {expression_id}",
+        "baseExpressionMeaningText": f"~만 한 게 없다 {expression_id}",
+        "usageSummary": f"좋아하는 경험을 강조할 때 사용 {expression_id}",
     }
-    recommendation.update(overrides)
-    return recommendation
+    expression.update(overrides)
+    return expression
 
 
 def valid_conversation_embeddings_payload(**overrides):
@@ -807,20 +810,22 @@ class FreeTalkApiTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 200)
 
-    def test_expression_recommendations_returns_one_or_three_recommendations(self):
+    def test_expression_recommendations_returns_one_to_three_recommendations(self):
         for count in (1, 3):
             with self.subTest(count=count):
-                recommendations = [
-                    expression_recommendation(displayOrder=index)
-                    for index in range(1, count + 1)
-                ]
+                expression_ids = tuple(range(1, count + 1))
                 fake_openai = FakeOpenAI(
-                    contents=[json.dumps({"recommendations": recommendations})],
+                    contents=[expression_selection(*expression_ids)],
                 )
 
                 response = self._post(
                     "/api/v1/free-talk/expression-recommendations",
-                    valid_expression_recommendations_payload(),
+                    valid_expression_recommendations_payload(
+                        existingExpressions=[
+                            existing_expression(expression_id)
+                            for expression_id in expression_ids
+                        ],
+                    ),
                     fake_openai,
                 )
 
@@ -828,68 +833,87 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(len(response.json()["data"]["recommendations"]), count)
                 self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_expression_recommendations_rejects_new_source(self):
+    def test_expression_recommendations_fill_texts_from_input_candidates(self):
+        candidates = [existing_expression(expression_id) for expression_id in (1, 2)]
+
         response = self._post(
             "/api/v1/free-talk/expression-recommendations",
-            valid_expression_recommendations_payload(existingExpressions=[]),
-            FakeOpenAI(
-                contents=[
-                    json.dumps(
-                        {
-                            "recommendations": [
-                                expression_recommendation(
-                                    sourceType="NEW",
-                                    existingExpressionId=None,
-                                    targetExpressionText="I'm up for that",
-                                    baseExpressionMeaningText="좋아, 그거 하자",
-                                ),
-                            ],
-                        },
-                    ),
-                ],
-            ),
+            valid_expression_recommendations_payload(existingExpressions=candidates),
+            FakeOpenAI(contents=[expression_selection(2, 1)]),
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        recommendations = response.json()["data"]["recommendations"]
+        self.assertEqual(
+            [
+                (item["displayOrder"], item["existingExpressionId"])
+                for item in recommendations
+            ],
+            [(1, 2), (2, 1)],
+        )
+        for recommendation in recommendations:
+            source = next(
+                candidate
+                for candidate in candidates
+                if candidate["expressionId"] == recommendation["existingExpressionId"]
+            )
+            self.assertEqual(
+                recommendation["targetExpressionText"],
+                source["targetExpressionText"],
+            )
+            self.assertEqual(
+                recommendation["baseExpressionMeaningText"],
+                source["baseExpressionMeaningText"],
+            )
+            self.assertEqual(recommendation["usageSummary"], source["usageSummary"])
 
     def test_expression_recommendations_rejects_unknown_existing_expression_id(self):
         response = self._post(
             "/api/v1/free-talk/expression-recommendations",
             valid_expression_recommendations_payload(),
-            FakeOpenAI(
-                contents=[
-                    json.dumps(
-                        {
-                            "recommendations": [
-                                expression_recommendation(existingExpressionId=999),
-                            ],
-                        },
-                    ),
-                ],
-            ),
+            FakeOpenAI(contents=[expression_selection(999)]),
         )
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
-    def test_expression_recommendations_rejects_changed_existing_expression_content(self):
+    def test_expression_recommendations_rejects_duplicate_expression_id(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(
+                existingExpressions=[existing_expression(1)],
+            ),
+            FakeOpenAI(contents=[expression_selection(1, 1)]),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_expression_recommendations_rejects_out_of_range_selection(self):
+        for expression_ids in ((), (1, 2, 3, 4)):
+            with self.subTest(count=len(expression_ids)):
+                response = self._post(
+                    "/api/v1/free-talk/expression-recommendations",
+                    valid_expression_recommendations_payload(
+                        existingExpressions=[
+                            existing_expression(expression_id)
+                            for expression_id in range(1, 5)
+                        ],
+                    ),
+                    FakeOpenAI(contents=[expression_selection(*expression_ids)]),
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(
+                    response.json()["error"]["code"],
+                    "AI_RESPONSE_INVALID",
+                )
+
+    def test_expression_recommendations_rejects_response_without_expression_ids(self):
         response = self._post(
             "/api/v1/free-talk/expression-recommendations",
             valid_expression_recommendations_payload(),
-            FakeOpenAI(
-                contents=[
-                    json.dumps(
-                        {
-                            "recommendations": [
-                                expression_recommendation(
-                                    usageSummary="다른 표현의 용법 설명",
-                                ),
-                            ],
-                        },
-                    ),
-                ],
-            ),
+            FakeOpenAI(contents=[json.dumps({"recommendations": []})]),
         )
 
         self.assertEqual(response.status_code, 502)
