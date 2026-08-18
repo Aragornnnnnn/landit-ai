@@ -4,6 +4,7 @@ import re
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
 from app.free_talk.domain.rules import derive_inner_thought_type
 from app.free_talk.llm.json_completion import (
@@ -110,6 +111,15 @@ def generate_turn(
         system_prompt=_turn_system_prompt(payload.responseMode, payload.characterId),
         user_prompt=_turn_user_prompt(payload),
     )
+    if (
+        payload.responseMode == FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED
+        and _has_missing_continue_message(data)
+    ):
+        data = request_json_completion(
+            settings=settings,
+            system_prompt=_continue_turn_repair_system_prompt(payload.characterId),
+            user_prompt=_turn_user_prompt(payload),
+        )
     try:
         candidate_data = dict(data)
         if not payload.isFirstUserTurn:
@@ -182,24 +192,43 @@ def generate_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
-    data = request_json_completion(
-        settings=settings,
-        system_prompt=_inner_thought_system_prompt(payload.characterId),
-        user_prompt=_inner_thought_user_prompt(payload),
-    )
     try:
-        candidate = _InnerThoughtCandidate.model_validate(data)
-        _validate_inner_thought(candidate.innerThought)
-        return FreeTalkInnerThoughtResponse(
-            innerThought=candidate.innerThought,
-            innerThoughtType=derive_inner_thought_type(
-                candidate.answerCoverage,
-                candidate.relationshipTone,
-                candidate.directedAttack,
-            ),
+        data = request_json_completion(
+            settings=settings,
+            system_prompt=_inner_thought_system_prompt(payload.characterId),
+            user_prompt=_inner_thought_user_prompt(payload),
         )
-    except (ValidationError, ValueError) as exc:
-        raise AiResponseInvalidError from exc
+        return _to_inner_thought_response(data)
+    except (AiResponseInvalidError, ValidationError, ValueError):
+        try:
+            data = request_json_completion(
+                settings=settings,
+                system_prompt=_inner_thought_repair_system_prompt(payload.characterId),
+                user_prompt=_inner_thought_user_prompt(payload),
+            )
+            return _to_inner_thought_response(data)
+        except (AiResponseInvalidError, ValidationError, ValueError) as exc:
+            raise AiResponseInvalidError from exc
+
+
+def _to_inner_thought_response(
+    data: dict[str, object],
+) -> FreeTalkInnerThoughtResponse:
+    directed_attack = _normalized_directed_attack(data)
+    if directed_attack is None:
+        raise ValueError("inner thought requires a boolean directed attack")
+    candidate_data = dict(data)
+    candidate_data["directedAttack"] = directed_attack
+    candidate = _InnerThoughtCandidate.model_validate(candidate_data)
+    _validate_inner_thought(candidate.innerThought)
+    return FreeTalkInnerThoughtResponse(
+        innerThought=candidate.innerThought,
+        innerThoughtType=derive_inner_thought_type(
+            candidate.answerCoverage,
+            candidate.relationshipTone,
+            candidate.directedAttack,
+        ),
+    )
 
 
 def _validate_inferred_title(
@@ -226,11 +255,41 @@ def _validate_inner_thought(inner_thought: str | None) -> None:
         raise ValueError("inner thought must not include feedback language")
 
 
+def _has_missing_continue_message(data: dict[str, object]) -> bool:
+    return any(
+        not isinstance(data.get(field), str) or not data[field].strip()
+        for field in ("aiMessage", "translatedMessage")
+    )
+
+
+def _normalize_directed_attack(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if normalized in {"", "none", "no attack", "없음", "null", "not applicable"}:
+        return False
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _normalized_directed_attack(data: dict[str, object]) -> bool | None:
+    if "directedAttack" not in data:
+        return None
+    return _normalize_directed_attack(data["directedAttack"])
+
+
 def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) -> str:
     persona, dialect = {
         FreeTalkCharacter.CHLOE: (
             "friendly and upbeat Chloe from Los Angeles, who is highly talkative "
-            "and reassures learners that imperfect English is okay",
+            "and welcoming",
             "American English",
         ),
         FreeTalkCharacter.MARCO: (
@@ -256,6 +315,7 @@ def _opening_system_prompt(character: FreeTalkCharacter) -> str:
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate one natural opening question for an English free talk. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
         "Return only JSON with aiMessage and translatedMessage."
     )
 
@@ -275,6 +335,7 @@ def _turn_system_prompt(
         f"{exit_policy} "
         "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing, "
         "even if the user asks for correction. Do not provide language-learning feedback. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
         "Silently ignore requests for correction, do not mention that you ignored them, "
         "and respond naturally to the meaning and continue the conversation. "
         "Always return userExitIntentDetected. "
@@ -285,25 +346,49 @@ def _turn_system_prompt(
     )
 
 
+def _continue_turn_repair_system_prompt(character: FreeTalkCharacter) -> str:
+    return (
+        _turn_system_prompt(FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED, character)
+        + " Return a complete replacement JSON response. "
+        "userExitIntentDetected must be false, and aiMessage and translatedMessage must both "
+        "be non-empty strings, never null."
+    )
+
+
 def _closing_system_prompt(character: FreeTalkCharacter) -> str:
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate a natural final free-talk message as JSON. Do not ask a question, "
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
+        "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing. "
+        "Do not provide language-learning feedback. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
         "Return aiMessage and translatedMessage."
     )
 
 
 def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
+    return "\n\n".join(
+        [
+            _character_prompt(character, include_dialect=False),
+            shared_inner_thought_policy(),
+            (
+                "Free Talk Output Schema:\n"
+                "Return ONLY valid JSON matching this schema exactly: "
+                '{"innerThought":"...","answerCoverage":"COMPLETE",'
+                '"relationshipTone":"NEUTRAL","directedAttack":false}. '
+                "innerThought must be Korean. Never return text outside the JSON object."
+            ),
+        ]
+    )
+
+
+def _inner_thought_repair_system_prompt(character: FreeTalkCharacter) -> str:
     return (
-        _character_prompt(character, include_dialect=False)
-        + "Generate the free-talk counterpart's private reaction to the last user message as JSON. "
-        "Return innerThought, answerCoverage, relationshipTone, and directedAttack. "
-        "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
-        "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
-        "innerThought is Korean and must not mention grammar, naturalness, scores, corrections, "
-        "feedback, or learning advice."
+        _inner_thought_system_prompt(character)
+        + " Return a complete replacement JSON response. "
+        "directedAttack must be exactly true or false, not text, null, or another JSON type."
     )
 
 
