@@ -3,74 +3,18 @@ import unittest
 
 from pydantic import ValidationError
 
-from app.free_talk.domain.rules import (
-    derive_inner_thought_type,
-    validate_learning_content_contract,
-)
+from app.free_talk.domain.rules import derive_inner_thought_type
 from app.models.conversation import (
     AnswerCoverage,
     InnerThoughtType,
     RelationshipTone,
 )
-from app.models.free_talk import (
-    ExpressionLearningContent,
-    ExpressionRecommendationsResponse,
-    FreeTalkTurnResponse,
-)
-
-
-def valid_learning_content(**overrides):
-    content = {
-        "targetExpressionText": "I'm up for that",
-        "baseExpressionMeaningText": "좋아, 그거 하자",
-        "usageSummary": "제안에 동의할 때 사용",
-        "usageDescription": "친근한 대화에서 제안을 흔쾌히 받아들일 때 사용합니다.",
-        "representativeQuestionText": "Do you want to go hiking?",
-        "representativeQuestionTranslation": "등산 갈래?",
-        "representativeSentenceText": "I'm up for that.",
-        "representativeSentenceTranslation": "좋아, 그거 하자.",
-        "representativeSentenceWords": ["I'm", "up", "for", "that"],
-        "representativeSentenceWordChoices": ["that", "I'm", "to", "up", "for"],
-        "representativeImageUrl": None,
-        "practiceExamples": [
-            {
-                "imageUrl": None,
-                "sentenceText": "I'm up for trying that new cafe.",
-                "sentenceWords": [
-                    "I'm",
-                    "up",
-                    "for",
-                    "trying",
-                    "that",
-                    "new",
-                    "cafe",
-                ],
-                "highlightingPart": "I'm up for",
-                "practiceQuestion": "Want to try that new cafe?",
-                "sentenceTranslation": "그 새 카페 가보는 거 좋아.",
-                "sentenceWordChoices": [
-                    "new",
-                    "trying",
-                    "I'm",
-                    "to",
-                    "up",
-                    "cafe",
-                    "for",
-                    "that",
-                ],
-                "practiceQuestionTranslation": "새 카페 가볼래?",
-            }
-            for _ in range(4)
-        ],
-    }
-    content.update(overrides)
-    return ExpressionLearningContent.model_validate(content)
+from app.models.free_talk import ExpressionRecommendationsResponse, FreeTalkTurnResponse
 
 
 def valid_recommendation(**overrides):
     recommendation = {
         "displayOrder": 1,
-        "sourceType": "EXISTING",
         "existingExpressionId": 1,
         "targetExpressionText": "There's nothing like",
         "baseExpressionMeaningText": "~만 한 게 없다",
@@ -173,12 +117,12 @@ class ExpressionRecommendationContractTests(unittest.TestCase):
                 {"recommendations": [valid_recommendation(existingExpressionId=None)]}
             )
 
-    def test_new_recommendation_rejects_existing_expression_id(self):
+    def test_recommendation_rejects_removed_source_type(self):
         with self.assertRaises(ValidationError):
             ExpressionRecommendationsResponse.model_validate(
                 {
                     "recommendations": [
-                        valid_recommendation(sourceType="NEW", existingExpressionId=1)
+                        valid_recommendation(sourceType="EXISTING")
                     ]
                 }
             )
@@ -189,7 +133,6 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
         generated_fields = {
             "aiMessage": "See you!",
             "translatedMessage": "또 봐!",
-            "emotion": "HAPPY",
         }
 
         for field, value in generated_fields.items():
@@ -216,75 +159,22 @@ class FreeTalkTurnResponseContractTests(unittest.TestCase):
 
         self.assertEqual(response.inferredTitle, "주말 등산 이야기")
 
-    def test_normal_response_requires_every_generated_field(self):
+    def test_normal_response_requires_visible_message_fields(self):
         generated_fields = (
             "aiMessage",
             "translatedMessage",
-            "emotion",
         )
 
         for field in generated_fields:
             with self.subTest(field=field), self.assertRaises(ValidationError):
                 FreeTalkTurnResponse.model_validate(valid_turn_response(**{field: None}))
 
-
-class ExpressionLearningContentContractTests(unittest.TestCase):
-    def test_learning_content_requires_four_practice_examples(self):
-        content = valid_learning_content()
-        content.practiceExamples.pop()
-
-        with self.assertRaisesRegex(ValueError, "exactly four"):
-            validate_learning_content_contract(content)
-
-    def test_learning_content_rejects_sentence_words_that_do_not_form_sentence(self):
-        content = valid_learning_content()
-        content.practiceExamples[0].sentenceWords[-1] = "tea"
-
-        with self.assertRaisesRegex(ValueError, "sentenceWords"):
-            validate_learning_content_contract(content)
-
-    def test_learning_content_rejects_choices_missing_an_answer_word(self):
-        content = valid_learning_content()
-        content.practiceExamples[0].sentenceWordChoices.remove("cafe")
-
-        with self.assertRaisesRegex(ValueError, "answer words"):
-            validate_learning_content_contract(content)
-
-    def test_learning_content_rejects_choices_missing_a_repeated_answer_word(self):
-        content = valid_learning_content()
-        content.practiceExamples[0].sentenceText = "go go."
-        content.practiceExamples[0].sentenceWords = ["go", "go"]
-        content.practiceExamples[0].sentenceWordChoices = ["go", "to"]
-        content.practiceExamples[0].highlightingPart = "go"
-
-        with self.assertRaisesRegex(ValueError, "answer words"):
-            validate_learning_content_contract(content)
-
-    def test_learning_content_rejects_choices_without_a_wrong_word(self):
-        content = valid_learning_content()
-        content.practiceExamples[0].sentenceWordChoices = list(
-            content.practiceExamples[0].sentenceWords
+    def test_normal_response_allows_missing_emotion(self):
+        response = FreeTalkTurnResponse.model_validate(
+            valid_turn_response(emotion=None),
         )
-        content.practiceExamples[0].sentenceWordChoices.reverse()
 
-        with self.assertRaisesRegex(ValueError, "wrong word"):
-            validate_learning_content_contract(content)
-
-    def test_learning_content_rejects_choices_in_answer_order(self):
-        content = valid_learning_content()
-        content.practiceExamples[0].sentenceWordChoices = list(
-            content.practiceExamples[0].sentenceWords
-        ) + ["to"]
-
-        with self.assertRaisesRegex(ValueError, "answer order"):
-            validate_learning_content_contract(content)
-
-    def test_learning_content_rejects_highlighting_part_not_in_sentence(self):
-        content = valid_learning_content()
-        content.practiceExamples[0].highlightingPart = "Let's go"
-
-        with self.assertRaisesRegex(ValueError, "highlightingPart"):
-            validate_learning_content_contract(content)
+        self.assertIsNone(response.emotion)
 
 
 if __name__ == "__main__":

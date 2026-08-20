@@ -7,6 +7,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: deploy-develop-worker
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Build and deploy dev worker
@@ -18,9 +22,7 @@ jobs:
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
       ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
       ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
-      ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
 
     steps:
       - name: Checkout
@@ -33,9 +35,7 @@ jobs:
           test -n "$AWS_ROLE_ARN"
           test -n "$ECR_REGISTRY"
           test -n "$ECR_REPOSITORY"
-          test -n "$ECS_CLUSTER"
-          test -n "$ECS_SERVICE"
-          test -n "$ECS_CONTAINER_NAME"
+          test -n "$EC2_INSTANCE_ID"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -59,86 +59,5 @@ jobs:
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
-      - name: Force ECS service deployment
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --query 'service.{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
-            --output json
-
-      - name: Verify ECS service
-        timeout-minutes: 12
-        run: |
-          desired_count="$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query 'services[0].desiredCount' \
-            --output text)"
-
-          if [ "$desired_count" = "None" ] || [ "$desired_count" = "null" ]; then
-            echo "ECS service not found"
-            exit 1
-          fi
-
-          print_service_state() {
-            aws ecs describe-services \
-              --cluster "$ECS_CLUSTER" \
-              --services "$ECS_SERVICE" \
-              --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,deployments:deployments[*].{status:status,rolloutState:rolloutState,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,failedTasks:failedTasks}}' \
-              --output json
-          }
-
-          print_service_events() {
-            aws ecs describe-services \
-              --cluster "$ECS_CLUSTER" \
-              --services "$ECS_SERVICE" \
-              --query 'services[0].events[0:10].[createdAt,message]' \
-              --output table
-          }
-
-          print_service_state
-
-          if [ "$desired_count" -gt 0 ]; then
-            for attempt in $(seq 1 40); do
-              rollout_state="$(aws ecs describe-services \
-                --cluster "$ECS_CLUSTER" \
-                --services "$ECS_SERVICE" \
-                --query 'services[0].deployments[?status==`PRIMARY`][0].rolloutState' \
-                --output text)"
-              deployment_count="$(aws ecs describe-services \
-                --cluster "$ECS_CLUSTER" \
-                --services "$ECS_SERVICE" \
-                --query 'length(services[0].deployments)' \
-                --output text)"
-              running_count="$(aws ecs describe-services \
-                --cluster "$ECS_CLUSTER" \
-                --services "$ECS_SERVICE" \
-                --query 'services[0].runningCount' \
-                --output text)"
-
-              print_service_state
-
-              if [ "$rollout_state" = "FAILED" ]; then
-                echo "PRIMARY ECS deployment failed"
-                print_service_events
-                exit 1
-              fi
-
-              if [ "$deployment_count" -eq 1 ] && [ "$running_count" -eq "$desired_count" ]; then
-                echo "ECS service is stable"
-                break
-              fi
-
-              if [ "$attempt" -eq 40 ]; then
-                echo "ECS service did not become stable within 10 minutes"
-                print_service_events
-                exit 1
-              fi
-
-              sleep 15
-            done
-          else
-            echo "desired count is 0; skipping services-stable wait"
-          fi
+      - name: Deploy image to develop EC2
+        run: bash .github/scripts/deploy-ec2-service.sh ai "$GITHUB_SHA"

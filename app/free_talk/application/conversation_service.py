@@ -4,6 +4,7 @@ import re
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
 from app.free_talk.domain.rules import derive_inner_thought_type
 from app.free_talk.llm.json_completion import (
@@ -13,7 +14,7 @@ from app.free_talk.llm.json_completion import (
 )
 from app.models.conversation import AnswerCoverage, RelationshipTone
 from app.models.free_talk import (
-    Emotion,
+    FreeTalkCharacter,
     FreeTalkClosingRequest,
     FreeTalkClosingResponse,
     FreeTalkInnerThoughtRequest,
@@ -26,8 +27,8 @@ from app.models.free_talk import (
 )
 
 
-_KOREAN_TITLE_PATTERN = re.compile(r"[가-힣0-9\s·-]+$")
-_KOREAN_CHARACTER_PATTERN = re.compile(r"[가-힣]")
+_TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
+_TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
 _PROHIBITED_INNER_THOUGHT_PATTERN = re.compile(
     r"문법|자연스러(?:움|운)|점수|교정|피드백|"
     r"grammar|naturalness|score|correction|feedback",
@@ -50,18 +51,28 @@ _NEW_TOPIC_CLOSING_PATTERN = re.compile(
 )
 
 
+class _OpeningCandidate(BaseModel):
+    aiMessage: str
+    translatedMessage: str
+    emotion: object | None = None
+
+
 class _TurnCandidate(BaseModel):
     userExitIntentDetected: bool | None = None
     inferredTitle: str | None = None
     aiMessage: str | None = None
     translatedMessage: str | None = None
-    emotion: Emotion | None = None
+    emotion: object | None = None
+
+
+class _TurnExitIntentCandidate(BaseModel):
+    userExitIntentDetected: bool | None = None
 
 
 class _ClosingCandidate(BaseModel):
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: object | None = None
 
 
 class _InnerThoughtCandidate(BaseModel):
@@ -77,11 +88,16 @@ def generate_opening(
 ) -> FreeTalkOpeningResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_opening_system_prompt(),
+        system_prompt=_opening_system_prompt(payload.characterId),
         user_prompt=_opening_user_prompt(payload),
     )
     try:
-        return FreeTalkOpeningResponse.model_validate(data)
+        candidate = _OpeningCandidate.model_validate(data)
+        return FreeTalkOpeningResponse(
+            aiMessage=candidate.aiMessage,
+            translatedMessage=candidate.translatedMessage,
+            emotion=None,
+        )
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
 
@@ -92,36 +108,50 @@ def generate_turn(
 ) -> FreeTalkTurnResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_turn_system_prompt(payload.responseMode),
+        system_prompt=_turn_system_prompt(payload.responseMode, payload.characterId),
         user_prompt=_turn_user_prompt(payload),
     )
+    if (
+        payload.responseMode == FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED
+        and _has_missing_continue_message(data)
+    ):
+        data = request_json_completion(
+            settings=settings,
+            system_prompt=_continue_turn_repair_system_prompt(payload.characterId),
+            user_prompt=_turn_user_prompt(payload),
+        )
     try:
-        candidate = _TurnCandidate.model_validate(data)
-        _validate_inferred_title(candidate.inferredTitle, payload.isFirstUserTurn)
+        candidate_data = dict(data)
+        candidate_data["inferredTitle"] = None
         if payload.responseMode == FreeTalkResponseMode.NORMAL:
-            if candidate.userExitIntentDetected is None:
+            exit_candidate = _TurnExitIntentCandidate.model_validate(data)
+            if exit_candidate.userExitIntentDetected is None:
                 raise ValueError("normal turn requires exit intent")
+            if exit_candidate.userExitIntentDetected:
+                candidate_data["aiMessage"] = None
+                candidate_data["translatedMessage"] = None
+                candidate_data["emotion"] = None
+        else:
+            candidate_data["userExitIntentDetected"] = False
+        candidate = _TurnCandidate.model_validate(candidate_data)
+        if payload.responseMode == FreeTalkResponseMode.NORMAL:
             exit_detected = candidate.userExitIntentDetected
         else:
             exit_detected = False
         if exit_detected:
             return FreeTalkTurnResponse(
                 userExitIntentDetected=True,
-                inferredTitle=(
-                    candidate.inferredTitle if payload.isFirstUserTurn else None
-                ),
-                aiMessage=candidate.aiMessage,
-                translatedMessage=candidate.translatedMessage,
-                emotion=candidate.emotion,
+                inferredTitle=None,
+                aiMessage=None,
+                translatedMessage=None,
+                emotion=None,
             )
         return FreeTalkTurnResponse(
             userExitIntentDetected=False,
-            inferredTitle=(
-                candidate.inferredTitle if payload.isFirstUserTurn else None
-            ),
+            inferredTitle=None,
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
-            emotion=candidate.emotion,
+            emotion=None,
         )
     except (TypeError, ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -133,15 +163,19 @@ def generate_closing(
 ) -> FreeTalkClosingResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_closing_system_prompt(),
+        system_prompt=_closing_system_prompt(
+            payload.characterId,
+            payload.titleGenerationRequired,
+        ),
         user_prompt=_closing_user_prompt(payload),
     )
     try:
         candidate = _ClosingCandidate.model_validate(data)
         response = FreeTalkClosingResponse(
+            inferredTitle=None,
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
-            emotion=candidate.emotion,
+            emotion=None,
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -149,49 +183,89 @@ def generate_closing(
         response.translatedMessage,
     ):
         raise AiResponseInvalidError("closing message violates policy")
-    return response
+    return FreeTalkClosingResponse(
+        inferredTitle=_resolve_closing_title(data, payload, settings),
+        aiMessage=response.aiMessage,
+        translatedMessage=response.translatedMessage,
+        emotion=response.emotion,
+    )
 
 
 def generate_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
-    data = request_json_completion(
-        settings=settings,
-        system_prompt=_inner_thought_system_prompt(),
-        user_prompt=_inner_thought_user_prompt(payload),
-    )
     try:
-        candidate = _InnerThoughtCandidate.model_validate(data)
-        _validate_inner_thought(candidate.innerThought)
-        return FreeTalkInnerThoughtResponse(
-            innerThought=candidate.innerThought,
-            innerThoughtType=derive_inner_thought_type(
-                candidate.answerCoverage,
-                candidate.relationshipTone,
-                candidate.directedAttack,
-            ),
+        data = request_json_completion(
+            settings=settings,
+            system_prompt=_inner_thought_system_prompt(payload.characterId),
+            user_prompt=_inner_thought_user_prompt(payload),
         )
-    except (ValidationError, ValueError) as exc:
-        raise AiResponseInvalidError from exc
+        return _to_inner_thought_response(data)
+    except (AiResponseInvalidError, ValidationError, ValueError):
+        try:
+            data = request_json_completion(
+                settings=settings,
+                system_prompt=_inner_thought_repair_system_prompt(payload.characterId),
+                user_prompt=_inner_thought_user_prompt(payload),
+            )
+            return _to_inner_thought_response(data)
+        except (AiResponseInvalidError, ValidationError, ValueError) as exc:
+            raise AiResponseInvalidError from exc
 
 
-def _validate_inferred_title(
-    title: str | None,
-    is_first_user_turn: bool,
-) -> None:
-    if not is_first_user_turn:
-        if title is not None:
-            raise ValueError("only the first user turn may infer a title")
-        return
+def _to_inner_thought_response(
+    data: dict[str, object],
+) -> FreeTalkInnerThoughtResponse:
+    directed_attack = _normalized_directed_attack(data)
+    if directed_attack is None:
+        raise ValueError("inner thought requires a boolean directed attack")
+    candidate_data = dict(data)
+    candidate_data["directedAttack"] = directed_attack
+    candidate = _InnerThoughtCandidate.model_validate(candidate_data)
+    _validate_inner_thought(candidate.innerThought)
+    return FreeTalkInnerThoughtResponse(
+        innerThought=candidate.innerThought,
+        innerThoughtType=derive_inner_thought_type(
+            candidate.answerCoverage,
+            candidate.relationshipTone,
+            candidate.directedAttack,
+        ),
+    )
+
+
+def _resolve_closing_title(
+    data: dict[str, object],
+    payload: FreeTalkClosingRequest,
+    settings: Settings,
+) -> str | None:
+    if not payload.titleGenerationRequired:
+        return None
+    title = _valid_title(data.get("inferredTitle"))
+    if title is not None:
+        return title
+    try:
+        repaired_data = request_json_completion(
+            settings=settings,
+            system_prompt=_title_repair_system_prompt(),
+            user_prompt=_closing_user_prompt(payload),
+        )
+    except (AiGenerationFailedError, AiResponseInvalidError):
+        return None
+    return _valid_title(repaired_data.get("inferredTitle"))
+
+
+def _valid_title(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
     if (
-        title is None
-        or not title.strip()
-        or len(title.strip()) > 30
-        or _KOREAN_TITLE_PATTERN.fullmatch(title.strip()) is None
-        or _KOREAN_CHARACTER_PATTERN.search(title) is None
+        not 1 <= len(title) <= 30
+        or _TITLE_PATTERN.fullmatch(title) is None
+        or _TITLE_LETTER_PATTERN.search(title) is None
     ):
-        raise ValueError("first user turn requires a short Korean inferred title")
+        return None
+    return title
 
 
 def _validate_inner_thought(inner_thought: str | None) -> None:
@@ -202,47 +276,158 @@ def _validate_inner_thought(inner_thought: str | None) -> None:
         raise ValueError("inner thought must not include feedback language")
 
 
-def _opening_system_prompt() -> str:
-    return (
-        "Generate one natural opening question for an English free talk. "
-        "Return only JSON with aiMessage, translatedMessage, and emotion. "
-        "emotion must be NEUTRAL, HAPPY, SURPRISED, SAD, or ANGRY."
+def _has_missing_continue_message(data: dict[str, object]) -> bool:
+    return any(
+        not isinstance(data.get(field), str) or not data[field].strip()
+        for field in ("aiMessage", "translatedMessage")
     )
 
 
-def _turn_system_prompt(response_mode: FreeTalkResponseMode) -> str:
+def _normalize_directed_attack(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold()
+    if normalized in {"", "none", "no attack", "없음", "null", "not applicable"}:
+        return False
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _normalized_directed_attack(data: dict[str, object]) -> bool | None:
+    if "directedAttack" not in data:
+        return None
+    return _normalize_directed_attack(data["directedAttack"])
+
+
+def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) -> str:
+    persona, dialect = {
+        FreeTalkCharacter.CHLOE: (
+            "friendly and upbeat Chloe from Los Angeles, who is highly talkative "
+            "and welcoming",
+            "American English",
+        ),
+        FreeTalkCharacter.MARCO: (
+            "relaxed and playful Marco, a Spanish Australian living in Sydney "
+            "who speaks Spanish at home and English elsewhere",
+            "Australian English",
+        ),
+        FreeTalkCharacter.TEDDY: (
+            "calm and kind Teddy, a bear living in London who does odd jobs for honey",
+            "British English",
+        ),
+    }[character]
+    prompt = f"Act as a {persona} conversation partner. "
+    if include_dialect:
+        prompt += (
+            f"Use natural {dialect} vocabulary and phrasing, but avoid obscure slang "
+            "or exaggerated stereotypes. "
+        )
+    return prompt
+
+
+def _opening_system_prompt(character: FreeTalkCharacter) -> str:
+    return (
+        _character_prompt(character, include_dialect=True)
+        + "Generate one natural opening question for an English free talk. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
+        "Return only JSON with aiMessage and translatedMessage."
+    )
+
+
+def _turn_system_prompt(
+    response_mode: FreeTalkResponseMode,
+    character: FreeTalkCharacter,
+) -> str:
     exit_policy = (
         "Decide whether the user clearly wants to end the conversation."
         if response_mode == FreeTalkResponseMode.NORMAL
         else "The user declined ending. Do not judge exit intent."
     )
     return (
-        "Generate one free-talk turn as JSON. "
+        _character_prompt(character, include_dialect=True)
+        + "Generate one free-talk turn as JSON. "
         f"{exit_policy} "
+        "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing, "
+        "even if the user asks for correction. Do not provide language-learning feedback. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
+        "Silently ignore requests for correction, do not mention that you ignored them, "
+        "and respond naturally to the meaning and continue the conversation. "
+        "Always return userExitIntentDetected. "
         "When userExitIntentDetected is true, leave all generated message fields null. "
-        "Otherwise return aiMessage, translatedMessage, and emotion. "
-        "For a first user turn, inferredTitle must be a short Korean title; "
-        "for later turns, inferredTitle must be null."
+        "Otherwise return aiMessage and translatedMessage. "
+        "Return inferredTitle as null."
     )
 
 
-def _closing_system_prompt() -> str:
+def _continue_turn_repair_system_prompt(character: FreeTalkCharacter) -> str:
     return (
-        "Generate a natural final free-talk message as JSON. Do not ask a question, "
+        _turn_system_prompt(FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED, character)
+        + " Return a complete replacement JSON response. "
+        "userExitIntentDetected must be false, and aiMessage and translatedMessage must both "
+        "be non-empty strings, never null."
+    )
+
+
+def _closing_system_prompt(
+    character: FreeTalkCharacter,
+    title_generation_required: bool,
+) -> str:
+    title_instruction = (
+        "Infer inferredTitle from the full conversation. It must be 1 to 30 characters, "
+        "contain at least one Korean or English letter, and use only Korean letters, "
+        "English letters, digits, spaces, middle dots, or hyphens."
+        if title_generation_required
+        else "Return inferredTitle as null."
+    )
+    return (
+        _character_prompt(character, include_dialect=True)
+        + "Generate a natural final free-talk message as JSON. Do not ask a question, "
         "introduce a new topic, invite another topic, mention scores or feedback, "
         "ask the user to review feedback, or announce that a session/conversation has ended. "
-        "Return aiMessage, translatedMessage, and emotion."
+        "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing. "
+        "Do not provide language-learning feedback. "
+        "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
+        "Return aiMessage, translatedMessage, and inferredTitle. "
+        + title_instruction
     )
 
 
-def _inner_thought_system_prompt() -> str:
+def _title_repair_system_prompt() -> str:
     return (
-        "Generate the free-talk counterpart's private reaction to the last user message as JSON. "
-        "Return innerThought, answerCoverage, relationshipTone, and directedAttack. "
-        "answerCoverage is COMPLETE, PARTIAL, DECLINED, or UNRELATED. "
-        "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE. "
-        "innerThought is Korean and must not mention grammar, naturalness, scores, corrections, "
-        "feedback, or learning advice."
+        "Return only JSON with inferredTitle. Infer a concise title from the full conversation. "
+        "The title must be 1 to 30 characters, contain at least one Korean or English letter, "
+        "and use only Korean letters, English letters, digits, spaces, middle dots, or hyphens."
+    )
+
+
+def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
+    return "\n\n".join(
+        [
+            _character_prompt(character, include_dialect=False),
+            shared_inner_thought_policy(),
+            (
+                "Free Talk Output Schema:\n"
+                "Return ONLY valid JSON matching this schema exactly: "
+                '{"innerThought":"...","answerCoverage":"COMPLETE",'
+                '"relationshipTone":"NEUTRAL","directedAttack":false}. '
+                "innerThought must be Korean. Never return text outside the JSON object."
+            ),
+        ]
+    )
+
+
+def _inner_thought_repair_system_prompt(character: FreeTalkCharacter) -> str:
+    return (
+        _inner_thought_system_prompt(character)
+        + " Return a complete replacement JSON response. "
+        "directedAttack must be exactly true or false, not text, null, or another JSON type."
     )
 
 

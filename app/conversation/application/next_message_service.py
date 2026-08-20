@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.conversation import (
@@ -1675,31 +1676,15 @@ def _inner_thought_system_prompt() -> str:
             "Use the full conversation only as context and evaluate only the last user utterance."
         ),
         _shared_safety_policy(),
+        shared_inner_thought_policy(),
         (
-            "Inner Thought Policy:\n"
-            "innerThought is the provided counterpart role's immediate, first-person private reaction in Korean to the last user utterance. "
-            "Write an honest feeling, not app, tutor, narrator, evaluator, grammar, or polished feedback. "
-            "Account for the provided role's perspective. "
-            "Prefer emotionally real relief, gratitude, awkwardness, hurt, annoyance, discomfort, or uncertainty. "
-            "Classify the last utterance before writing. "
-            "answerCoverage is COMPLETE when the core request is answered, PARTIAL when a requested part is missing, DECLINED when the user will not or cannot answer, or UNRELATED. "
-            "relationshipTone is WARM, NEUTRAL, BLUNT, or HOSTILE in the full conversation context. "
-            "directedAttack is true only for profanity, insults, or threats aimed at the current counterpart, not quoted or situational profanity. "
-            "Set innerThoughtType consistently: directed attack, HOSTILE, or UNRELATED is BAD; PARTIAL, DECLINED, or BLUNT is NORMAL; otherwise GOOD. "
-            "Judge answer relevance and relationship tone separately. "
-            "A first short answer can be NORMAL; short alone is not BAD. "
-            "A bare yes/no or choice answer with no detail or warmth is BLUNT and NORMAL, not GOOD. "
-            "'I don't know' without hostility is DECLINED and NORMAL; a recommendation without the requested reason is PARTIAL and NORMAL. "
-            "innerThought must directly reflect these classifications. For BLUNT, notice the curt or distant feeling; do not add a practical upside or reassurance. "
-            "Repeated refusal can be BAD. When the full conversation shows the user repeatedly refuses the same request, classify the relationship tone as HOSTILE. "
-            "Directed profanity, insults, or threats must be BAD even when the utterance also answers the question. "
-            "Distinguish profanity used to emphasize a situation from an attack directed at the counterpart. "
-            "Do not infer positive personality or intent without evidence from the last utterance. "
-            "Do not write tutor/meta planning thoughts such as '대화 이어가기 좋다', '다음 질문으로 넘어가자', '조금 더 자연스럽게 말하면 좋겠다', or grammar feedback. "
-            "Do not mention expression quality, sentence quality, grammar, naturalness, or study feedback inside innerThought. "
+            "Scenario Type Mapping:\n"
+            "Set innerThoughtType consistently: directed attack, HOSTILE, or UNRELATED is BAD; "
+            "PARTIAL, DECLINED, or BLUNT is NORMAL; otherwise GOOD."
+        ),
+        (
+            "Scenario Context Notes:\n"
             "Do not leave a clear, friendly roommate answer as a generic 'I understand, but it could be more natural' thought. React to the actual content. "
-            "Do not use innerThought to preview the next topic, next fixed question, or a future scenario beat. "
-            "Describe the counterpart's present feeling, not what the counterpart plans to do next. "
             "If the user says their parents decided something for them, the private reaction should reflect that family-decision context instead of only saying the user has a weak opinion. "
             "'I don't care' often feels cold or dismissive; for a friend or roommate, the private reaction should feel hurt or surprised. "
             "Direct roommate commands such as 'Buy me X' can feel like being ordered around. "

@@ -34,9 +34,10 @@ class FreeTalkClosingReason(StrEnum):
     TIME_LIMIT_REACHED = "TIME_LIMIT_REACHED"
 
 
-class ExpressionSourceType(StrEnum):
-    EXISTING = "EXISTING"
-    NEW = "NEW"
+class FreeTalkCharacter(StrEnum):
+    CHLOE = "chloe"
+    MARCO = "marco"
+    TEDDY = "teddy"
 
 
 class FreeTalkTopicContext(BaseModel):
@@ -56,9 +57,22 @@ class FreeTalkContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessionId: int = Field(gt=0)
+    characterId: FreeTalkCharacter
     targetLocale: str
     baseLocale: str
     topic: FreeTalkTopicContext | None = None
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def all_null_topic_must_be_treated_as_absent(cls, value: object) -> object:
+        topic_fields = {"topicId", "title", "promptDescription"}
+        if (
+            isinstance(value, dict)
+            and set(value).issubset(topic_fields)
+            and all(value.get(field) is None for field in topic_fields)
+        ):
+            return None
+        return value
 
     @field_validator(
         "targetLocale",
@@ -86,7 +100,7 @@ class FreeTalkOpeningResponse(BaseModel):
 
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: Emotion | None
 
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
@@ -134,7 +148,6 @@ class FreeTalkTurnResponse(BaseModel):
         generated_fields = (
             self.aiMessage,
             self.translatedMessage,
-            self.emotion,
         )
         if self.userExitIntentDetected:
             if any(field is not None for field in generated_fields):
@@ -177,7 +190,7 @@ class FreeTalkClosingRequest(FreeTalkContext):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     closingReason: FreeTalkClosingReason
-    topic: FreeTalkTopicContext
+    titleGenerationRequired: bool = False
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -195,13 +208,16 @@ class FreeTalkClosingRequest(FreeTalkContext):
 class FreeTalkClosingResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    inferredTitle: str | None = None
     aiMessage: str
     translatedMessage: str
-    emotion: Emotion
+    emotion: Emotion | None
 
-    @field_validator("aiMessage", "translatedMessage")
+    @field_validator("inferredTitle", "aiMessage", "translatedMessage")
     @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
+    def text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _validate_not_blank(value)
 
 
@@ -238,8 +254,7 @@ class ExpressionRecommendation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     displayOrder: int = Field(gt=0)
-    sourceType: ExpressionSourceType
-    existingExpressionId: int | None = Field(default=None, gt=0)
+    existingExpressionId: int = Field(gt=0)
     targetExpressionText: str
     baseExpressionMeaningText: str
     usageSummary: str
@@ -252,21 +267,6 @@ class ExpressionRecommendation(BaseModel):
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
-
-    @model_validator(mode="after")
-    def existing_expression_id_must_match_source_type(self) -> Self:
-        if (
-            self.sourceType == ExpressionSourceType.EXISTING
-            and self.existingExpressionId is None
-        ):
-            raise ValueError("EXISTING recommendation requires existingExpressionId")
-        if (
-            self.sourceType == ExpressionSourceType.NEW
-            and self.existingExpressionId is not None
-        ):
-            raise ValueError("NEW recommendation must not contain existingExpressionId")
-        return self
-
 
 class ExpressionRecommendationsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -274,106 +274,37 @@ class ExpressionRecommendationsResponse(BaseModel):
     recommendations: list[ExpressionRecommendation] = Field(min_length=1, max_length=3)
 
 
-class LearningExpressionRequest(BaseModel):
-    targetExpressionText: str
-    baseExpressionMeaningText: str
-    usageSummary: str
-
-    @field_validator(
-        "targetExpressionText",
-        "baseExpressionMeaningText",
-        "usageSummary",
-    )
-    @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
-
-
-class ExpressionLearningContentRequest(BaseModel):
+class ConversationEmbeddingsRequest(BaseModel):
     sessionId: int = Field(gt=0)
     targetLocale: str
     baseLocale: str
-    expressions: list[LearningExpressionRequest] = Field(min_length=1)
+    conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
 
     @field_validator("targetLocale", "baseLocale")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
 
+    @model_validator(mode="after")
+    def history_must_contain_user_message(self) -> Self:
+        if all(message.role != "USER" for message in self.conversationHistory):
+            raise ValueError("conversation history requires at least one user message")
+        return self
 
-class ExpressionPracticeExample(BaseModel):
+
+class ConversationExcerpt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    imageUrl: None = None
-    sentenceText: str
-    sentenceWords: list[str] = Field(min_length=1)
-    highlightingPart: str
-    practiceQuestion: str
-    sentenceTranslation: str
-    sentenceWordChoices: list[str] = Field(min_length=1)
-    practiceQuestionTranslation: str
+    excerptText: str
+    embedding: list[float] = Field(min_length=1536, max_length=1536)
 
-    @field_validator(
-        "sentenceText",
-        "highlightingPart",
-        "practiceQuestion",
-        "sentenceTranslation",
-        "practiceQuestionTranslation",
-    )
+    @field_validator("excerptText")
     @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
+    def excerpt_text_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
 
-    @field_validator("sentenceWords", "sentenceWordChoices")
-    @classmethod
-    def word_fields_must_not_contain_blank_values(cls, value: list[str]) -> list[str]:
-        for word in value:
-            _validate_not_blank(word)
-        return value
 
-
-class ExpressionLearningContent(BaseModel):
+class ConversationEmbeddingsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    targetExpressionText: str
-    baseExpressionMeaningText: str
-    usageSummary: str
-    usageDescription: str
-    representativeQuestionText: str
-    representativeQuestionTranslation: str
-    representativeSentenceText: str
-    representativeSentenceTranslation: str
-    representativeSentenceWords: list[str] = Field(min_length=1)
-    representativeSentenceWordChoices: list[str] = Field(min_length=1)
-    representativeImageUrl: None = None
-    practiceExamples: list[ExpressionPracticeExample] = Field(min_length=1)
-
-    @field_validator(
-        "targetExpressionText",
-        "baseExpressionMeaningText",
-        "usageSummary",
-        "usageDescription",
-        "representativeQuestionText",
-        "representativeQuestionTranslation",
-        "representativeSentenceText",
-        "representativeSentenceTranslation",
-    )
-    @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
-
-    @field_validator(
-        "representativeSentenceWords",
-        "representativeSentenceWordChoices",
-    )
-    @classmethod
-    def word_fields_must_not_contain_blank_values(cls, value: list[str]) -> list[str]:
-        for word in value:
-            _validate_not_blank(word)
-        return value
-
-
-class ExpressionLearningContentResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    expressions: list[ExpressionLearningContent] = Field(min_length=1)
+    excerpts: list[ConversationExcerpt] = Field(min_length=1, max_length=4)
