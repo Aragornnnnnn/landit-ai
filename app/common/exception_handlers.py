@@ -1,6 +1,7 @@
 # FastAPI 예외를 공통 API 응답으로 변환하는 핸들러 등록 모듈
 import logging
 
+import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -11,6 +12,11 @@ from app.common.response import error_response
 
 
 logger = logging.getLogger("uvicorn.error")
+
+_AI_FAILURE_CODES = {
+    ErrorCode.AI_RESPONSE_INVALID,
+    ErrorCode.AI_GENERATION_FAILED,
+}
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -37,7 +43,10 @@ async def api_exception_handler(
     request: Request,
     exc: ApiException,
 ) -> JSONResponse:
-    _log_server_exception(exc.status_code)
+    if exc.error_code in _AI_FAILURE_CODES:
+        _report_ai_failure(request, exc)
+    else:
+        _log_server_exception(exc.status_code)
     return _error_json_response(
         status_code=exc.status_code,
         error_code=exc.error_code,
@@ -72,6 +81,29 @@ async def unexpected_exception_handler(
 def _log_server_exception(status_code: int) -> None:
     if status_code >= 500:
         logger.exception("Handled server error.")
+
+
+def _report_ai_failure(request: Request, exc: ApiException) -> None:
+    provider = request.app.state.settings.llm_provider
+    endpoint = request.url.path
+    logger.exception(
+        "AI request failed. workflow=ai_request_failed endpoint=%s "
+        "errorCode=%s statusCode=%s provider=%s",
+        endpoint,
+        exc.error_code.value,
+        exc.status_code,
+        provider,
+    )
+    sentry_sdk.capture_exception(
+        exc,
+        tags={
+            "workflow": "ai_request_failed",
+            "endpoint": endpoint,
+            "error_code": exc.error_code.value,
+            "status_code": str(exc.status_code),
+            "provider": provider,
+        },
+    )
 
 
 def _error_json_response(
