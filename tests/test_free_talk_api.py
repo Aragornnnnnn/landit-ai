@@ -36,6 +36,8 @@ class FakeCompletions:
         if self.error is not None:
             raise self.error
         content = self.contents.pop(0)
+        if isinstance(content, Exception):
+            raise content
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
         )
@@ -134,6 +136,7 @@ def valid_closing_payload(**overrides):
         "targetLocale": "EN",
         "baseLocale": "KR",
         "closingReason": "USER_CONFIRMED",
+        "titleGenerationRequired": False,
         "topic": {"title": "주말 등산 이야기"},
         "conversationHistory": [
             {
@@ -181,6 +184,7 @@ def normal_turn_completion(**overrides):
 
 def closing_completion(**overrides):
     result = {
+        "inferredTitle": None,
         "aiMessage": "No problem. It was great talking with you.",
         "translatedMessage": "그럼. 이야기해서 즐거웠어.",
         "emotion": "HAPPY",
@@ -745,26 +749,19 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
         self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_turn_requires_korean_inferred_title_on_first_user_turn(self):
-        invalid_titles = (None, "Weekend 주말", "123")
+    def test_turn_does_not_generate_title_on_first_user_turn(self):
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(normal_turn_completion(inferredTitle="Weekend Hiking")),
+                ],
+            ),
+        )
 
-        for title in invalid_titles:
-            with self.subTest(title=title):
-                response = self._post(
-                    "/api/v1/free-talk/turn",
-                    valid_turn_payload(),
-                    FakeOpenAI(
-                        contents=[
-                            json.dumps(normal_turn_completion(inferredTitle=title)),
-                        ],
-                    ),
-                )
-
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(
-                    response.json()["error"]["code"],
-                    "AI_RESPONSE_INVALID",
-                )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["inferredTitle"])
 
     def test_turn_ignores_inferred_title_after_first_user_turn(self):
         response = self._post(
@@ -816,7 +813,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "userExitIntentDetected": True,
-                "inferredTitle": "주말 등산 이야기",
+                "inferredTitle": None,
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
@@ -841,7 +838,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "userExitIntentDetected": True,
-                "inferredTitle": "주말 등산 이야기",
+                "inferredTitle": None,
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
@@ -873,7 +870,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "userExitIntentDetected": True,
-                "inferredTitle": "주말 등산 이야기",
+                "inferredTitle": None,
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
@@ -1022,7 +1019,97 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertNotIn("innerThought", response.json()["data"])
                 self.assertIsNone(response.json()["data"]["emotion"])
+                self.assertIsNone(response.json()["data"]["inferredTitle"])
                 self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_closing_accepts_korean_and_english_titles_when_required(self):
+        for title in ("주말 등산 이야기", "Weekend Hiking"):
+            with self.subTest(title=title):
+                fake_openai = FakeOpenAI(
+                    contents=[json.dumps(closing_completion(inferredTitle=title))],
+                )
+                response = self._post(
+                    "/api/v1/free-talk/closing",
+                    valid_closing_payload(titleGenerationRequired=True),
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"]["inferredTitle"], title)
+                self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_closing_repairs_only_invalid_title_once(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(closing_completion(inferredTitle="123")),
+                json.dumps({"inferredTitle": "Weekend Hiking"}),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(titleGenerationRequired=True),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["inferredTitle"], "Weekend Hiking")
+        self.assertEqual(
+            response.json()["data"]["aiMessage"],
+            "No problem. It was great talking with you.",
+        )
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_closing_returns_null_title_when_repair_is_invalid(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(closing_completion(inferredTitle="123")),
+                json.dumps({"inferredTitle": "456"}),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(titleGenerationRequired=True),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["inferredTitle"])
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_closing_returns_null_title_when_repair_call_fails(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(closing_completion(inferredTitle="123")),
+                RuntimeError("provider unavailable"),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(titleGenerationRequired=True),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["inferredTitle"])
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_closing_ignores_title_when_generation_is_not_required(self):
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(closing_completion(inferredTitle={"invalid": True}))],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(titleGenerationRequired=False),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["inferredTitle"])
+        self.assertEqual(len(fake_openai.completions.calls), 1)
 
     def test_closing_ignores_unsupported_emotion(self):
         response = self._post(
@@ -1452,3 +1539,15 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertIn(path, paths)
         self.assertNotIn("/api/v1/free-talk/expression-learning-content", paths)
         self.assertNotIn("/api/v1/free-talk/embeddings", paths)
+
+    def test_openapi_exposes_closing_title_contract(self):
+        schemas = self._app().openapi()["components"]["schemas"]
+
+        self.assertIn(
+            "titleGenerationRequired",
+            schemas["FreeTalkClosingRequest"]["properties"],
+        )
+        self.assertIn(
+            "inferredTitle",
+            schemas["FreeTalkClosingResponse"]["properties"],
+        )

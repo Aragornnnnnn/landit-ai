@@ -27,8 +27,8 @@ from app.models.free_talk import (
 )
 
 
-_KOREAN_TITLE_PATTERN = re.compile(r"[가-힣0-9\s·-]+$")
-_KOREAN_CHARACTER_PATTERN = re.compile(r"[가-힣]")
+_TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
+_TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
 _PROHIBITED_INNER_THOUGHT_PATTERN = re.compile(
     r"문법|자연스러(?:움|운)|점수|교정|피드백|"
     r"grammar|naturalness|score|correction|feedback",
@@ -122,8 +122,7 @@ def generate_turn(
         )
     try:
         candidate_data = dict(data)
-        if not payload.isFirstUserTurn:
-            candidate_data["inferredTitle"] = None
+        candidate_data["inferredTitle"] = None
         if payload.responseMode == FreeTalkResponseMode.NORMAL:
             exit_candidate = _TurnExitIntentCandidate.model_validate(data)
             if exit_candidate.userExitIntentDetected is None:
@@ -135,7 +134,6 @@ def generate_turn(
         else:
             candidate_data["userExitIntentDetected"] = False
         candidate = _TurnCandidate.model_validate(candidate_data)
-        _validate_inferred_title(candidate.inferredTitle, payload.isFirstUserTurn)
         if payload.responseMode == FreeTalkResponseMode.NORMAL:
             exit_detected = candidate.userExitIntentDetected
         else:
@@ -143,18 +141,14 @@ def generate_turn(
         if exit_detected:
             return FreeTalkTurnResponse(
                 userExitIntentDetected=True,
-                inferredTitle=(
-                    candidate.inferredTitle if payload.isFirstUserTurn else None
-                ),
+                inferredTitle=None,
                 aiMessage=None,
                 translatedMessage=None,
                 emotion=None,
             )
         return FreeTalkTurnResponse(
             userExitIntentDetected=False,
-            inferredTitle=(
-                candidate.inferredTitle if payload.isFirstUserTurn else None
-            ),
+            inferredTitle=None,
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
             emotion=None,
@@ -169,12 +163,16 @@ def generate_closing(
 ) -> FreeTalkClosingResponse:
     data = request_json_completion(
         settings=settings,
-        system_prompt=_closing_system_prompt(payload.characterId),
+        system_prompt=_closing_system_prompt(
+            payload.characterId,
+            payload.titleGenerationRequired,
+        ),
         user_prompt=_closing_user_prompt(payload),
     )
     try:
         candidate = _ClosingCandidate.model_validate(data)
         response = FreeTalkClosingResponse(
+            inferredTitle=None,
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
             emotion=None,
@@ -185,7 +183,12 @@ def generate_closing(
         response.translatedMessage,
     ):
         raise AiResponseInvalidError("closing message violates policy")
-    return response
+    return FreeTalkClosingResponse(
+        inferredTitle=_resolve_closing_title(data, payload, settings),
+        aiMessage=response.aiMessage,
+        translatedMessage=response.translatedMessage,
+        emotion=response.emotion,
+    )
 
 
 def generate_inner_thought(
@@ -231,20 +234,38 @@ def _to_inner_thought_response(
     )
 
 
-def _validate_inferred_title(
-    title: str | None,
-    is_first_user_turn: bool,
-) -> None:
-    if not is_first_user_turn:
-        return
+def _resolve_closing_title(
+    data: dict[str, object],
+    payload: FreeTalkClosingRequest,
+    settings: Settings,
+) -> str | None:
+    if not payload.titleGenerationRequired:
+        return None
+    title = _valid_title(data.get("inferredTitle"))
+    if title is not None:
+        return title
+    try:
+        repaired_data = request_json_completion(
+            settings=settings,
+            system_prompt=_title_repair_system_prompt(),
+            user_prompt=_closing_user_prompt(payload),
+        )
+    except (AiGenerationFailedError, AiResponseInvalidError):
+        return None
+    return _valid_title(repaired_data.get("inferredTitle"))
+
+
+def _valid_title(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
     if (
-        title is None
-        or not title.strip()
-        or len(title.strip()) > 30
-        or _KOREAN_TITLE_PATTERN.fullmatch(title.strip()) is None
-        or _KOREAN_CHARACTER_PATTERN.search(title) is None
+        not 1 <= len(title) <= 30
+        or _TITLE_PATTERN.fullmatch(title) is None
+        or _TITLE_LETTER_PATTERN.search(title) is None
     ):
-        raise ValueError("first user turn requires a short Korean inferred title")
+        return None
+    return title
 
 
 def _validate_inner_thought(inner_thought: str | None) -> None:
@@ -341,8 +362,7 @@ def _turn_system_prompt(
         "Always return userExitIntentDetected. "
         "When userExitIntentDetected is true, leave all generated message fields null. "
         "Otherwise return aiMessage and translatedMessage. "
-        "For a first user turn, inferredTitle must be a short Korean title; "
-        "for later turns, inferredTitle must be null."
+        "Return inferredTitle as null."
     )
 
 
@@ -355,7 +375,17 @@ def _continue_turn_repair_system_prompt(character: FreeTalkCharacter) -> str:
     )
 
 
-def _closing_system_prompt(character: FreeTalkCharacter) -> str:
+def _closing_system_prompt(
+    character: FreeTalkCharacter,
+    title_generation_required: bool,
+) -> str:
+    title_instruction = (
+        "Infer inferredTitle from the full conversation. It must be 1 to 30 characters, "
+        "contain at least one Korean or English letter, and use only Korean letters, "
+        "English letters, digits, spaces, middle dots, or hyphens."
+        if title_generation_required
+        else "Return inferredTitle as null."
+    )
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate a natural final free-talk message as JSON. Do not ask a question, "
@@ -364,7 +394,16 @@ def _closing_system_prompt(character: FreeTalkCharacter) -> str:
         "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing. "
         "Do not provide language-learning feedback. "
         "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
-        "Return aiMessage and translatedMessage."
+        "Return aiMessage, translatedMessage, and inferredTitle. "
+        + title_instruction
+    )
+
+
+def _title_repair_system_prompt() -> str:
+    return (
+        "Return only JSON with inferredTitle. Infer a concise title from the full conversation. "
+        "The title must be 1 to 30 characters, contain at least one Korean or English letter, "
+        "and use only Korean letters, English letters, digits, spaces, middle dots, or hyphens."
     )
 
 
