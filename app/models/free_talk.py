@@ -190,7 +190,7 @@ class FreeTalkClosingRequest(FreeTalkContext):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     closingReason: FreeTalkClosingReason
-    topic: FreeTalkTopicContext
+    titleGenerationRequired: bool = False
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -208,13 +208,16 @@ class FreeTalkClosingRequest(FreeTalkContext):
 class FreeTalkClosingResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    inferredTitle: str | None = None
     aiMessage: str
     translatedMessage: str
     emotion: Emotion | None
 
-    @field_validator("aiMessage", "translatedMessage")
+    @field_validator("inferredTitle", "aiMessage", "translatedMessage")
     @classmethod
-    def text_fields_must_not_be_blank(cls, value: str) -> str:
+    def text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _validate_not_blank(value)
 
 
