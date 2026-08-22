@@ -1397,12 +1397,74 @@ class FreeTalkApiTests(unittest.TestCase):
                     embedding_call["model"], "openai/text-embedding-3-small"
                 )
                 self.assertEqual(embedding_call["input"], excerpts)
+                self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_conversation_embeddings_rejects_out_of_range_excerpt_count(self):
-        for excerpts in ([], [f"Sentence {index}." for index in range(5)]):
-            with self.subTest(count=len(excerpts)):
+    def test_conversation_embeddings_repairs_invalid_excerpts_once(self):
+        invalid_candidates = (
+            ({}, "missing_excerpts", None),
+            ({"excerpts": []}, "empty_excerpts", 0),
+            (
+                {"excerpts": [f"Sentence {index}." for index in range(5)]},
+                "too_many_excerpts",
+                5,
+            ),
+            ({"excerpts": ["   "]}, "blank_excerpt", 1),
+        )
+
+        for invalid_candidate, reason, count in invalid_candidates:
+            with self.subTest(reason=reason):
                 fake_openai = FakeOpenAI(
-                    contents=[json.dumps({"excerpts": excerpts})],
+                    contents=[
+                        json.dumps(invalid_candidate),
+                        json.dumps({"excerpts": ["I cook every day."]}),
+                    ],
+                )
+
+                with self.assertLogs(
+                    "app.free_talk.application.embedding_service",
+                    level="WARNING",
+                ) as captured_logs:
+                    response = self._post(
+                        "/api/v1/free-talk/conversation-embeddings",
+                        valid_conversation_embeddings_payload(),
+                        fake_openai,
+                    )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake_openai.completions.calls), 2)
+                self.assertEqual(
+                    fake_openai.embeddings.calls[0]["input"],
+                    ["I cook every day."],
+                )
+                repair_prompt = fake_openai.completions.calls[1]["messages"][0][
+                    "content"
+                ]
+                self.assertIn(reason, repair_prompt)
+                self.assertIn("one to four non-blank strings", repair_prompt)
+                self.assertIn("based only on USER messages", repair_prompt)
+                self.assertIn(
+                    "most meaningful non-blank USER utterance",
+                    repair_prompt,
+                )
+                output = "\n".join(captured_logs.output)
+                self.assertIn(f"reason={reason}", output)
+                self.assertIn(f"excerptCount={count}", output)
+                self.assertNotIn("That's easy for me", output)
+                self.assertNotIn("Sentence 0.", output)
+
+    def test_conversation_embeddings_does_not_repair_structural_excerpts(self):
+        invalid_candidates = (
+            {"excerpts": None},
+            {"excerpts": "I cook every day."},
+            {"excerpts": {"value": "I cook every day."}},
+            {"excerpts": [123]},
+            {"excerpts": [True]},
+        )
+
+        for invalid_candidate in invalid_candidates:
+            with self.subTest(invalid_candidate=invalid_candidate):
+                fake_openai = FakeOpenAI(
+                    contents=[json.dumps(invalid_candidate)],
                 )
 
                 response = self._post(
@@ -1413,19 +1475,30 @@ class FreeTalkApiTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(
-                    response.json()["error"]["code"], "AI_RESPONSE_INVALID"
+                    response.json()["error"]["code"],
+                    "AI_RESPONSE_INVALID",
                 )
+                self.assertEqual(len(fake_openai.completions.calls), 1)
                 self.assertEqual(len(fake_openai.embeddings.calls), 0)
 
-    def test_conversation_embeddings_rejects_blank_excerpt(self):
+    def test_conversation_embeddings_rejects_invalid_excerpts_after_repair(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps({"excerpts": []}),
+                json.dumps({"excerpts": ["   "]}),
+            ],
+        )
+
         response = self._post(
             "/api/v1/free-talk/conversation-embeddings",
             valid_conversation_embeddings_payload(),
-            FakeOpenAI(contents=[json.dumps({"excerpts": ["   "]})]),
+            fake_openai,
         )
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
 
     def test_conversation_embeddings_rejects_wrong_dimensions(self):
         response = self._post(
