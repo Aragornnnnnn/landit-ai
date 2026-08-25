@@ -19,11 +19,11 @@ Conversation API는 Landit backend가 전달한 시나리오와 대화 컨텍스
 
 응답에는 다음 필드를 포함합니다.
 
-- `aiMessage`
-- `translatedMessage`
+- `acknowledgement`
+- `translatedAcknowledgement`
 - `goalCompletionStatus`
 
-다음 메시지는 backend가 지정한 고정 질문을 포함해야 합니다. 모델은 이전 사용자 발화에 대한 짧은 맞장구를 붙일 수 있지만, 고정 질문의 영어와 한국어 번역이 응답에서 누락되면 응답 형식 오류로 처리합니다.
+모델은 이전 사용자 발화에 대한 짧은 맞장구만 반환합니다. backend가 지정한 고정 질문은 맞장구 생성 문맥으로만 사용하며 응답에는 포함하지 않습니다.
 
 ## `POST /api/v1/conversation/inner-thought`
 
