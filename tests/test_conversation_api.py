@@ -398,10 +398,10 @@ class FakeOpenAI:
 
 
 class NextMessageApiTests(unittest.TestCase):
-    def test_next_message_returns_ai_message_and_uses_fixed_question_prompt(self):
+    def test_next_message_returns_acknowledgement_and_uses_fixed_question_context(self):
         ai_response = {
-            "aiMessage": "Sounds tasty. Do you cook often?",
-            "translatedMessage": "맛있겠다. 요리는 자주 해?",
+            "acknowledgement": "Sounds tasty.",
+            "translatedAcknowledgement": "맛있겠다.",
             "goalCompletionStatus": "PARTIAL",
         }
         fake_openai = FakeOpenAI(content=json.dumps(ai_response))
@@ -453,7 +453,7 @@ class NextMessageApiTests(unittest.TestCase):
             messages[1]["content"],
         )
         self.assertIn(
-            "Use the provided next fixed question as the question part of aiMessage.",
+            "Do not include the next fixed question in acknowledgement.",
             messages[0]["content"],
         )
         self.assertNotIn("innerThought", messages[0]["content"])
@@ -462,8 +462,8 @@ class NextMessageApiTests(unittest.TestCase):
         fake_openai = FakeOpenAI(
             content=json.dumps(
                 {
-                    "aiMessage": "Sounds tasty. Do you cook often?",
-                    "translatedMessage": "맛있겠다. 요리는 자주 해?",
+                    "acknowledgement": "Sounds tasty.",
+                    "translatedAcknowledgement": "맛있겠다.",
                     "innerThought": "매운 피자를 좋아한다고 이유까지 말해주네.",
                     "innerThoughtType": "GOOD",
                     "goalCompletionStatus": "PARTIAL",
@@ -487,7 +487,7 @@ class NextMessageApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["goalCompletionStatus"], "PARTIAL")
 
     def test_next_message_completes_missing_fields_from_request(self):
-        fake_openai = FakeOpenAI(content='{"aiMessage":"Only one field"}')
+        fake_openai = FakeOpenAI(content='{"acknowledgement":"Only one field"}')
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
@@ -502,16 +502,16 @@ class NextMessageApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["aiMessage"], "Only one field Do you cook often?")
-        self.assertEqual(response.json()["data"]["translatedMessage"], "요리는 자주 해?")
+        self.assertEqual(response.json()["data"]["acknowledgement"], "Only one field")
+        self.assertEqual(response.json()["data"]["translatedAcknowledgement"], "알겠어.")
         self.assertEqual(response.json()["data"]["goalCompletionStatus"], "PARTIAL")
 
-    def test_next_message_appends_missing_fixed_question(self):
+    def test_next_message_removes_accidentally_included_fixed_question(self):
         fake_openai = FakeOpenAI(
             content=json.dumps(
                 {
-                    "aiMessage": "Sounds tasty. What else do you like?",
-                    "translatedMessage": "맛있겠다. 또 뭘 좋아해?",
+                    "acknowledgement": "Sounds tasty. Do you cook often?",
+                    "translatedAcknowledgement": "맛있겠다. 요리는 자주 해?",
                     "innerThought": "매운 피자를 좋아한다고 이유까지 말해주네.",
                     "innerThoughtType": "GOOD",
                     "goalCompletionStatus": "PARTIAL",
@@ -533,26 +533,23 @@ class NextMessageApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.json()["data"]["aiMessage"],
-            "Sounds tasty. What else do you like? Do you cook often?",
+            response.json()["data"]["acknowledgement"],
+            "Sounds tasty.",
         )
         self.assertEqual(
-            response.json()["data"]["translatedMessage"],
-            "맛있겠다. 또 뭘 좋아해? 요리는 자주 해?",
+            response.json()["data"]["translatedAcknowledgement"],
+            "맛있겠다.",
         )
 
     def test_next_message_removes_adjacent_repeated_sentences(self):
-        repeated_message = (
-            "I'm such a night owl, it's a problem. "
-            "What's your whole daily rhythm like — when are you up, when do you crash?"
-        )
+        repeated_message = "I'm such a night owl, it's a problem."
         fake_openai = FakeOpenAI(
             content=json.dumps(
                 {
-                    "aiMessage": f"{repeated_message} {repeated_message}",
-                    "translatedMessage": (
-                        "난 완전 올빼미형이라 문제야. 하루 일과는 어때?"
-                        "난 완전 올빼미형이라 문제야. 하루 일과는 어때?"
+                    "acknowledgement": f"{repeated_message} {repeated_message}",
+                    "translatedAcknowledgement": (
+                        "난 완전 올빼미형이라 문제야."
+                        "난 완전 올빼미형이라 문제야."
                     ),
                     "goalCompletionStatus": "PARTIAL",
                 },
@@ -577,18 +574,18 @@ class NextMessageApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["aiMessage"], repeated_message)
+        self.assertEqual(response.json()["data"]["acknowledgement"], repeated_message)
         self.assertEqual(
-            response.json()["data"]["translatedMessage"],
-            "난 완전 올빼미형이라 문제야. 하루 일과는 어때?",
+            response.json()["data"]["translatedAcknowledgement"],
+            "난 완전 올빼미형이라 문제야.",
         )
 
     def test_next_message_prompt_keeps_counterpart_role_after_short_acceptance(self):
         fake_openai = FakeOpenAI(
             content=json.dumps(
                 {
-                    "aiMessage": "Thanks. What brings you here today?",
-                    "translatedMessage": "고마워. 오늘은 무슨 일로 왔어?",
+                    "acknowledgement": "Thanks.",
+                    "translatedAcknowledgement": "고마워.",
                     "goalCompletionStatus": "PARTIAL",
                 },
             ),
