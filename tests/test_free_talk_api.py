@@ -1758,6 +1758,53 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_memory_query_embedding_returns_fixed_dimension_vector(self):
+        fake_openai = FakeOpenAI()
+        response = self._post(
+            "/api/v1/free-talk/memory-query-embedding",
+            {"query": " weekend plans "},
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["embeddingModel"],
+            "openai/text-embedding-3-small",
+        )
+        self.assertEqual(len(response.json()["data"]["embedding"]), 1536)
+        self.assertEqual(fake_openai.embeddings.calls[0]["input"], ["weekend plans"])
+
+    def test_memory_query_embedding_rejects_blank_and_oversized_query(self):
+        for query in ("   ", "x" * 2001):
+            with self.subTest(query_length=len(query)):
+                fake_openai = FakeOpenAI()
+                response = self._post(
+                    "/api/v1/free-talk/memory-query-embedding",
+                    {"query": query},
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_query_embedding_maps_provider_failure_to_503(self):
+        response = self._post(
+            "/api/v1/free-talk/memory-query-embedding",
+            {"query": "weekend plans"},
+            FakeOpenAI(embedding_error=RuntimeError("provider unavailable")),
+        )
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_memory_query_embedding_rejects_invalid_dimension(self):
+        response = self._post(
+            "/api/v1/free-talk/memory-query-embedding",
+            {"query": "weekend plans"},
+            FakeOpenAI(embedding_vectors=[[0.1] * 1535]),
+        )
+
+        self.assertEqual(response.status_code, 502)
+
     def test_memory_candidates_returns_normalized_candidates_and_embeddings(self):
         fake_openai = FakeOpenAI(
             contents=[json.dumps(valid_memory_candidate_completion())],
@@ -2179,10 +2226,10 @@ class FreeTalkApiTests(unittest.TestCase):
             "/api/v1/free-talk/conversation-embeddings",
             "/api/v1/free-talk/memory-candidates",
             "/api/v1/free-talk/memory-resolution",
+            "/api/v1/free-talk/memory-query-embedding",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, paths)
-        self.assertNotIn("/api/v1/free-talk/memory-query-embedding", paths)
         self.assertNotIn("/api/v1/free-talk/expression-learning-content", paths)
         self.assertNotIn("/api/v1/free-talk/embeddings", paths)
 
@@ -2202,3 +2249,4 @@ class FreeTalkApiTests(unittest.TestCase):
             "inferredTitle",
             schemas["FreeTalkClosingResponse"]["properties"],
         )
+        self.assertIn("embedding", schemas["MemoryQueryEmbeddingResponse"]["properties"])

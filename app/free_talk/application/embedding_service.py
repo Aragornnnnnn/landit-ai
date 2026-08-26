@@ -5,7 +5,7 @@ import logging
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.free_talk.llm.embeddings import request_embeddings
+from app.free_talk.llm.embeddings import EMBEDDING_MODEL, request_embeddings
 from app.free_talk.llm.json_completion import (
     AiResponseInvalidError,
     request_json_completion,
@@ -13,6 +13,8 @@ from app.free_talk.llm.json_completion import (
 from app.models.free_talk import (
     ConversationEmbeddingsRequest,
     ConversationEmbeddingsResponse,
+    MemoryQueryEmbeddingRequest,
+    MemoryQueryEmbeddingResponse,
 )
 
 
@@ -39,6 +41,20 @@ def generate_conversation_embeddings(
                     for text, vector in zip(excerpt_texts, vectors, strict=True)
                 ],
             },
+        )
+    except (ValidationError, ValueError) as exc:
+        raise AiResponseInvalidError from exc
+
+
+def generate_memory_query_embedding(
+    payload: MemoryQueryEmbeddingRequest,
+    settings: Settings,
+) -> MemoryQueryEmbeddingResponse:
+    vector = request_embeddings(settings=settings, texts=[payload.query])[0]
+    try:
+        return MemoryQueryEmbeddingResponse(
+            embeddingModel=EMBEDDING_MODEL,
+            embedding=vector,
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc

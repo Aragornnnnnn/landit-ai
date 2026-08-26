@@ -15,6 +15,7 @@ from app.free_talk.application.conversation_service import (
 )
 from app.free_talk.application.embedding_service import (
     generate_conversation_embeddings,
+    generate_memory_query_embedding,
 )
 from app.free_talk.application.expression_service import (
     recommend_expressions,
@@ -38,6 +39,8 @@ from app.models.free_talk import (
     FreeTalkTurnResponse,
     MemoryCandidatesRequest,
     MemoryCandidatesResponse,
+    MemoryQueryEmbeddingRequest,
+    MemoryQueryEmbeddingResponse,
     MemoryResolutionRequest,
     MemoryResolutionResponse,
 )
@@ -148,6 +151,17 @@ def create_memory_resolution(
             503을 발생시킨다.
     """
     return success_response(_generate(payload, request, generate_memory_resolution))
+
+
+@router.post(
+    "/memory-query-embedding",
+    response_model=ApiResponse[MemoryQueryEmbeddingResponse],
+)
+def create_memory_query_embedding(
+    payload: MemoryQueryEmbeddingRequest,
+    request: Request,
+) -> ApiResponse[MemoryQueryEmbeddingResponse]:
+    return success_response(_generate(payload, request, generate_memory_query_embedding))
 
 
 def _generate(payload, request: Request, generator):

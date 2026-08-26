@@ -299,6 +299,39 @@ class MemoryResolutionResponse(BaseModel):
     resolutions: list[MemoryResolution] = Field(min_length=1, max_length=5)
 
 
+class MemoryQueryEmbeddingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(max_length=2000)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def query_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("query")
+    @classmethod
+    def query_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class MemoryQueryEmbeddingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    embeddingModel: str
+    embedding: list[float] = Field(min_length=1536, max_length=1536)
+
+    @field_validator("embeddingModel")
+    @classmethod
+    def embedding_model_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("embedding")
+    @classmethod
+    def embedding_values_must_be_finite(cls, value: list[float]) -> list[float]:
+        return _validate_finite_embedding(value)
+
+
 class FreeTalkTopicContext(BaseModel):
     topicId: int | None = Field(default=None, gt=0)
     title: str
@@ -360,7 +393,6 @@ class FreeTalkOpeningResponse(BaseModel):
     aiMessage: str
     translatedMessage: str
     emotion: Emotion | None
-
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
@@ -373,7 +405,6 @@ class FreeTalkTurnRequest(FreeTalkContext):
     responseMode: FreeTalkResponseMode
     isFirstUserTurn: bool
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
-
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
         latest_message = self.conversationHistory[-1]
@@ -394,7 +425,6 @@ class FreeTalkTurnResponse(BaseModel):
     aiMessage: str | None
     translatedMessage: str | None
     emotion: Emotion | None
-
     @field_validator("inferredTitle", "aiMessage", "translatedMessage")
     @classmethod
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:
