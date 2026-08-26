@@ -107,7 +107,10 @@ def generate_opening(
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
             emotion=None,
-            usedMemoryIds=candidate.usedMemoryIds,
+            usedMemoryIds=_validated_used_memory_ids(
+                candidate.usedMemoryIds,
+                payload.memoryContext,
+            ),
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -149,7 +152,10 @@ def generate_turn(
             exit_detected = candidate.userExitIntentDetected
         else:
             exit_detected = False
-        used_memory_ids = candidate.usedMemoryIds
+        used_memory_ids = _validated_used_memory_ids(
+            candidate.usedMemoryIds,
+            payload.memoryContext,
+        )
         if exit_detected:
             if used_memory_ids:
                 raise ValueError("exit intent response must not use memory")
@@ -487,6 +493,20 @@ def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
 
 def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
     return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _validated_used_memory_ids(
+    used_memory_ids: list[int],
+    memory_context: list[MemoryContext],
+) -> list[int]:
+    context_ids = {context.memoryId for context in memory_context}
+    if (
+        any(identifier <= 0 for identifier in used_memory_ids)
+        or len(used_memory_ids) != len(set(used_memory_ids))
+        or not set(used_memory_ids).issubset(context_ids)
+    ):
+        return []
+    return used_memory_ids
 
 
 def _is_invalid_closing_message(message: str, *, allow_question: bool) -> bool:

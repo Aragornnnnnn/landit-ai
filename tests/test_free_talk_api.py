@@ -399,6 +399,16 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("memoryContext", user_prompt)
         self.assertIn("untrusted reference data", system_prompt)
 
+    def test_opening_normalizes_used_memory_id_outside_context(self):
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload() | {"memoryContext": [valid_memory_context()]},
+            FakeOpenAI(contents=[json.dumps(opening_completion(usedMemoryIds=[88]))]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
+
     def test_opening_requires_supported_character(self):
         for character_id in (None, "unknown"):
             with self.subTest(character_id=character_id):
@@ -615,6 +625,16 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
+    def test_turn_normalizes_duplicate_used_memory_ids(self):
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": [valid_memory_context()]},
+            FakeOpenAI(contents=[json.dumps(normal_turn_completion(usedMemoryIds=[77, 77]))]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
 
     def test_turn_treats_all_null_topic_as_absent(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
