@@ -375,7 +375,27 @@ class FreeTalkContext(BaseModel):
         return _validate_not_blank(value)
 
 
+class MemoryContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memoryId: int = Field(gt=0)
+    memoryType: MemoryType
+    content: str = Field(max_length=500)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def content_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
 class FreeTalkOpeningRequest(FreeTalkContext):
+    memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
+
     @model_validator(mode="after")
     def topic_must_be_complete(self) -> Self:
         if (
@@ -393,6 +413,13 @@ class FreeTalkOpeningResponse(BaseModel):
     aiMessage: str
     translatedMessage: str
     emotion: Emotion | None
+    usedMemoryIds: list[int] = Field(default_factory=list, max_length=3)
+
+    @field_validator("usedMemoryIds")
+    @classmethod
+    def used_memory_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        return _validate_unique_positive_ids(value)
+
     @field_validator("aiMessage", "translatedMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
@@ -405,6 +432,8 @@ class FreeTalkTurnRequest(FreeTalkContext):
     responseMode: FreeTalkResponseMode
     isFirstUserTurn: bool
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
+    memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
+
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
         latest_message = self.conversationHistory[-1]
@@ -425,6 +454,8 @@ class FreeTalkTurnResponse(BaseModel):
     aiMessage: str | None
     translatedMessage: str | None
     emotion: Emotion | None
+    usedMemoryIds: list[int] = Field(default_factory=list, max_length=3)
+
     @field_validator("inferredTitle", "aiMessage", "translatedMessage")
     @classmethod
     def optional_text_fields_must_not_be_blank(cls, value: str | None) -> str | None:

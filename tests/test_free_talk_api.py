@@ -102,6 +102,16 @@ def valid_opening_payload():
     }
 
 
+def valid_memory_context(memory_id=77, **overrides):
+    context = {
+        "memoryId": memory_id,
+        "memoryType": "EVENT",
+        "content": "사용자는 다음 주에 면접이 있다.",
+    }
+    context.update(overrides)
+    return context
+
+
 def valid_turn_payload(**overrides):
     payload = {
         "sessionId": 300,
@@ -165,6 +175,7 @@ def opening_completion(**overrides):
         "aiMessage": "Do you have any plans for the weekend?",
         "translatedMessage": "이번 주말에 무슨 계획 있어?",
         "emotion": "HAPPY",
+        "usedMemoryIds": [],
     }
     result.update(overrides)
     return result
@@ -177,6 +188,7 @@ def normal_turn_completion(**overrides):
         "aiMessage": "That sounds fun! Where are you going hiking?",
         "translatedMessage": "재밌겠다! 어디로 등산 가?",
         "emotion": "HAPPY",
+        "usedMemoryIds": [],
     }
     result.update(overrides)
     return result
@@ -369,6 +381,23 @@ class FreeTalkApiTests(unittest.TestCase):
             opening_completion(emotion=None),
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_opening_passes_memory_context_and_returns_used_memory_ids(self):
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(opening_completion(usedMemoryIds=[77]))],
+        )
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload() | {"memoryContext": [valid_memory_context()]},
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+        user_prompt = fake_openai.completions.calls[0]["messages"][1]["content"]
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("memoryContext", user_prompt)
+        self.assertIn("untrusted reference data", system_prompt)
 
     def test_opening_requires_supported_character(self):
         for character_id in (None, "unknown"):
@@ -573,6 +602,19 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertNotIn("innerThought", response.json()["data"])
         self.assertIsNone(response.json()["data"]["emotion"])
         self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_turn_returns_only_used_memory_ids_from_context(self):
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(normal_turn_completion(usedMemoryIds=[77]))],
+        )
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": [valid_memory_context()]},
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
     def test_turn_treats_all_null_topic_as_absent(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
@@ -887,6 +929,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
+                "usedMemoryIds": [],
             },
         )
 
@@ -912,6 +955,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
+                "usedMemoryIds": [],
             },
         )
 
@@ -944,6 +988,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 "aiMessage": None,
                 "translatedMessage": None,
                 "emotion": None,
+                "usedMemoryIds": [],
             },
         )
 
@@ -2249,4 +2294,6 @@ class FreeTalkApiTests(unittest.TestCase):
             "inferredTitle",
             schemas["FreeTalkClosingResponse"]["properties"],
         )
+        self.assertIn("memoryContext", schemas["FreeTalkOpeningRequest"]["properties"])
+        self.assertIn("usedMemoryIds", schemas["FreeTalkOpeningResponse"]["properties"])
         self.assertIn("embedding", schemas["MemoryQueryEmbeddingResponse"]["properties"])
