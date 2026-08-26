@@ -6,7 +6,7 @@
 #   EN_AU: espeak-ng en-au — 음소가 en-gb와 동일해 사실상 GB 재사용.
 #          BATH 모음 단어(dance류)는 실제 호주 발음이 다를 수 있어 검수 표시한다.
 #
-# 화면용 nativeDisplay는 철자를 발음 음절 수로 쪼갠 것이고(hik·ing), 발음 respelling
+# stressDisplay(강세 표시용)는 철자를 발음 음절 수로 쪼갠 것이고(hik·ing), 발음 respelling
 # (heye·kihng)은 억양 대조 보기 초안에만 쓴다.
 #
 # accentContrast: 같은 단어의 미국식/대상 억양 발음이 다르면 양자택일 보기 초안을
@@ -424,8 +424,8 @@ def to_payload(words: list[ReferenceWord]) -> list[dict]:
             "phonemes": word.phonemes,
             "syllables": word.syllables,
             "stressIndex": word.stress_index,
-            "nativeDisplay": word.native_display,
-            "nativeRespelling": word.native_respelling,
+            "stressDisplay": word.native_display,
+            "pronunciationDisplay": word.native_respelling,
         }
         # minor(계통적 실현 차이)는 판정에 쓰지 않고 검수 CSV에만 남긴다
         if word.contrast_expected and word.contrast_tier == "major":
@@ -483,8 +483,8 @@ def main() -> None:
                     "expressionId": source.get("expressionId"),
                     "order": index + 1,
                     "word": word.word,
-                    "nativeDisplay": word.native_display,
-                    "nativeRespelling": word.native_respelling,
+                    "stressDisplay": word.native_display,
+                    "pronunciationDisplay": word.native_respelling,
                     "stressIndex": word.stress_index,
                     "phonemes": word.phonemes,
                     "contrastExpected": word.contrast_expected or "",
@@ -517,7 +517,7 @@ def main() -> None:
         )
         print(
             f"{marker} {row['order']:2d} {row['word']:16s} "
-            f"{row['nativeDisplay']:22s} 강세={row['stressIndex']:2d}"
+            f"{row['stressDisplay']:22s} 강세={row['stressIndex']:2d}"
             f"{contrast}  {row['reviewReason']}"
         )
     print(

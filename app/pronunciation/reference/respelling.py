@@ -1,7 +1,7 @@
 # 발음 사전에서 학습자용 음절·강세 기준 데이터를 만드는 모듈
 #
 # AI 호출 없이 사전만으로 생성한다. BE의 words_payload 형식에 맞춘 값을 낸다:
-#   nativeDisplay "hik·ing", syllables ["hik","ing"], stressIndex 0
+#   stressDisplay "hik·ing", syllables ["hik","ing"], stressIndex 0
 #
 # 두 사전을 조합한다:
 #   - 음절 분리: pyphen(철자 기반). 음소를 글자로 옮기면 "like"가 "leyek"처럼 읽을 수
