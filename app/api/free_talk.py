@@ -19,6 +19,10 @@ from app.free_talk.application.embedding_service import (
 from app.free_talk.application.expression_service import (
     recommend_expressions,
 )
+from app.free_talk.application.memory_service import (
+    generate_memory_candidates,
+    generate_memory_resolution,
+)
 from app.models.free_talk import (
     ConversationEmbeddingsRequest,
     ConversationEmbeddingsResponse,
@@ -32,6 +36,10 @@ from app.models.free_talk import (
     FreeTalkOpeningResponse,
     FreeTalkTurnRequest,
     FreeTalkTurnResponse,
+    MemoryCandidatesRequest,
+    MemoryCandidatesResponse,
+    MemoryResolutionRequest,
+    MemoryResolutionResponse,
 )
 
 
@@ -95,6 +103,28 @@ def create_conversation_embeddings(
     request: Request,
 ) -> ApiResponse[ConversationEmbeddingsResponse]:
     return success_response(_generate(payload, request, generate_conversation_embeddings))
+
+
+@router.post(
+    "/memory-candidates",
+    response_model=ApiResponse[MemoryCandidatesResponse],
+)
+def create_memory_candidates(
+    payload: MemoryCandidatesRequest,
+    request: Request,
+) -> ApiResponse[MemoryCandidatesResponse]:
+    return success_response(_generate(payload, request, generate_memory_candidates))
+
+
+@router.post(
+    "/memory-resolution",
+    response_model=ApiResponse[MemoryResolutionResponse],
+)
+def create_memory_resolution(
+    payload: MemoryResolutionRequest,
+    request: Request,
+) -> ApiResponse[MemoryResolutionResponse]:
+    return success_response(_generate(payload, request, generate_memory_resolution))
 
 
 def _generate(payload, request: Request, generator):
