@@ -272,6 +272,51 @@ def valid_conversation_embeddings_payload(**overrides):
     return payload
 
 
+def valid_memory_candidates_payload(**overrides):
+    payload = {
+        "sessionId": 300,
+        "characterId": "chloe",
+        "targetLocale": "EN",
+        "baseLocale": "KR",
+        "timezone": "Asia/Seoul",
+        "conversationHistory": [
+            {
+                "messageId": 3001,
+                "turnNumber": 1,
+                "role": "AI",
+                "content": "How was your weekend?",
+                "translatedContent": "주말은 어땠어?",
+                "occurredAt": "2026-08-25T20:00:00+09:00",
+            },
+            {
+                "messageId": 3002,
+                "turnNumber": 1,
+                "role": "USER",
+                "content": "I have an interview next Friday.",
+                "translatedContent": None,
+                "occurredAt": "2026-08-25T20:10:00+09:00",
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def valid_memory_candidate_completion(**overrides):
+    candidate = {
+        "candidateIndex": 0,
+        "memoryType": "EVENT",
+        "content": "사용자는 2026년 8월 28일에 면접이 있다.",
+        "contentLocale": "KR",
+        "sourceMessageIds": [3002],
+        "confidence": 0.94,
+        "validFrom": "2026-08-25T20:10:00+09:00",
+        "validTo": None,
+    }
+    candidate.update(overrides)
+    return {"candidates": [candidate]}
+
+
 class FreeTalkApiTests(unittest.TestCase):
     def _app(self, **overrides):
         settings = {
@@ -1688,6 +1733,92 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_memory_candidates_returns_normalized_candidates_and_embeddings(self):
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(valid_memory_candidate_completion())],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        candidate = response.json()["data"]["candidates"][0]
+        self.assertEqual(candidate["candidateIndex"], 0)
+        self.assertEqual(
+            response.json()["data"]["extractorVersion"],
+            "memory-candidate-v1",
+        )
+        self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
+        self.assertEqual(len(candidate["embedding"]), 1536)
+        self.assertEqual(
+            fake_openai.embeddings.calls[0]["model"],
+            "openai/text-embedding-3-small",
+        )
+
+    def test_memory_candidates_rejects_ai_message_as_source(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(sourceMessageIds=[3001]),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_rejects_non_contiguous_candidate_index(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "candidates": [
+                            valid_memory_candidate_completion()["candidates"][0]
+                            | {"candidateIndex": 1},
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_candidates_allows_empty_candidate_list(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps({"candidates": []})])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "candidates": [],
+                "extractorVersion": "memory-candidate-v1",
+            },
+        )
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
     def test_openapi_exposes_all_free_talk_generation_routes(self):
         paths = self._app().openapi()["paths"]
 
@@ -1698,15 +1829,23 @@ class FreeTalkApiTests(unittest.TestCase):
             "/api/v1/free-talk/closing",
             "/api/v1/free-talk/expression-recommendations",
             "/api/v1/free-talk/conversation-embeddings",
+            "/api/v1/free-talk/memory-candidates",
+            "/api/v1/free-talk/memory-resolution",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, paths)
+        self.assertNotIn("/api/v1/free-talk/memory-query-embedding", paths)
         self.assertNotIn("/api/v1/free-talk/expression-learning-content", paths)
         self.assertNotIn("/api/v1/free-talk/embeddings", paths)
 
     def test_openapi_exposes_closing_title_contract(self):
         schemas = self._app().openapi()["components"]["schemas"]
 
+        self.assertIn(
+            "extractorVersion",
+            schemas["MemoryCandidatesResponse"]["properties"],
+        )
+        self.assertNotIn("sensitivity", schemas["MemoryCandidate"]["properties"])
         self.assertIn(
             "titleGenerationRequired",
             schemas["FreeTalkClosingRequest"]["properties"],
