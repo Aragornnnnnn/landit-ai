@@ -2052,6 +2052,56 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
+    def test_memory_resolution_rejects_memory_from_another_candidate(self):
+        payload = valid_memory_resolution_payload()
+        payload["candidates"].append(
+            {
+                "candidateIndex": 1,
+                "content": "사용자는 새 직장에 적응 중이다.",
+                "memoryType": "EVENT",
+                "sourceMessageIds": [3002],
+                "observedAt": "2026-08-29T19:20:00+09:00",
+                "comparableMemories": [
+                    {
+                        "memoryId": 88,
+                        "content": "사용자는 새 직장을 시작했다.",
+                        "validFrom": "2026-08-25T20:10:00+09:00",
+                        "validTo": None,
+                        "observedAt": "2026-08-25T20:10:00+09:00",
+                    },
+                ],
+            },
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [88],
+                            },
+                            {
+                                "candidateIndex": 1,
+                                "operation": "ADD",
+                                "supersededMemoryIds": [],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
     def test_memory_resolution_rejects_missing_fields_without_repair(self):
         fake_openai = FakeOpenAI(
             contents=[
