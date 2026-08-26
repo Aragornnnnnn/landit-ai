@@ -15,6 +15,7 @@ from app.free_talk.llm.json_completion import (
 from app.models.conversation import AnswerCoverage, RelationshipTone
 from app.models.free_talk import (
     FreeTalkCharacter,
+    FreeTalkClosingReason,
     FreeTalkClosingRequest,
     FreeTalkClosingResponse,
     FreeTalkInnerThoughtRequest,
@@ -29,6 +30,12 @@ from app.models.free_talk import (
 
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
+_SAFE_CLOSING_AI_MESSAGE = (
+    "I really enjoyed hearing about that. Thanks for sharing!"
+)
+_SAFE_CLOSING_TRANSLATED_MESSAGE = (
+    "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!"
+)
 _PROHIBITED_INNER_THOUGHT_PATTERN = re.compile(
     r"문법|자연스러(?:움|운)|점수|교정|피드백|"
     r"grammar|naturalness|score|correction|feedback",
@@ -179,10 +186,20 @@ def generate_closing(
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
-    if _is_invalid_closing_message(response.aiMessage) or _is_invalid_closing_message(
+    allow_question = payload.closingReason == FreeTalkClosingReason.TIME_LIMIT_REACHED
+    if _is_invalid_closing_message(
+        response.aiMessage,
+        allow_question=allow_question,
+    ) or _is_invalid_closing_message(
         response.translatedMessage,
+        allow_question=allow_question,
     ):
-        raise AiResponseInvalidError("closing message violates policy")
+        response = response.model_copy(
+            update={
+                "aiMessage": _SAFE_CLOSING_AI_MESSAGE,
+                "translatedMessage": _SAFE_CLOSING_TRANSLATED_MESSAGE,
+            },
+        )
     return FreeTalkClosingResponse(
         inferredTitle=_resolve_closing_title(data, payload, settings),
         aiMessage=response.aiMessage,
@@ -447,10 +464,13 @@ def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
     return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
 
 
-def _is_invalid_closing_message(message: str) -> bool:
+def _is_invalid_closing_message(message: str, *, allow_question: bool) -> bool:
     normalized = re.sub(r"\s+", " ", message).strip()
     return (
-        re.search(r"[?？][\s\W_]*$", normalized) is not None
+        (
+            not allow_question
+            and re.search(r"[?？][\s\W_]*$", normalized) is not None
+        )
         or _CLOSING_META_PATTERN.search(normalized) is not None
         or _NEW_TOPIC_CLOSING_PATTERN.search(normalized) is not None
     )
