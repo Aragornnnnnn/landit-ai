@@ -309,7 +309,8 @@ def _contrast_for(
         us.syllable_count == target.syllable_count
         and us.stress_index != target.stress_index
     )
-    if stress_differs and us_spelling == target_spelling:
+    is_stress_only = stress_differs and us_spelling == target_spelling
+    if is_stress_only:
         # 강세 대조는 철자가 같아 보기 두 개가 동일해지므로 강세 음절을 표기한다
         # (스파이크에서 검증한 "stress on the Nth syllable (...)" 형식)
         target_spelling = _stress_marked(target.syllable_respellings, target.stress_index)
@@ -328,7 +329,7 @@ def _contrast_for(
         tier = f"dropped({dropped_reason})"
     elif locale == "EN_AU" and is_bath_word and AU_DROPS_BATH_CONTRASTS:
         tier = "dropped(호주 BATH 정책 — 미국식 모음도 정당한 호주 발음)"
-    error_type = "STRESS" if stress_differs and us_spelling == target_spelling else "PHONEME"
+    error_type = "STRESS" if is_stress_only else "PHONEME"
     review = None
     # AU BATH 정책이 꺼져 있을 때만 검수 표시를 남긴다 (켜져 있으면 이미 제외됨)
     if locale == "EN_AU" and is_bath_word and not AU_DROPS_BATH_CONTRASTS:
