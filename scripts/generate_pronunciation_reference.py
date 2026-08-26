@@ -424,7 +424,7 @@ def to_payload(words: list[ReferenceWord]) -> list[dict]:
             "word": word.word,
             "syllables": word.syllables,
             "stressIndex": word.stress_index,
-            "stressDisplay": word.native_display,
+            # 강세 표시는 FE가 syllables+stressIndex로 조합하므로 별도 필드가 없다
             "pronunciationDisplay": word.native_respelling,
         }
         # minor(계통적 실현 차이)는 판정에 쓰지 않고 검수 CSV에만 남긴다
