@@ -13,6 +13,15 @@ MAX_AUDIO_DURATION_SECONDS = 30.0
 ALIGNMENT_SAMPLE_RATE = 16_000
 _FFMPEG_TIMEOUT_SECONDS = 10.0
 
+# 앞뒤 침묵 제거: -35dB 이하가 0.3초 넘게 이어지는 가장자리 구간을 자른다.
+# 발화 사이 침묵은 건드리지 않는다 (뒤집어서 앞만 자르는 방식을 양방향 적용).
+_EDGE_SILENCE_TRIM_FILTER = (
+    "silenceremove=start_periods=1:start_threshold=-35dB:start_silence=0.3,"
+    "areverse,"
+    "silenceremove=start_periods=1:start_threshold=-35dB:start_silence=0.3,"
+    "areverse"
+)
+
 
 class AudioDecodeError(Exception):
     """오디오 디코드·검증 실패. 원본 데이터는 메시지에 포함하지 않는다."""
@@ -41,7 +50,16 @@ def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
 
         judgment = Path(tmp_dir) / "judgment.wav"
         alignment = Path(tmp_dir) / "alignment.wav"
-        _run_ffmpeg([str(source), str(judgment)])
+        # 판정용은 앞뒤 침묵을 잘라 LLM이 듣는 길이를 줄인다 (지연이 오디오 길이에
+        # 비례한다). 정렬용은 타임스탬프가 앱의 원본 녹음 재생 구간이므로 원본 그대로 둔다.
+        _run_ffmpeg(
+            [
+                str(source),
+                "-af",
+                _EDGE_SILENCE_TRIM_FILTER,
+                str(judgment),
+            ]
+        )
         _run_ffmpeg(
             [
                 str(source),
