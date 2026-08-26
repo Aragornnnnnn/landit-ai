@@ -136,6 +136,10 @@ DROPPED_CONTRAST_WORDS: dict[str, str] = {
     "new": "yod 계열", "knew": "yod 계열", "due": "yod 계열",
     "during": "yod 계열", "duty": "yod 계열", "overdue": "yod 계열",
     "youtube": "yod 계열", "graduation": "yod 계열",
+    # 미국 내 자유 변이 — 양쪽 다 표준이라 대조 불성립 (EN_US 전량 verify-accent 실측)
+    "either": "미국 자유 변이(ee/eye 둘 다 표준)", "neither": "미국 자유 변이",
+    "caffeine": "강세 자유 변이", "details": "강세 자유 변이",
+    "adulting": "약화 모음 표기 차이",
     "requirements": "espeak-quirk(이중모음 표기)",
 }
 
