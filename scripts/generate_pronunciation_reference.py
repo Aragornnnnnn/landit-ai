@@ -418,10 +418,10 @@ def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
 def to_payload(words: list[ReferenceWord]) -> list[dict]:
     payload = []
     for index, word in enumerate(words):
+        # phonemes는 BE 계약에서 제외 (런타임 미사용·표기 혼재). 검수 CSV에는 남긴다.
         item = {
             "order": index + 1,
             "word": word.word,
-            "phonemes": word.phonemes,
             "syllables": word.syllables,
             "stressIndex": word.stress_index,
             "stressDisplay": word.native_display,
