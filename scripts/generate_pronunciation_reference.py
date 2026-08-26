@@ -129,7 +129,13 @@ DROPPED_CONTRAST_WORDS: dict[str, str] = {
     "mall": "espeak-quirk", "launch": "espeak-quirk", "you're": "espeak-quirk",
     "beaten": "espeak-quirk(성문음 표기 깨짐)", "kyoto": "espeak-quirk(고유명사)",
     "video": "espeak-quirk", "videos": "espeak-quirk",
-    "tuned": "yod 융합(choond)이 흔해 양자택일 불성립 — 파일럿 실측",
+    # yod 계열(nyoo/noo): TTS가 문장/단독·미/영 양방향으로 흔들리고 판정도
+    # 불안정하다 (파일럿 실측: tuned·news 반복 실패). 사람 녹음 검증도 없는 유형.
+    "tuned": "yod 계열 — 파일럿 실측 불안정",
+    "news": "yod 계열 — 파일럿 실측 불안정",
+    "new": "yod 계열", "knew": "yod 계열", "due": "yod 계열",
+    "during": "yod 계열", "duty": "yod 계열", "overdue": "yod 계열",
+    "youtube": "yod 계열", "graduation": "yod 계열",
     "requirements": "espeak-quirk(이중모음 표기)",
 }
 
