@@ -132,9 +132,12 @@ DROPPED_CONTRAST_WORDS: dict[str, str] = {
     "requirements": "espeak-quirk(이중모음 표기)",
 }
 
-# EN_AU는 BATH 모음 대조를 판정에 쓰지 않는다. 실제 호주 발음이 미국식 모음(æ)을
-# 유지하는 경우가 많아, 영국 기준을 들이대면 정당한 호주 발음이 오탐이 된다.
-AU_DROPS_BATH_CONTRASTS = True
+# 호주의 BATH 모음은 갈린다: can't/after/path류는 영국처럼 긴 a로 안정적이지만,
+# 비음 앞 소집합(dance/chance/plant…)은 지역에 따라 미국식 æ도 흔하다.
+# 변이가 있는 비음 계열만 AU 판정에서 제외한다 — 정당한 호주 발음을 오탐하지 않기 위해.
+AU_VARIABLE_BATH_WORDS = frozenset(
+    """answer branch chance command dance demand example grant plant sample""".split()
+)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -328,13 +331,11 @@ def _contrast_for(
     dropped_reason = DROPPED_CONTRAST_WORDS.get(word.lower())
     if dropped_reason:
         tier = f"dropped({dropped_reason})"
-    elif locale == "EN_AU" and is_bath_word and AU_DROPS_BATH_CONTRASTS:
-        tier = "dropped(호주 BATH 정책 — 미국식 모음도 정당한 호주 발음)"
+    elif locale == "EN_AU" and word.lower() in AU_VARIABLE_BATH_WORDS:
+        tier = "dropped(호주 변이 BATH — 미국식 모음도 정당한 호주 발음)"
     error_type = "STRESS" if is_stress_only else "PHONEME"
     review = None
-    # AU BATH 정책이 꺼져 있을 때만 검수 표시를 남긴다 (켜져 있으면 이미 제외됨)
-    if locale == "EN_AU" and is_bath_word and not AU_DROPS_BATH_CONTRASTS:
-        review = espeak.BATH_VOWEL_REVIEW_NOTE
+
     return target_spelling, us_spelling, error_type, tier, review
 
 
