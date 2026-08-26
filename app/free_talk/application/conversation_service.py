@@ -194,17 +194,21 @@ def generate_closing(
         response.translatedMessage,
         allow_question=allow_question,
     ):
-        response = response.model_copy(
-            update={
-                "aiMessage": _SAFE_CLOSING_AI_MESSAGE,
-                "translatedMessage": _SAFE_CLOSING_TRANSLATED_MESSAGE,
-            },
-        )
+        response = safe_closing_response()
     return FreeTalkClosingResponse(
         inferredTitle=_resolve_closing_title(data, payload, settings),
         aiMessage=response.aiMessage,
         translatedMessage=response.translatedMessage,
         emotion=response.emotion,
+    )
+
+
+def safe_closing_response() -> FreeTalkClosingResponse:
+    return FreeTalkClosingResponse(
+        inferredTitle=None,
+        aiMessage=_SAFE_CLOSING_AI_MESSAGE,
+        translatedMessage=_SAFE_CLOSING_TRANSLATED_MESSAGE,
+        emotion=None,
     )
 
 

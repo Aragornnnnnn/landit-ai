@@ -1149,6 +1149,63 @@ class FreeTalkApiTests(unittest.TestCase):
             "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!",
         )
 
+    def test_closing_replaces_generation_failure_with_safe_message(self):
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(titleGenerationRequired=True),
+            FakeOpenAI(error=RuntimeError("provider unavailable")),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "inferredTitle": None,
+                "aiMessage": "I really enjoyed hearing about that. Thanks for sharing!",
+                "translatedMessage": "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!",
+                "emotion": None,
+            },
+        )
+
+    def test_closing_replaces_invalid_ai_contract_with_safe_message(self):
+        invalid_contents = (
+            "not json",
+            json.dumps({"translatedMessage": "얘기해 줘서 고마워!"}),
+        )
+
+        for content in invalid_contents:
+            with self.subTest(content=content):
+                response = self._post(
+                    "/api/v1/free-talk/closing",
+                    valid_closing_payload(titleGenerationRequired=True),
+                    FakeOpenAI(contents=[content]),
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["data"],
+                    {
+                        "inferredTitle": None,
+                        "aiMessage": (
+                            "I really enjoyed hearing about that. Thanks for sharing!"
+                        ),
+                        "translatedMessage": (
+                            "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!"
+                        ),
+                        "emotion": None,
+                    },
+                )
+
+    def test_closing_does_not_replace_unexpected_error_with_safe_message(self):
+        with patch(
+            "app.api.free_talk.generate_closing",
+            side_effect=RuntimeError("unexpected bug"),
+        ), self.assertRaisesRegex(RuntimeError, "unexpected bug"):
+            make_client(self._app()).post(
+                "/api/v1/free-talk/closing",
+                json=valid_closing_payload(),
+            )
+
     def test_time_limit_closing_allows_question_form_message(self):
         response = self._post(
             "/api/v1/free-talk/closing",
