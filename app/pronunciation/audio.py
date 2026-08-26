@@ -13,7 +13,7 @@ MAX_AUDIO_DURATION_SECONDS = 30.0
 ALIGNMENT_SAMPLE_RATE = 16_000
 _FFMPEG_TIMEOUT_SECONDS = 10.0
 
-# 앞뒤 침묵 제거: -35dB 이하가 0.3초 넘게 이어지는 가장자리 구간을 자른다.
+# 앞뒤 침묵 제거: -35dB (="얼마나 조용해야 침묵으로 칠 거냐"의 기준) 이하가 0.3초 넘게 이어지는 가장자리 구간을 자른다.
 # 발화 사이 침묵은 건드리지 않는다 (뒤집어서 앞만 자르는 방식을 양방향 적용).
 _EDGE_SILENCE_TRIM_FILTER = (
     "silenceremove=start_periods=1:start_threshold=-35dB:start_silence=0.3,"
