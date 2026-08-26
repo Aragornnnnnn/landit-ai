@@ -140,6 +140,7 @@ DROPPED_CONTRAST_WORDS: dict[str, str] = {
     "either": "미국 자유 변이(ee/eye 둘 다 표준)", "neither": "미국 자유 변이",
     "caffeine": "강세 자유 변이", "details": "강세 자유 변이",
     "adulting": "약화 모음 표기 차이",
+    "started": "r+flap 복합 — 생성·판정 반복 실패 (전량 실측)",
     "requirements": "espeak-quirk(이중모음 표기)",
 }
 
