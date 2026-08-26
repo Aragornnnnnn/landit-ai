@@ -125,7 +125,21 @@ def respell(ipa: str) -> str | None:
     parsed = parse_ipa(ipa)
     if parsed is None:
         return None
-    return "·".join(parsed.syllable_respellings)
+    return display_respelling(parsed.syllable_respellings)
+
+
+def display_respelling(syllable_respellings: list[str]) -> str:
+    """음절 respelling을 화면용 문자열로 잇는다.
+
+    판정 묘사(userDisplay)가 쓰는 스타일("nuh·ssing")과 맞도록 어미 ihng은
+    ing으로 정규화한다 — 원어민/유저 표기를 나란히 비교하는 카드에서 표기 방식이
+    다르면 그 자체가 거짓 차이로 보인다.
+    """
+    parts = [
+        part[:-4] + "ing" if part.endswith("ihng") else part
+        for part in syllable_respellings
+    ]
+    return "·".join(parts)
 
 
 def _tokenize(ipa: str) -> list[tuple[str, str, str]] | None:

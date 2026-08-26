@@ -145,6 +145,7 @@ class ReferenceWord:
     syllables: list[str]
     stress_index: int
     native_display: str
+    native_respelling: str  # 발음 오류 카드에서 userDisplay와 비교하는 원어민 발음 표기
     review_reason: str | None
     contrast_expected: str | None  # 대상 억양 발음 respelling (보기 초안)
     contrast_other: str | None  # 미국식 발음 respelling (보기 초안)
@@ -352,6 +353,7 @@ def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
                     syllables=[word],
                     stress_index=0,
                     native_display=word,
+                    native_respelling=spelled,
                     review_reason=f"숫자 단어 — 판정 제외, 정렬은 '{spelled}'",
                     contrast_expected=None,
                     contrast_other=None,
@@ -389,6 +391,12 @@ def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
             if contrast_review:
                 reviews.append(contrast_review)
 
+        pronunciation = espeak.get_pronunciation(word, locale)
+        native_respelling = (
+            espeak.display_respelling(pronunciation.syllable_respellings)
+            if pronunciation is not None
+            else word
+        )
         results.append(
             ReferenceWord(
                 word=word,
@@ -396,6 +404,7 @@ def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
                 syllables=syllables,
                 stress_index=stress_index,
                 native_display="·".join(syllables),
+                native_respelling=native_respelling,
                 review_reason="; ".join(reviews) or None,
                 contrast_expected=contrast_expected,
                 contrast_other=contrast_other,
@@ -416,6 +425,7 @@ def to_payload(words: list[ReferenceWord]) -> list[dict]:
             "syllables": word.syllables,
             "stressIndex": word.stress_index,
             "nativeDisplay": word.native_display,
+            "nativeRespelling": word.native_respelling,
         }
         # minor(계통적 실현 차이)는 판정에 쓰지 않고 검수 CSV에만 남긴다
         if word.contrast_expected and word.contrast_tier == "major":
@@ -474,6 +484,7 @@ def main() -> None:
                     "order": index + 1,
                     "word": word.word,
                     "nativeDisplay": word.native_display,
+                    "nativeRespelling": word.native_respelling,
                     "stressIndex": word.stress_index,
                     "phonemes": word.phonemes,
                     "contrastExpected": word.contrast_expected or "",
