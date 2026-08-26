@@ -42,6 +42,101 @@ FUNCTION_WORDS = frozenset(
 
 LOCALES = ("EN_US", "EN_GB", "EN_AU")
 
+# ── 검수 확정 데이터 (2026-08-26, 981개 전량 검수) ─────────────────────────────
+# 자동 분리가 실패한 단어의 수동 음절 분리. 철자를 보존하는 분할만 쓴다.
+SYLLABLE_OVERRIDES: dict[str, list[str]] = {
+    "ac": ["A", "C"],
+    "actually": ["ac", "tu", "al", "ly"],
+    "advertisement": ["ad", "ver", "tise", "ment"],
+    "area": ["a", "re", "a"],
+    "basically": ["ba", "sic", "ally"],
+    "cafeteria": ["ca", "fe", "te", "ri", "a"],
+    "chaotic": ["cha", "o", "tic"],
+    "chloe": ["Chlo", "e"],
+    "chocolate": ["choc", "olate"],
+    "chronically": ["chron", "ical", "ly"],
+    "completely": ["com", "plete", "ly"],
+    "definitely": ["def", "i", "nite", "ly"],
+    "lifesaver": ["life", "sa", "ver"],
+    "shameless": ["shame", "less"],
+    "curiosity": ["cu", "ri", "os", "i", "ty"],
+    "difference": ["dif", "ference"],
+    "different": ["dif", "ferent"],
+    "doable": ["do", "a", "ble"],
+    "earlier": ["ear", "li", "er"],
+    "easier": ["eas", "i", "er"],
+    "every": ["ev", "ery"],
+    "everyone's": ["ev", "ery", "one's"],
+    "everything": ["ev", "ery", "thing"],
+    "experiences": ["ex", "pe", "ri", "en", "ces"],
+    "gatekeeping": ["gate", "keep", "ing"],
+    "goosebumps": ["goose", "bumps"],
+    "graduation": ["grad", "u", "a", "tion"],
+    "happier": ["hap", "pi", "er"],
+    "homework": ["home", "work"],
+    "hour": ["hour"],
+    "hours": ["hours"],
+    "iceland": ["Ice", "land"],
+    "idea": ["i", "de", "a"],
+    "interesting": ["in", "teres", "ting"],
+    "it'd": ["it", "'d"],
+    "it'll": ["it", "'ll"],
+    "korean": ["Ko", "re", "an"],
+    "kyoto": ["Ky", "o", "to"],
+    "layover": ["lay", "o", "ver"],
+    "mmm": ["mmm"],
+    "obviously": ["ob", "vi", "ous", "ly"],
+    "our": ["our"],
+    "pdf": ["P", "D", "F"],
+    "period": ["pe", "ri", "od"],
+    "player": ["play", "er"],
+    "quiet": ["qui", "et"],
+    "reality": ["re", "al", "i", "ty"],
+    "relatively": ["rel", "a", "tive", "ly"],
+    "requirements": ["re", "quire", "ments"],
+    "scenario": ["sce", "na", "ri", "o"],
+    "serious": ["se", "ri", "ous"],
+    "seriously": ["se", "ri", "ous", "ly"],
+    "shh": ["shh"],
+    "situationship": ["sit", "u", "a", "tion", "ship"],
+    "takoyaki": ["ta", "ko", "ya", "ki"],
+    "technically": ["tech", "nical", "ly"],
+    "unique": ["u", "nique"],
+    "unusually": ["un", "u", "su", "al", "ly"],
+    "usually": ["u", "su", "al", "ly"],
+    "video": ["vi", "de", "o"],
+    "videos": ["vi", "de", "os"],
+    "whatsoever": ["what", "so", "ev", "er"],
+}
+
+# 억양 대조에서 제외한 단어. 이유:
+#   happy-tensing — 어말 -y를 영국이 ih로 낸다는 espeak 표기는 낡은 RP라 현대 영국
+#     발음(ee)과 다르다. 학습자에게 틀린 기준을 들이대게 되므로 제외.
+#   rhotic-only — r 유무만 다른 경우는 계통 차이라 minor로 걸러야 하나 부수 모음
+#     표기가 달라 major로 새어 들어온 것들.
+#   espeak-quirk — espeak 표기 오류거나 실제 표준 발음과 다른 것.
+DROPPED_CONTRAST_WORDS: dict[str, str] = {
+    "alley": "happy-tensing", "early": "happy-tensing", "every": "happy-tensing",
+    "perfectly": "happy-tensing", "really": "happy-tensing",
+    "before": "rhotic-only", "december": "rhotic-only", "layover": "rhotic-only",
+    "recharge": "rhotic-only", "record": "rhotic-only", "report": "rhotic-only",
+    "sources": "rhotic-only", "repair": "rhotic-only",
+    "possible": "약화 모음 표기 차이", "possibly": "약화 모음 표기 차이",
+    "bottom": "약화 모음 표기 차이", "boxes": "약화 모음 표기 차이",
+    "chaotic": "약화 모음 표기 차이", "obsessed": "약화 모음 표기 차이",
+    "moral": "약화 모음 표기 차이", "scenario": "약화 모음 표기 차이",
+    "library": "약화 모음 표기 차이", "curry": "hurry-furry 병합(불안정)",
+    "mall": "espeak-quirk", "launch": "espeak-quirk", "you're": "espeak-quirk",
+    "beaten": "espeak-quirk(성문음 표기 깨짐)", "kyoto": "espeak-quirk(고유명사)",
+    "video": "espeak-quirk", "videos": "espeak-quirk",
+    "requirements": "espeak-quirk(이중모음 표기)",
+}
+
+# EN_AU는 BATH 모음 대조를 판정에 쓰지 않는다. 실제 호주 발음이 미국식 모음(æ)을
+# 유지하는 경우가 많아, 영국 기준을 들이대면 정당한 호주 발음이 오탐이 된다.
+AU_DROPS_BATH_CONTRASTS = True
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ReferenceWord:
@@ -84,6 +179,15 @@ _BATH_WORDS = frozenset(
 )
 
 
+def _stress_marked(syllables: list[str], stress_index: int) -> str:
+    marked = [
+        part.upper() if index == stress_index else part
+        for index, part in enumerate(syllables)
+    ]
+    ordinal = {0: "1st", 1: "2nd", 2: "3rd"}.get(stress_index, f"{stress_index + 1}th")
+    return f"stress on the {ordinal} syllable ({'·'.join(marked)})"
+
+
 def _normalize_for_tier(ipa: str) -> str:
     normalized = ipa
     for source, target in _MINOR_IPA_NORMALIZATION:
@@ -108,26 +212,65 @@ def _cmudict_entries() -> dict:
     return _CMUDICT_CACHE
 
 
+def _resolve_syllables(word: str, syllable_count: int) -> tuple[list[str], str | None]:
+    """검수 확정 분리표 → n't 규칙 → 자동 분리 순으로 음절을 정한다."""
+    override = SYLLABLE_OVERRIDES.get(word.lower())
+    if override is not None:
+        return override, None
+    from app.pronunciation.reference.syllables import split_with_nt_suffix
+
+    split = split_with_nt_suffix(word, syllable_count) or split_syllables(
+        word, syllable_count
+    )
+    if split is None:
+        return [word], "철자 음절 분리 실패 — 수동 분리 필요"
+    return split, None
+
+
 def _cmudict_word(word: str, function_word: bool):
     entries = _cmudict_entries()
     pronunciations = entries.get(word.lower().strip("'"), [])
     phonemes = pronunciations[0] if pronunciations else []
+    if not phonemes:
+        # cmudict에 없는 신조어·고유명사(adulting, hoodie 등)는 espeak 미국
+        # 발음으로 대체한다 (981개 검수에서 42개 확인)
+        ipa, review, syllables, stress_index = _espeak_word(
+            word, "EN_US", function_word
+        )
+        if ipa:
+            built = build_pronunciation(
+                word=word, phonemes=[], syllables=syllables,
+                function_word=function_word,
+            )
+            built = type(built)(
+                word=word, phonemes=ipa, syllables=syllables,
+                stress_index=stress_index,
+                native_display="·".join(syllables),
+                review_reason=review,
+            )
+            return built, review
+        return build_pronunciation(
+            word=word, phonemes=[], syllables=[word],
+            function_word=function_word,
+        ), "발음 사전에 없는 단어"
+
     syllable_count = sum(
         1 for phoneme in phonemes if phoneme.rstrip("0123456789")
         in {"AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY",
             "OW", "OY", "UH", "UW"}
     )
-    split = split_syllables(word, syllable_count) if syllable_count else None
-    if split is None:
-        split = [word]
-        review = (
-            "발음 사전에 없는 단어" if not phonemes else "철자 음절 분리 실패 — 수동 분리 필요"
-        )
-    else:
-        review = None
+    split, review = _resolve_syllables(word, syllable_count)
     built = build_pronunciation(
         word=word, phonemes=phonemes, syllables=split, function_word=function_word
     )
+    # 검수 분리표가 발음 음절 수와 다른 표기를 확정한 경우(chocolate 등)는
+    # 불일치 검수 플래그를 무시한다
+    if word.lower() in SYLLABLE_OVERRIDES:
+        return type(built)(
+            word=built.word, phonemes=built.phonemes, syllables=built.syllables,
+            stress_index=built.stress_index, native_display=built.native_display,
+            review_reason=None,
+        ), review
     return built, review or built.review_reason
 
 
@@ -136,11 +279,7 @@ def _espeak_word(word: str, locale: str, function_word: bool):
     pronunciation = espeak.get_pronunciation(word, locale)
     if pronunciation is None:
         return "", "espeak 발음 파싱 실패 — 수동 입력 필요", [word], 0
-    split = split_syllables(word, pronunciation.syllable_count)
-    review = None
-    if split is None:
-        split = [word]
-        review = "철자 음절 분리 실패 — 수동 분리 필요"
+    split, review = _resolve_syllables(word, pronunciation.syllable_count)
     return (
         pronunciation.ipa,
         review,
@@ -170,6 +309,11 @@ def _contrast_for(
         us.syllable_count == target.syllable_count
         and us.stress_index != target.stress_index
     )
+    if stress_differs and us_spelling == target_spelling:
+        # 강세 대조는 철자가 같아 보기 두 개가 동일해지므로 강세 음절을 표기한다
+        # (스파이크에서 검증한 "stress on the Nth syllable (...)" 형식)
+        target_spelling = _stress_marked(target.syllable_respellings, target.stress_index)
+        us_spelling = _stress_marked(us.syllable_respellings, us.stress_index)
     is_bath_word = word.lower() in _BATH_WORDS
     tier = (
         "major"
@@ -178,11 +322,16 @@ def _contrast_for(
         or _normalize_for_tier(us.ipa) != _normalize_for_tier(target.ipa)
         else "minor"
     )
+    # 검수 확정: 제외 목록과 AU의 BATH 정책을 적용한다
+    dropped_reason = DROPPED_CONTRAST_WORDS.get(word.lower())
+    if dropped_reason:
+        tier = f"dropped({dropped_reason})"
+    elif locale == "EN_AU" and is_bath_word and AU_DROPS_BATH_CONTRASTS:
+        tier = "dropped(호주 BATH 정책 — 미국식 모음도 정당한 호주 발음)"
     error_type = "STRESS" if stress_differs and us_spelling == target_spelling else "PHONEME"
     review = None
-    # espeak en-au는 영국을 따르지만 실제 호주 발음은 BATH 모음에서 æ를 유지하는
-    # 경우가 많아 검수 대상으로 표시한다.
-    if locale == "EN_AU" and is_bath_word:
+    # AU BATH 정책이 꺼져 있을 때만 검수 표시를 남긴다 (켜져 있으면 이미 제외됨)
+    if locale == "EN_AU" and is_bath_word and not AU_DROPS_BATH_CONTRASTS:
         review = espeak.BATH_VOWEL_REVIEW_NOTE
     return target_spelling, us_spelling, error_type, tier, review
 
@@ -269,9 +418,14 @@ def to_payload(words: list[ReferenceWord]) -> list[dict]:
         }
         # minor(계통적 실현 차이)는 판정에 쓰지 않고 검수 CSV에만 남긴다
         if word.contrast_expected and word.contrast_tier == "major":
+            is_stress = word.contrast_expected.startswith("stress on")
             item["accentContrast"] = {
-                "expected": f"sounds like 「{word.contrast_expected}」",
-                "other": f"sounds like 「{word.contrast_other}」",
+                "expected": word.contrast_expected
+                if is_stress
+                else f"sounds like 「{word.contrast_expected}」",
+                "other": word.contrast_other
+                if is_stress
+                else f"sounds like 「{word.contrast_other}」",
                 "errorType": word.contrast_error_type,
             }
         payload.append(item)

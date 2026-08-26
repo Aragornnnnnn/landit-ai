@@ -27,7 +27,7 @@ _IPA_VOWELS: tuple[tuple[str, str], ...] = (
     ("əʊ", "oh"), ("oʊ", "oh"), ("ɪə", "eer"), ("eə", "air"), ("ʊə", "oor"),
     ("iː", "ee"), ("ɑː", "ah"), ("ɔː", "aw"), ("uː", "oo"), ("ɜː", "er"),
     ("ɪ", "ih"), ("ɛ", "eh"), ("e", "eh"), ("æ", "a"), ("a", "a"),
-    ("ɒ", "o"), ("ʊ", "uu"), ("ʌ", "uh"), ("ə", "uh"), ("ɚ", "er"),
+    ("ɒ", "o"), ("ɔ", "aw"), ("ʊ", "uu"), ("ʌ", "uh"), ("ə", "uh"), ("ɚ", "er"),
     ("ɐ", "uh"), ("ᵻ", "ih"), ("i", "ee"), ("u", "oo"),
 )
 _IPA_CONSONANTS: tuple[tuple[str, str], ...] = (
@@ -139,6 +139,11 @@ def _tokenize(ipa: str) -> list[tuple[str, str, str]] | None:
             position += 1
             continue
         if character in "ː̩̆‿":
+            position += 1
+            continue
+        # "iəʊ"(video의 i+əʊ)는 iə 이중모음이 아니라 i와 əʊ 두 핵이다
+        if ipa.startswith("iəʊ", position) or ipa.startswith("uəʊ", position):
+            tokens.append(("vowel", ipa[position], "ee" if ipa[position] == "i" else "oo"))
             position += 1
             continue
         matched = False
