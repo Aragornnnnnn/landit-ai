@@ -17,15 +17,21 @@ def split_syllables(word: str, syllable_count: int) -> list[str] | None:
     """철자를 syllable_count개로 나눈다. 나눌 수 없으면 None을 반환한다.
 
     모음 글자 덩어리를 음절 핵으로 보고, 핵 사이의 자음은 마지막 하나만 다음 음절의
-    onset으로 넘긴다("hiking" → "hik" + "ing"). 묵음 e는 앞 음절에 흡수한다.
+    onset으로 넘긴다("hiking" → "hik" + "ing"). 묵음 e 흡수, -es/-ed의 e 흡수,
+    -ing 앞 모음 분리("doing" → "do"+"ing") 등 여러 후보를 만들어 발음 음절 수와
+    맞는 것을 고른다.
     """
     if syllable_count <= 0:
         return None
     if syllable_count == 1:
         return [word]
 
-    nuclei = _nuclei(word)
-    if len(nuclei) != syllable_count:
+    nuclei = None
+    for candidate in _nuclei_candidates(word):
+        if len(candidate) == syllable_count:
+            nuclei = candidate
+            break
+    if nuclei is None:
         return None
 
     boundaries = []
@@ -62,18 +68,47 @@ def _splits_digraph(word: str, boundary: int) -> bool:
     return word[boundary - 1 : boundary + 1].lower() in _DIGRAPHS
 
 
-def _nuclei(word: str) -> list[tuple[int, int]]:
-    """음절 핵이 되는 모음 글자 덩어리의 (시작, 끝) 위치."""
-    clusters = [(match.start(), match.end()) for match in _VOWEL_CLUSTER.finditer(word)]
-    if len(clusters) <= 1:
-        return clusters
+def _nuclei_candidates(word: str) -> list[list[tuple[int, int]]]:
+    """가능한 음절 핵(모음 덩어리) 구성을 그럴듯한 순서로 나열한다.
 
-    last_start, last_end = clusters[-1]
-    is_final_e = (
-        last_end == len(word)
-        and word[last_start:last_end].lower() == "e"
-        and last_start > 0
-        and word[last_start - 1].lower() not in _VOWEL_LETTERS
-    )
-    # 묵음 e("like", "available")는 독립 음절이 아니므로 핵에서 뺀다
-    return clusters[:-1] if is_final_e else clusters
+    영어 철자는 발음 음절과 1:1이 아니므로("maybe"의 끝 e는 소리 나고 "like"의 e는
+    묵음) 변형을 만들어 발음 음절 수와 대조해 고른다.
+    """
+    raw = [(match.start(), match.end()) for match in _VOWEL_CLUSTER.finditer(word)]
+    candidates = [raw]
+
+    # 묵음 e: "like", "available"의 어말 e
+    last = raw[-1] if raw else None
+    if (
+        len(raw) > 1
+        and last[1] == len(word)
+        and word[last[0]:last[1]].lower() == "e"
+        and word[last[0] - 1].lower() not in _VOWEL_LETTERS
+    ):
+        candidates.append(raw[:-1])
+
+    # -es/-ed의 묵음 e: "survives", "minutes", "turned"
+    if (
+        len(raw) > 1
+        and last is not None
+        and last[1] == len(word) - 1
+        and word[last[0]:last[1]].lower() == "e"
+        and word[-1].lower() in "sd"
+        and word[last[0] - 1].lower() not in _VOWEL_LETTERS
+    ):
+        candidates.append(raw[:-1])
+
+    # -ing 앞 모음 분리: "doing"(oi), "staying"(ayi)처럼 ing의 i가
+    # 앞 모음과 한 덩어리로 붙은 경우 ing를 독립 음절로 떼어낸다
+    if word.lower().endswith("ing") and len(word) > 3:
+        ing_vowel = len(word) - 3
+        for base in list(candidates):
+            for index, (start, end) in enumerate(base):
+                if start < ing_vowel < end:
+                    split = (
+                        base[:index]
+                        + [(start, ing_vowel), (ing_vowel, end)]
+                        + base[index + 1:]
+                    )
+                    candidates.append(split)
+    return candidates

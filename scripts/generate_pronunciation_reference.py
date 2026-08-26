@@ -54,16 +54,61 @@ class ReferenceWord:
     contrast_expected: str | None  # 대상 억양 발음 respelling (보기 초안)
     contrast_other: str | None  # 미국식 발음 respelling (보기 초안)
     contrast_error_type: str | None  # PHONEME | STRESS
+    contrast_tier: str | None  # major(판정 사용) | minor(참고용)
+
+
+# 미↔영의 계통적 실현 차이(r 발음, LOT/GOAT 모음 등)를 동일시하는 정규화.
+# 정규화 후에도 다르면 어휘·flap·BATH·강세 같은 '가르칠 만한' 차이(major)로 본다.
+# 100문장 실측에서 대조 80개 중 대부분이 sorry/what/here류 계통 차이 스팸이었고,
+# 이런 미세 차이는 양자택일 판별이 검증된 유형(water/can't/tomato/schedule/
+# advertisement)에 들지 않는다.
+_MINOR_IPA_NORMALIZATION: tuple[tuple[str, str], ...] = (
+    ("ˈ", ""), ("ˌ", ""), ("ː", ""),
+    ("ɚ", "ə"),  # 미국식 r색 슈와
+    ("aɪə", "aɪ"), ("aʊə", "aʊ"), ("iə", "ɪ"), ("eə", "ɛ"), ("ʊə", "ʊ"),
+    ("ɪə", "ɪ"),  # 중심 이중모음 = 모음+r의 비rhotic 실현
+    ("əʊ", "oʊ"),  # GOAT 모음 표기 차이
+    ("ɒ", "ɑ"), ("ʌ", "ɑ"),  # LOT/STRUT 실현 차이 (what/not/got/sorry류)
+    ("æ", "a"), ("ɐ", "ə"),  # espeak이 미/영에서 같은 모음을 다르게 적는 표기 차이
+    ("ɹ", ""),  # rhotic r 유무
+)
+
+
+# BATH 모음 단어: 미국식 æ ↔ 영국식 ɑ(ː)로 갈리는 대표 어휘. espeak이 이들을
+# ɑː(can't)와 a(after, dance)로 비일관되게 적어 기호만으로는 TRAP(계통 차이)과
+# 구분할 수 없으므로 목록으로 명시해 major로 유지한다.
+_BATH_WORDS = frozenset(
+    """after afternoon answer ask aunt bath branch brass can't cast castle chance
+    class command dance demand draft example fast glass grant grass half laugh
+    last pass past path plant rather sample shan't staff task vast""".split()
+)
+
+
+def _normalize_for_tier(ipa: str) -> str:
+    normalized = ipa
+    for source, target in _MINOR_IPA_NORMALIZATION:
+        normalized = normalized.replace(source, target)
+    return normalized
 
 
 def tokenize(sentence: str) -> list[str]:
     return re.findall(r"[A-Za-z']+", sentence)
 
 
-def _cmudict_word(word: str, function_word: bool):
-    import cmudict
+_CMUDICT_CACHE: dict | None = None
 
-    entries = cmudict.dict()
+
+def _cmudict_entries() -> dict:
+    global _CMUDICT_CACHE
+    if _CMUDICT_CACHE is None:
+        import cmudict
+
+        _CMUDICT_CACHE = cmudict.dict()
+    return _CMUDICT_CACHE
+
+
+def _cmudict_word(word: str, function_word: bool):
+    entries = _cmudict_entries()
     pronunciations = entries.get(word.lower().strip("'"), [])
     phonemes = pronunciations[0] if pronunciations else []
     syllable_count = sum(
@@ -103,31 +148,42 @@ def _espeak_word(word: str, locale: str, function_word: bool):
     )
 
 
-def _contrast_for(word: str, locale: str) -> tuple[str | None, str | None, str | None, str | None]:
-    """대상 억양과 반대 진영(미↔영)의 발음이 다르면 양자택일 보기 초안을 만든다."""
+def _contrast_for(
+    word: str, locale: str
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    """대상 억양과 반대 진영(미↔영)의 발음이 다르면 양자택일 보기 초안을 만든다.
+
+    반환: (기대 respelling, 반대 respelling, 오류 유형, 등급, 검수 사유)
+    """
     other_locale = "EN_GB" if locale == "EN_US" else "EN_US"
     us = espeak.get_pronunciation(word, other_locale)
     target = espeak.get_pronunciation(word, locale)
     if us is None or target is None:
-        return None, None, None, None
+        return None, None, None, None, None
     us_spelling = "·".join(us.syllable_respellings)
     target_spelling = "·".join(target.syllable_respellings)
     if us_spelling == target_spelling and us.stress_index == target.stress_index:
-        return None, None, None, None
+        return None, None, None, None, None
 
-    error_type = (
-        "STRESS"
-        if us.syllable_count == target.syllable_count
+    stress_differs = (
+        us.syllable_count == target.syllable_count
         and us.stress_index != target.stress_index
-        and us_spelling == target_spelling
-        else "PHONEME"
     )
+    is_bath_word = word.lower() in _BATH_WORDS
+    tier = (
+        "major"
+        if stress_differs
+        or is_bath_word
+        or _normalize_for_tier(us.ipa) != _normalize_for_tier(target.ipa)
+        else "minor"
+    )
+    error_type = "STRESS" if stress_differs and us_spelling == target_spelling else "PHONEME"
     review = None
-    # BATH 모음: 미국식 æ가 영국식 ɑː로 갈리는 단어. espeak en-au는 영국을 따르지만
-    # 실제 호주 발음은 æ를 유지하는 경우가 많아 검수 대상으로 표시한다.
-    if locale == "EN_AU" and "ɑː" in target.ipa and "æ" in us.ipa:
+    # espeak en-au는 영국을 따르지만 실제 호주 발음은 BATH 모음에서 æ를 유지하는
+    # 경우가 많아 검수 대상으로 표시한다.
+    if locale == "EN_AU" and is_bath_word:
         review = espeak.BATH_VOWEL_REVIEW_NOTE
-    return target_spelling, us_spelling, error_type, review
+    return target_spelling, us_spelling, error_type, tier, review
 
 
 def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
@@ -150,11 +206,15 @@ def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
             if review:
                 reviews.append(review)
 
-        contrast_expected = contrast_other = contrast_type = None
+        contrast_expected = contrast_other = contrast_type = contrast_tier = None
         if not function_word:
-            contrast_expected, contrast_other, contrast_type, contrast_review = (
-                _contrast_for(word, locale)
-            )
+            (
+                contrast_expected,
+                contrast_other,
+                contrast_type,
+                contrast_tier,
+                contrast_review,
+            ) = _contrast_for(word, locale)
             if contrast_review:
                 reviews.append(contrast_review)
 
@@ -169,6 +229,7 @@ def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
                 contrast_expected=contrast_expected,
                 contrast_other=contrast_other,
                 contrast_error_type=contrast_type,
+                contrast_tier=contrast_tier,
             )
         )
     return results
@@ -185,7 +246,8 @@ def to_payload(words: list[ReferenceWord]) -> list[dict]:
             "stressIndex": word.stress_index,
             "nativeDisplay": word.native_display,
         }
-        if word.contrast_expected:
+        # minor(계통적 실현 차이)는 판정에 쓰지 않고 검수 CSV에만 남긴다
+        if word.contrast_expected and word.contrast_tier == "major":
             item["accentContrast"] = {
                 "expected": f"sounds like 「{word.contrast_expected}」",
                 "other": f"sounds like 「{word.contrast_other}」",
@@ -241,6 +303,7 @@ def main() -> None:
                     "contrastExpected": word.contrast_expected or "",
                     "contrastOther": word.contrast_other or "",
                     "contrastType": word.contrast_error_type or "",
+                    "contrastTier": word.contrast_tier or "",
                     "reviewReason": word.review_reason or "",
                 }
             )
@@ -256,7 +319,7 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(review_rows)
 
-    contrast_count = sum(1 for row in review_rows if row["contrastExpected"])
+    contrast_count = sum(1 for row in review_rows if row["contrastTier"] == "major")
     needs_review = [row for row in review_rows if row["reviewReason"]]
     for row in review_rows:
         marker = "검수" if row["reviewReason"] else ("대조" if row["contrastExpected"] else "  ")

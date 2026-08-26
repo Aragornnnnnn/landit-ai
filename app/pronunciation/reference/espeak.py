@@ -13,12 +13,16 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 
 _ESPEAK_VOICE = {"EN_US": "en-us", "EN_GB": "en-gb", "EN_AU": "en-au"}
 _ESPEAK_TIMEOUT_SECONDS = 10.0
 
 # 이중모음을 단모음보다 먼저 매칭해야 한다 (긴 것 우선)
 _IPA_VOWELS: tuple[tuple[str, str], ...] = (
+    # espeak 영국 발음이 here/near/tired를 iə/aɪə로 적지만 실제로는 한 음절이다
+    ("aɪə", "eyer"), ("aʊə", "ower"), ("iːə", "eer"), ("uːə", "oor"),
+    ("iə", "eer"), ("uə", "oor"),
     ("eɪ", "ay"), ("aɪ", "eye"), ("ɔɪ", "oy"), ("aʊ", "ow"),
     ("əʊ", "oh"), ("oʊ", "oh"), ("ɪə", "eer"), ("eə", "air"), ("ʊə", "oor"),
     ("iː", "ee"), ("ɑː", "ah"), ("ɔː", "aw"), ("uː", "oo"), ("ɜː", "er"),
@@ -55,6 +59,7 @@ def espeak_available() -> bool:
     return shutil.which("espeak-ng") is not None
 
 
+@lru_cache(maxsize=4096)
 def get_pronunciation(word: str, locale: str) -> IpaPronunciation | None:
     """단어 하나의 IPA 발음을 얻는다. 파싱 불가면 None."""
     ipa = _run_espeak(word, locale)

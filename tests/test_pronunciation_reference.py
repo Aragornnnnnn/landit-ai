@@ -23,6 +23,19 @@ class SyllableSplitTests(unittest.TestCase):
         # 철자 모음 덩어리 수와 발음 음절 수가 다르면 검수 대상이다
         self.assertIsNone(split_syllables("advertisement", 4))
 
+    def test_final_e_is_kept_when_it_sounds(self):
+        # "maybe"의 e는 소리 나고 "circle"의 le는 음절이다
+        self.assertEqual(split_syllables("maybe", 2), ["may", "be"])
+        self.assertEqual(split_syllables("circle", 2), ["circ", "le"])
+
+    def test_silent_e_in_es_ed_suffix_is_absorbed(self):
+        self.assertEqual(split_syllables("survives", 2), ["sur", "vives"])
+        self.assertEqual(split_syllables("minutes", 2), ["mi", "nutes"])
+
+    def test_ing_after_vowel_becomes_its_own_syllable(self):
+        self.assertEqual(split_syllables("doing", 2), ["do", "ing"])
+        self.assertEqual(split_syllables("staying", 2), ["stay", "ing"])
+
 
 class IpaParseTests(unittest.TestCase):
     # espeak-ng 실측 출력 기반
