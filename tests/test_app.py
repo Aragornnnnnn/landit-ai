@@ -215,7 +215,11 @@ class ExceptionHandlerTests(unittest.TestCase):
 
         output = "\n".join(captured_logs.output)
         self.assertEqual(response.status_code, 503)
-        self.assertIn("Handled server error.", output)
+        self.assertIn("workflow=ai_request_failed", output)
+        self.assertIn("endpoint=/test/api-exception", output)
+        self.assertIn("errorCode=AI_GENERATION_FAILED", output)
+        self.assertIn("statusCode=503", output)
+        self.assertIn("provider=openrouter", output)
         self.assertIn("Traceback", output)
         self.assertIn("ApiException: AI 생성에 실패했습니다.", output)
         self.assertEqual(
@@ -229,6 +233,62 @@ class ExceptionHandlerTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_ai_response_failures_are_captured_by_sentry_once(self):
+        for error_code, status_code in (
+            (ErrorCode.AI_RESPONSE_INVALID, 502),
+            (ErrorCode.AI_GENERATION_FAILED, 503),
+        ):
+            with self.subTest(error_code=error_code):
+                app = create_app(make_settings())
+                expected_exception = ApiException(status_code, error_code)
+
+                @app.get(f"/test/{error_code.value.lower()}")
+                def raise_ai_exception():
+                    raise expected_exception
+
+                with (
+                    patch(
+                        "app.common.exception_handlers.sentry_sdk.capture_exception",
+                    ) as capture_exception,
+                    self.assertLogs("uvicorn.error", level="ERROR"),
+                ):
+                    response = make_client(
+                        app,
+                        raise_server_exceptions=False,
+                    ).get(f"/test/{error_code.value.lower()}")
+
+                self.assertEqual(response.status_code, status_code)
+                capture_exception.assert_called_once_with(
+                    expected_exception,
+                    tags={
+                        "workflow": "ai_request_failed",
+                        "endpoint": f"/test/{error_code.value.lower()}",
+                        "error_code": error_code.value,
+                        "status_code": str(status_code),
+                        "provider": "openrouter",
+                    },
+                )
+
+    def test_other_handled_server_errors_are_not_captured_by_sentry(self):
+        app = create_app(make_settings())
+
+        @app.get("/test/internal-server-error")
+        def raise_internal_server_error():
+            raise ApiException(500, ErrorCode.INTERNAL_SERVER_ERROR)
+
+        with (
+            patch(
+                "app.common.exception_handlers.sentry_sdk.capture_exception",
+            ) as capture_exception,
+            self.assertLogs("uvicorn.error", level="ERROR"),
+        ):
+            response = make_client(app, raise_server_exceptions=False).get(
+                "/test/internal-server-error",
+            )
+
+        self.assertEqual(response.status_code, 500)
+        capture_exception.assert_not_called()
 
     def test_http_exception_uses_common_error_response(self):
         app = create_app(make_settings())

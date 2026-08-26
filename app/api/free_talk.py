@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request
 
 from app.common.errors import ApiException, ErrorCode
+from app.common.exception_handlers import report_ai_fallback
 from app.common.response import ApiResponse, success_response
 from app.free_talk.application.conversation_service import (
     AiGenerationFailedError,
@@ -10,6 +11,7 @@ from app.free_talk.application.conversation_service import (
     generate_inner_thought,
     generate_opening,
     generate_turn,
+    safe_closing_response,
 )
 from app.free_talk.application.embedding_service import (
     generate_conversation_embeddings,
@@ -65,7 +67,12 @@ def create_closing(
     payload: FreeTalkClosingRequest,
     request: Request,
 ) -> ApiResponse[FreeTalkClosingResponse]:
-    return success_response(_generate(payload, request, generate_closing))
+    try:
+        response = generate_closing(payload, request.app.state.settings)
+    except (AiResponseInvalidError, AiGenerationFailedError) as exc:
+        report_ai_fallback(request, exc, workflow="free_talk_closing_fallback")
+        response = safe_closing_response()
+    return success_response(response)
 
 
 @router.post(
