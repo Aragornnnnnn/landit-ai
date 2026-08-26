@@ -134,3 +134,68 @@ LLM prompt는 USER 발화에서 장기적으로 유용한 `PROFILE`, `EVENT`, `E
 `ADD`는 독립된 사실, `SUPERSEDE`는 기존 사실을 교체하는 경우, `IGNORE`는 중복·
 일시적 발화·근거 부족에 사용한다. `SUPERSEDE`만 비어 있지 않은
 `supersededMemoryIds`를 가질 수 있다.
+
+## 4. V1 안전 조건
+
+### 요청·후보
+
+- conversation history에는 USER 메시지가 하나 이상 있어야 한다.
+- 후보는 0부터 시작하는 연속된 `candidateIndex`를 사용하고 최대 5개다.
+- `sourceMessageIds`는 비어 있지 않고 양수이며 중복되지 않아야 한다.
+- 모든 source ID는 요청 history에 존재하는 USER 메시지여야 한다. AI 메시지나 없는
+  ID를 source로 허용하지 않는다.
+- `contentLocale`은 요청의 `baseLocale`과 정확히 일치해야 한다.
+- `timezone`은 지원되는 IANA timezone이어야 한다.
+- 모든 `occurredAt`, `validFrom`, `validTo`, `observedAt`은 timezone offset을
+  포함해야 한다.
+- `validTo`가 있으면 `validFrom`보다 빠를 수 없다.
+- `embeddingModel`은 `openai/text-embedding-3-small`로 고정하고, embedding은
+  1536차원·finite number인지 검증한다.
+
+### 상태 판정
+
+- 요청 후보는 1~5개이며 후보 index는 요청 문맥 안에서 유일해야 한다.
+- resolution은 요청 후보 index를 정확히 한 번씩 포함해야 한다.
+- `SUPERSEDE` 대상 memory ID는 해당 후보의 `comparableMemories`에 있어야 한다.
+- `ADD`와 `IGNORE`는 supersede ID를 가질 수 없다.
+- 한 기존 memory ID를 여러 후보가 동시에 supersede할 수 없다.
+- AI가 요청에 없던 후보 index나 memory ID를 반환하면 전체 결과를 거절한다.
+
+검증 실패는 부분 결과를 저장하지 않도록 즉시 실패한다. DTO 검증 실패는 400,
+LLM JSON 또는 후처리 계약 실패는 502 `AI_RESPONSE_INVALID`, provider·embedding
+호출 실패는 503 `AI_GENERATION_FAILED`로 매핑한다.
+
+## 5. LLM 호출과 실패 경계
+
+후보 추출과 상태 판정은 각각 한 번의 JSON completion만 호출한다. JSON이 아니거나
+필수 필드·타입·안전 조건을 만족하지 않으면 두 번째 LLM 호출 없이
+`AiResponseInvalidError`로 fail closed 한다. V1은 잘못된 응답을 자동 repair하지
+않으며, 해당 요청의 embedding도 진행하지 않는다.
+
+## 6. 테스트와 관측
+
+`tests/test_free_talk_api.py`는 두 API의 대표 성공·실패 경계를 검증한다.
+
+- 후보 성공, 빈 후보, USER source·locale·시간·index·개수·embedding 경계.
+- resolution 성공, 누락 resolution, 알 수 없는 memory, 잘못된 operation과
+  cross-candidate supersede.
+- malformed/missing JSON이 추가 completion 없이 502가 되는 fail-closed 경계.
+- OpenAPI에 두 장기기억 route가 있고 후보 schema에 V1에 없는 민감도 필드가 없음을 확인한다.
+
+실제 사용자 메시지, 후보 원문, prompt 전문, embedding과 secret은 로그나 Sentry에
+남기지 않는다. 필요한 관측값은 endpoint, provider/model, 후보·비교·resolution
+개수, 오류 코드 같은 비민감 메타데이터로 제한한다.
+
+## 7. V2 경계
+
+다음 항목은 V1 안전 코어를 검증한 뒤 별도 설계와 계약 변경으로 추가한다.
+
+- query embedding endpoint·DTO·service는 LAN-347-4 AI 기억 컨텍스트 계약으로 이관한다.
+- 민감한 기억의 분류·저장·검색 정책.
+- 매 턴 memory retrieval, direct-topic gate, prompt 주입과 사용 trajectory.
+- 잘못된 LLM JSON을 두 번째 호출로 자동 repair하는 자기 복구.
+- feedback 기반 정책 학습, 품질 점수, memory use policy version.
+- backend DB schema, source/history 보존, temporal invalidation과 transaction
+  dispatcher.
+
+V2가 추가되더라도 AI 서버의 stateless 경계와 fail-closed 기본값을 유지한다.
