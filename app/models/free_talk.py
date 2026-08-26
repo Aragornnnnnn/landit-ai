@@ -1,6 +1,9 @@
 # 프리톡 생성 API의 요청과 응답 모델을 정의하는 모듈
+import math
+from datetime import datetime
 from enum import StrEnum
 from typing import Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -38,6 +41,147 @@ class FreeTalkCharacter(StrEnum):
     CHLOE = "chloe"
     MARCO = "marco"
     TEDDY = "teddy"
+
+
+class MemoryType(StrEnum):
+    PROFILE = "PROFILE"
+    EVENT = "EVENT"
+    EPISODE = "EPISODE"
+
+
+def _validate_timezone_aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("datetime must include a timezone offset")
+    return value
+
+
+def _validate_unique_positive_ids(value: list[int]) -> list[int]:
+    if any(identifier <= 0 for identifier in value):
+        raise ValueError("ids must be positive")
+    if len(value) != len(set(value)):
+        raise ValueError("ids must be unique")
+    return value
+
+
+def _validate_finite_embedding(value: list[float]) -> list[float]:
+    if any(not math.isfinite(number) for number in value):
+        raise ValueError("embedding values must be finite numbers")
+    return value
+
+
+def _strip_string(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+class MemoryConversationHistoryMessage(ConversationHistoryMessage):
+    model_config = ConfigDict(extra="forbid")
+
+    occurredAt: datetime
+
+    @field_validator("occurredAt")
+    @classmethod
+    def occurred_at_must_include_timezone(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+
+class MemoryCandidatesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    characterId: FreeTalkCharacter
+    targetLocale: str
+    baseLocale: str
+    timezone: str
+    conversationHistory: list[MemoryConversationHistoryMessage] = Field(min_length=1)
+
+    @field_validator("targetLocale", "baseLocale", "timezone")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_must_be_supported(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a supported IANA timezone") from exc
+        return value
+
+    @model_validator(mode="after")
+    def history_must_contain_user_message(self) -> Self:
+        if all(message.role != "USER" for message in self.conversationHistory):
+            raise ValueError("conversation history requires at least one user message")
+        return self
+
+
+class MemoryCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidateIndex: int = Field(ge=0)
+    memoryType: MemoryType
+    content: str = Field(max_length=500)
+    contentLocale: str
+    sourceMessageIds: list[int] = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    validFrom: datetime | None = None
+    validTo: datetime | None = None
+    embeddingModel: str
+    embedding: list[float] = Field(min_length=1536, max_length=1536)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def content_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("content", "contentLocale", "embeddingModel")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("sourceMessageIds")
+    @classmethod
+    def source_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        return _validate_unique_positive_ids(value)
+
+    @field_validator("validFrom", "validTo")
+    @classmethod
+    def validity_times_must_include_timezone(
+        cls,
+        value: datetime | None,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        return _validate_timezone_aware(value)
+
+    @field_validator("embedding")
+    @classmethod
+    def embedding_values_must_be_finite(cls, value: list[float]) -> list[float]:
+        return _validate_finite_embedding(value)
+
+    @model_validator(mode="after")
+    def validity_range_must_be_ordered(self) -> Self:
+        if (
+            self.validFrom is not None
+            and self.validTo is not None
+            and self.validTo < self.validFrom
+        ):
+            raise ValueError("validTo must not be earlier than validFrom")
+        return self
+
+
+class MemoryCandidatesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    extractorVersion: str
+    candidates: list[MemoryCandidate] = Field(max_length=5)
+
+    @field_validator("extractorVersion")
+    @classmethod
+    def extractor_version_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
 
 
 class FreeTalkTopicContext(BaseModel):
