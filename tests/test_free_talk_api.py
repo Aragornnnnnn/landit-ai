@@ -1988,6 +1988,135 @@ class FreeTalkApiTests(unittest.TestCase):
             {"type": "json_object"},
         )
 
+    def test_memory_resolution_rejects_missing_candidate_resolution(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps({"resolutions": []})])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_unknown_superseded_memory(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [999],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_superseded_ids_for_ignore(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "IGNORE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_missing_fields_without_repair(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps({}),
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_memory_resolution_does_not_repair_type_errors(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "INVALID",
+                                "supersededMemoryIds": [],
+                            },
+                        ],
+                    },
+                ),
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
     def test_openapi_exposes_all_free_talk_generation_routes(self):
         paths = self._app().openapi()["paths"]
 
