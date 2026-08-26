@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str | None = None
+    pronunciation_model: str = "google/gemini-3.5-flash"
+    pronunciation_reasoning_effort: str = "low"
+    pronunciation_llm_timeout_seconds: float = 15.0
+    pronunciation_reference_download_timeout_seconds: float = 5.0
+    # 오류 단어 묘사(respelling·오류 구간·강세)를 별도 호출로 채운다.
+    # 대조 판정 프롬프트에 직접 요구하면 오탐이 생겨 분리했다 (LAN-373 골든 셋 A/B).
+    pronunciation_describe_errors: bool = True
     message_feedback_model: str | None = None
     openrouter_review_model: str | None = None
     message_feedback_review_enabled: bool = True
