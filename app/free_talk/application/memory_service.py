@@ -22,6 +22,9 @@ from app.models.free_talk import (
     MemoryCandidate,
     MemoryCandidatesRequest,
     MemoryCandidatesResponse,
+    MemoryResolution,
+    MemoryResolutionRequest,
+    MemoryResolutionResponse,
 )
 
 
@@ -57,6 +60,32 @@ def generate_memory_candidates(
         extractorVersion=EXTRACTOR_VERSION,
         candidates=candidates,
     )
+
+
+def generate_memory_resolution(
+    payload: MemoryResolutionRequest,
+    settings: Settings,
+) -> MemoryResolutionResponse:
+    return _validated_resolution(
+        request_json_completion(
+            settings=settings,
+            system_prompt=_resolution_system_prompt(),
+            user_prompt=_json_prompt(payload),
+        ),
+        payload,
+    )
+
+
+def _validated_resolution(
+    data: dict[str, object],
+    payload: MemoryResolutionRequest,
+) -> MemoryResolutionResponse:
+    try:
+        response = MemoryResolutionResponse.model_validate(data)
+        _validate_resolutions(response.resolutions, payload)
+        return response
+    except ValidationError as exc:
+        raise AiResponseInvalidError from exc
 
 
 def _validated_candidate_drafts(
@@ -102,6 +131,36 @@ class _MemoryCandidateDraftResponse(BaseModel):
     candidates: list[dict[str, object]] = Field(max_length=_MAX_CANDIDATES)
 
 
+def _validate_resolutions(
+    resolutions: list[MemoryResolution],
+    payload: MemoryResolutionRequest,
+) -> None:
+    requested_indexes = [candidate.candidateIndex for candidate in payload.candidates]
+    resolved_indexes = [resolution.candidateIndex for resolution in resolutions]
+    if sorted(requested_indexes) != sorted(resolved_indexes):
+        raise AiResponseInvalidError("every candidate must have one resolution")
+    if len(resolved_indexes) != len(set(resolved_indexes)):
+        raise AiResponseInvalidError("candidate resolutions must be unique")
+
+    comparable_ids_by_candidate = {
+        candidate.candidateIndex: {
+            memory.memoryId for memory in candidate.comparableMemories
+        }
+        for candidate in payload.candidates
+    }
+    superseded_ids = []
+    for resolution in resolutions:
+        comparable_ids = comparable_ids_by_candidate[resolution.candidateIndex]
+        if any(
+            memory_id not in comparable_ids
+            for memory_id in resolution.supersededMemoryIds
+        ):
+            raise AiResponseInvalidError("resolution references an unknown memory")
+        superseded_ids.extend(resolution.supersededMemoryIds)
+    if len(superseded_ids) != len(set(superseded_ids)):
+        raise AiResponseInvalidError("a memory cannot be superseded twice")
+
+
 def _json_prompt(payload: BaseModel) -> str:
     return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
 
@@ -120,3 +179,13 @@ def _candidate_system_prompt() -> str:
         "scheduled date in content and use the utterance time as validFrom."
     )
 
+
+def _resolution_system_prompt() -> str:
+    return (
+        "Resolve each memory candidate against the comparable ACTIVE memories. Return "
+        "only a JSON object with exactly one resolution for every candidateIndex. "
+        "Use ADD for an independent fact, SUPERSEDE only when an existing memory is "
+        "replaced, and IGNORE for duplicates, transient statements, or weak evidence. "
+        "Only SUPERSEDE may contain supersededMemoryIds, and use only IDs present in "
+        "the candidate's comparableMemories. Never supersede another candidate."
+    )
