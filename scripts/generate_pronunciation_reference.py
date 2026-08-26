@@ -129,6 +129,7 @@ DROPPED_CONTRAST_WORDS: dict[str, str] = {
     "mall": "espeak-quirk", "launch": "espeak-quirk", "you're": "espeak-quirk",
     "beaten": "espeak-quirk(성문음 표기 깨짐)", "kyoto": "espeak-quirk(고유명사)",
     "video": "espeak-quirk", "videos": "espeak-quirk",
+    "tuned": "yod 융합(choond)이 흔해 양자택일 불성립 — 파일럿 실측",
     "requirements": "espeak-quirk(이중모음 표기)",
 }
 
@@ -167,7 +168,7 @@ _MINOR_IPA_NORMALIZATION: tuple[tuple[str, str], ...] = (
     ("aɪə", "aɪ"), ("aʊə", "aʊ"), ("iə", "ɪ"), ("eə", "ɛ"), ("ʊə", "ʊ"),
     ("ɪə", "ɪ"),  # 중심 이중모음 = 모음+r의 비rhotic 실현
     ("əʊ", "oʊ"),  # GOAT 모음 표기 차이
-    ("ɒ", "ɑ"), ("ʌ", "ɑ"),  # LOT/STRUT 실현 차이 (what/not/got/sorry류)
+    ("ɒ", "ɑ"), ("ʌ", "ɑ"), ("ɔ", "ɑ"),  # LOT/STRUT/CLOTH 실현 차이 (what/off류)
     ("æ", "a"), ("ɐ", "ə"),  # espeak이 미/영에서 같은 모음을 다르게 적는 표기 차이
     ("ɹ", ""),  # rhotic r 유무
 )
