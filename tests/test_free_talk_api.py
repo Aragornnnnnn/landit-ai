@@ -1123,28 +1123,114 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["data"]["emotion"])
 
-    def test_closing_rejects_question_form_message(self):
-        question_messages = (
-            "Would you like to talk again?",
-            "Would you like to talk again? 😊",
+    def test_user_confirmed_closing_replaces_question_with_safe_message(self):
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(closingReason="USER_CONFIRMED"),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        closing_completion(
+                            aiMessage="Would you like to talk again?",
+                            translatedMessage="다시 이야기할래?",
+                        )
+                    ),
+                ],
+            ),
         )
 
-        for message in question_messages:
-            with self.subTest(message=message):
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["aiMessage"],
+            "I really enjoyed hearing about that. Thanks for sharing!",
+        )
+        self.assertEqual(
+            response.json()["data"]["translatedMessage"],
+            "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!",
+        )
+
+    def test_closing_replaces_generation_failure_with_safe_message(self):
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(titleGenerationRequired=True),
+            FakeOpenAI(error=RuntimeError("provider unavailable")),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "inferredTitle": None,
+                "aiMessage": "I really enjoyed hearing about that. Thanks for sharing!",
+                "translatedMessage": "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!",
+                "emotion": None,
+            },
+        )
+
+    def test_closing_replaces_invalid_ai_contract_with_safe_message(self):
+        invalid_contents = (
+            "not json",
+            json.dumps({"translatedMessage": "얘기해 줘서 고마워!"}),
+        )
+
+        for content in invalid_contents:
+            with self.subTest(content=content):
                 response = self._post(
                     "/api/v1/free-talk/closing",
-                    valid_closing_payload(),
-                    FakeOpenAI(
-                        contents=[
-                            json.dumps(closing_completion(aiMessage=message)),
-                        ],
-                    ),
+                    valid_closing_payload(titleGenerationRequired=True),
+                    FakeOpenAI(contents=[content]),
                 )
 
-                self.assertEqual(response.status_code, 502)
+                self.assertEqual(response.status_code, 200)
                 self.assertEqual(
-                    response.json()["error"]["code"], "AI_RESPONSE_INVALID"
+                    response.json()["data"],
+                    {
+                        "inferredTitle": None,
+                        "aiMessage": (
+                            "I really enjoyed hearing about that. Thanks for sharing!"
+                        ),
+                        "translatedMessage": (
+                            "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!"
+                        ),
+                        "emotion": None,
+                    },
                 )
+
+    def test_closing_does_not_replace_unexpected_error_with_safe_message(self):
+        with patch(
+            "app.api.free_talk.generate_closing",
+            side_effect=RuntimeError("unexpected bug"),
+        ), self.assertRaisesRegex(RuntimeError, "unexpected bug"):
+            make_client(self._app()).post(
+                "/api/v1/free-talk/closing",
+                json=valid_closing_payload(),
+            )
+
+    def test_time_limit_closing_allows_question_form_message(self):
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(closingReason="TIME_LIMIT_REACHED"),
+            FakeOpenAI(
+                contents=[
+                    json.dumps(
+                        closing_completion(
+                            aiMessage="That sort of musical stays with you, doesn't it?",
+                            translatedMessage="그런 뮤지컬은 오래 기억에 남지 않아?",
+                        )
+                    ),
+                ],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["aiMessage"],
+            "That sort of musical stays with you, doesn't it?",
+        )
+        self.assertEqual(
+            response.json()["data"]["translatedMessage"],
+            "그런 뮤지컬은 오래 기억에 남지 않아?",
+        )
 
     def test_closing_rejects_feedback_style_inner_thought(self):
         response = self._post(
@@ -1169,30 +1255,35 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
-    def test_closing_rejects_feedback_session_meta_or_new_topic_content(self):
+    def test_closing_replaces_other_policy_violations_with_safe_message(self):
         prohibited_messages = (
             "Please review your feedback.",
             "This session has ended.",
             "By the way, let's talk about movies next time.",
         )
 
-        for message in prohibited_messages:
-            with self.subTest(message=message):
-                response = self._post(
-                    "/api/v1/free-talk/closing",
-                    valid_closing_payload(),
-                    FakeOpenAI(
-                        contents=[
-                            json.dumps(closing_completion(aiMessage=message)),
-                        ],
-                    ),
-                )
+        for reason in ("USER_CONFIRMED", "TIME_LIMIT_REACHED"):
+            for message in prohibited_messages:
+                with self.subTest(reason=reason, message=message):
+                    response = self._post(
+                        "/api/v1/free-talk/closing",
+                        valid_closing_payload(closingReason=reason),
+                        FakeOpenAI(
+                            contents=[
+                                json.dumps(closing_completion(aiMessage=message)),
+                            ],
+                        ),
+                    )
 
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(
-                    response.json()["error"]["code"],
-                    "AI_RESPONSE_INVALID",
-                )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.json()["data"]["aiMessage"],
+                        "I really enjoyed hearing about that. Thanks for sharing!",
+                    )
+                    self.assertEqual(
+                        response.json()["data"]["translatedMessage"],
+                        "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!",
+                    )
 
     def test_closing_allows_natural_social_goodbye(self):
         allowed_messages = (

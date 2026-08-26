@@ -106,6 +106,25 @@ def _report_ai_failure(request: Request, exc: ApiException) -> None:
     )
 
 
+def report_ai_fallback(request: Request, exc: Exception, *, workflow: str) -> None:
+    provider = request.app.state.settings.llm_provider
+    endpoint = request.url.path
+    logger.exception(
+        "AI request used fallback. workflow=%s endpoint=%s provider=%s",
+        workflow,
+        endpoint,
+        provider,
+    )
+    sentry_sdk.capture_exception(
+        exc,
+        tags={
+            "workflow": workflow,
+            "endpoint": endpoint,
+            "provider": provider,
+        },
+    )
+
+
 def _error_json_response(
     status_code: int,
     error_code: ErrorCode,
