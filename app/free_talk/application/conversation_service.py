@@ -152,13 +152,8 @@ def generate_turn(
             exit_detected = candidate.userExitIntentDetected
         else:
             exit_detected = False
-        used_memory_ids = _validated_used_memory_ids(
-            candidate.usedMemoryIds,
-            payload.memoryContext,
-        )
+        used_memory_ids = _turn_used_memory_ids(candidate, payload, exit_detected)
         if exit_detected:
-            if used_memory_ids:
-                raise ValueError("exit intent response must not use memory")
             return FreeTalkTurnResponse(
                 userExitIntentDetected=True,
                 inferredTitle=None,
@@ -499,14 +494,45 @@ def _validated_used_memory_ids(
     used_memory_ids: list[int],
     memory_context: list[MemoryContext],
 ) -> list[int]:
-    context_ids = {context.memoryId for context in memory_context}
-    if (
-        any(identifier <= 0 for identifier in used_memory_ids)
-        or len(used_memory_ids) != len(set(used_memory_ids))
-        or not set(used_memory_ids).issubset(context_ids)
+    """AI가 사용한 기억은 제공된 문맥의 유효한 부분집합일 때만 반환한다."""
+    if _has_invalid_memory_ids(used_memory_ids) or not _belongs_to_memory_context(
+        used_memory_ids,
+        memory_context,
     ):
         return []
     return used_memory_ids
+
+
+def _turn_used_memory_ids(
+    candidate: _TurnCandidate,
+    payload: FreeTalkTurnRequest,
+    exit_detected: bool,
+) -> list[int]:
+    """종료 의도 응답은 기억을 사용할 수 없고 일반 턴만 유효 ID를 전달한다."""
+    used_memory_ids = _validated_used_memory_ids(
+        candidate.usedMemoryIds,
+        payload.memoryContext,
+    )
+    if exit_detected and used_memory_ids:
+        raise ValueError("exit intent response must not use memory")
+    return used_memory_ids
+
+
+def _has_invalid_memory_ids(used_memory_ids: list[int]) -> bool:
+    """사용 기억 ID는 양수이고 중복되지 않아야 한다."""
+    return (
+        any(identifier <= 0 for identifier in used_memory_ids)
+        or len(used_memory_ids) != len(set(used_memory_ids))
+    )
+
+
+def _belongs_to_memory_context(
+    used_memory_ids: list[int],
+    memory_context: list[MemoryContext],
+) -> bool:
+    """AI가 반환한 ID가 요청에 제공한 기억 문맥에만 속하는지 확인한다."""
+    context_ids = {context.memoryId for context in memory_context}
+    return set(used_memory_ids).issubset(context_ids)
 
 
 def _is_invalid_closing_message(message: str, *, allow_question: bool) -> bool:
