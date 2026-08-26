@@ -49,6 +49,12 @@ class MemoryType(StrEnum):
     EPISODE = "EPISODE"
 
 
+class MemoryOperation(StrEnum):
+    ADD = "ADD"
+    SUPERSEDE = "SUPERSEDE"
+    IGNORE = "IGNORE"
+
+
 def _validate_timezone_aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must include a timezone offset")
@@ -182,6 +188,108 @@ class MemoryCandidatesResponse(BaseModel):
     @classmethod
     def extractor_version_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+class MemoryCandidateForResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidateIndex: int = Field(ge=0)
+    content: str = Field(max_length=500)
+    memoryType: MemoryType
+    sourceMessageIds: list[int] = Field(min_length=1)
+    observedAt: datetime
+    comparableMemories: list["ComparableMemory"] = Field(max_length=3)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def content_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("sourceMessageIds")
+    @classmethod
+    def source_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        return _validate_unique_positive_ids(value)
+
+    @field_validator("observedAt")
+    @classmethod
+    def observed_at_must_include_timezone(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+
+class ComparableMemory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memoryId: int = Field(gt=0)
+    content: str = Field(max_length=500)
+    validFrom: datetime | None = None
+    validTo: datetime | None = None
+    observedAt: datetime
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def content_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("validFrom", "validTo", "observedAt")
+    @classmethod
+    def times_must_include_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return _validate_timezone_aware(value)
+
+    @model_validator(mode="after")
+    def validity_range_must_be_ordered(self) -> Self:
+        if (
+            self.validFrom is not None
+            and self.validTo is not None
+            and self.validTo < self.validFrom
+        ):
+            raise ValueError("validTo must not be earlier than validFrom")
+        return self
+
+
+class MemoryResolutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[MemoryCandidateForResolution] = Field(min_length=1, max_length=5)
+
+
+class MemoryResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidateIndex: int = Field(ge=0)
+    operation: MemoryOperation
+    supersededMemoryIds: list[int] = Field(default_factory=list)
+
+    @field_validator("supersededMemoryIds")
+    @classmethod
+    def superseded_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        return _validate_unique_positive_ids(value)
+
+    @model_validator(mode="after")
+    def superseded_ids_must_match_operation(self) -> Self:
+        if self.operation == MemoryOperation.SUPERSEDE:
+            if not self.supersededMemoryIds:
+                raise ValueError("SUPERSEDE requires superseded memory IDs")
+        elif self.supersededMemoryIds:
+            raise ValueError("only SUPERSEDE may contain superseded memory IDs")
+        return self
+
+
+class MemoryResolutionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolutions: list[MemoryResolution] = Field(min_length=1, max_length=5)
 
 
 class FreeTalkTopicContext(BaseModel):
