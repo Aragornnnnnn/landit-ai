@@ -120,6 +120,20 @@ def generate_turn(
     payload: FreeTalkTurnRequest,
     settings: Settings,
 ) -> FreeTalkTurnResponse:
+    data = _request_turn_completion(payload, settings)
+    try:
+        candidate = _validated_turn_candidate(data, payload)
+        exit_detected = _is_exit_detected(candidate, payload)
+        used_memory_ids = _turn_used_memory_ids(candidate, payload, exit_detected)
+        return _turn_response(candidate, exit_detected, used_memory_ids)
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise AiResponseInvalidError from exc
+
+
+def _request_turn_completion(
+    payload: FreeTalkTurnRequest,
+    settings: Settings,
+) -> dict[str, object]:
     data = request_json_completion(
         settings=settings,
         system_prompt=_turn_system_prompt(payload.responseMode, payload.characterId),
@@ -134,44 +148,59 @@ def generate_turn(
             system_prompt=_continue_turn_repair_system_prompt(payload.characterId),
             user_prompt=_turn_user_prompt(payload),
         )
-    try:
-        candidate_data = dict(data)
-        candidate_data["inferredTitle"] = None
-        if payload.responseMode == FreeTalkResponseMode.NORMAL:
-            exit_candidate = _TurnExitIntentCandidate.model_validate(data)
-            if exit_candidate.userExitIntentDetected is None:
-                raise ValueError("normal turn requires exit intent")
-            if exit_candidate.userExitIntentDetected:
-                candidate_data["aiMessage"] = None
-                candidate_data["translatedMessage"] = None
-                candidate_data["emotion"] = None
-        else:
-            candidate_data["userExitIntentDetected"] = False
-        candidate = _TurnCandidate.model_validate(candidate_data)
-        if payload.responseMode == FreeTalkResponseMode.NORMAL:
-            exit_detected = candidate.userExitIntentDetected
-        else:
-            exit_detected = False
-        used_memory_ids = _turn_used_memory_ids(candidate, payload, exit_detected)
-        if exit_detected:
-            return FreeTalkTurnResponse(
-                userExitIntentDetected=True,
-                inferredTitle=None,
-                aiMessage=None,
-                translatedMessage=None,
-                emotion=None,
-                usedMemoryIds=[],
-            )
+    return data
+
+
+def _validated_turn_candidate(
+    data: dict[str, object],
+    payload: FreeTalkTurnRequest,
+) -> _TurnCandidate:
+    candidate_data = dict(data)
+    candidate_data["inferredTitle"] = None
+    if payload.responseMode == FreeTalkResponseMode.NORMAL:
+        exit_candidate = _TurnExitIntentCandidate.model_validate(data)
+        if exit_candidate.userExitIntentDetected is None:
+            raise ValueError("normal turn requires exit intent")
+        if exit_candidate.userExitIntentDetected:
+            candidate_data["aiMessage"] = None
+            candidate_data["translatedMessage"] = None
+            candidate_data["emotion"] = None
+    else:
+        candidate_data["userExitIntentDetected"] = False
+    return _TurnCandidate.model_validate(candidate_data)
+
+
+def _is_exit_detected(
+    candidate: _TurnCandidate,
+    payload: FreeTalkTurnRequest,
+) -> bool:
+    if payload.responseMode != FreeTalkResponseMode.NORMAL:
+        return False
+    return candidate.userExitIntentDetected is True
+
+
+def _turn_response(
+    candidate: _TurnCandidate,
+    exit_detected: bool,
+    used_memory_ids: list[int],
+) -> FreeTalkTurnResponse:
+    if exit_detected:
         return FreeTalkTurnResponse(
-            userExitIntentDetected=False,
+            userExitIntentDetected=True,
             inferredTitle=None,
-            aiMessage=candidate.aiMessage,
-            translatedMessage=candidate.translatedMessage,
+            aiMessage=None,
+            translatedMessage=None,
             emotion=None,
-            usedMemoryIds=used_memory_ids,
+            usedMemoryIds=[],
         )
-    except (TypeError, ValidationError, ValueError) as exc:
-        raise AiResponseInvalidError from exc
+    return FreeTalkTurnResponse(
+        userExitIntentDetected=False,
+        inferredTitle=None,
+        aiMessage=candidate.aiMessage,
+        translatedMessage=candidate.translatedMessage,
+        emotion=None,
+        usedMemoryIds=used_memory_ids,
+    )
 
 
 def generate_closing(
