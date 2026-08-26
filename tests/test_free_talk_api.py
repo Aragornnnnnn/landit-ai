@@ -317,6 +317,31 @@ def valid_memory_candidate_completion(**overrides):
     return {"candidates": [candidate]}
 
 
+def valid_memory_resolution_payload(**overrides):
+    payload = {
+        "candidates": [
+            {
+                "candidateIndex": 0,
+                "content": "사용자는 면접에 합격했다.",
+                "memoryType": "EVENT",
+                "sourceMessageIds": [3002],
+                "observedAt": "2026-08-29T19:20:00+09:00",
+                "comparableMemories": [
+                    {
+                        "memoryId": 77,
+                        "content": "사용자는 다음 주에 면접이 있다.",
+                        "validFrom": "2026-08-25T20:10:00+09:00",
+                        "validTo": None,
+                        "observedAt": "2026-08-25T20:10:00+09:00",
+                    },
+                ],
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 class FreeTalkApiTests(unittest.TestCase):
     def _app(self, **overrides):
         settings = {
@@ -1929,6 +1954,39 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["data"]["candidates"][0]["content"]), 500)
+
+    def test_memory_resolution_returns_resolution_for_each_candidate(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["resolutions"][0]["operation"],
+            "SUPERSEDE",
+        )
+        self.assertEqual(
+            fake_openai.completions.calls[0]["response_format"],
+            {"type": "json_object"},
+        )
 
     def test_openapi_exposes_all_free_talk_generation_routes(self):
         paths = self._app().openapi()["paths"]
