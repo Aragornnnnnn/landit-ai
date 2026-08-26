@@ -92,36 +92,15 @@ def _validated_candidate_drafts(
     data: dict[str, object],
     payload: MemoryCandidatesRequest,
 ) -> list[MemoryCandidate]:
+    """후보의 연속 인덱스와 USER 원문 계보 계약을 검증한다."""
     try:
         envelope = _MemoryCandidateDraftResponse.model_validate(data)
-        drafts = []
-        for raw_candidate in envelope.candidates:
-            if "embeddingModel" in raw_candidate or "embedding" in raw_candidate:
-                raise AiResponseInvalidError("candidate must not contain embedding")
-            drafts.append(
-                MemoryCandidate.model_validate(
-                    {
-                        **raw_candidate,
-                        "embeddingModel": EMBEDDING_MODEL,
-                        "embedding": [0.0] * EMBEDDING_DIMENSIONS,
-                    },
-                ),
-            )
+        drafts = _candidate_drafts(envelope)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
 
-    if [draft.candidateIndex for draft in drafts] != list(range(len(drafts))):
-        raise AiResponseInvalidError("candidate indexes must be contiguous")
-
-    messages_by_id = {message.messageId: message for message in payload.conversationHistory}
-    for draft in drafts:
-        if draft.contentLocale != payload.baseLocale:
-            raise AiResponseInvalidError("candidate locale must match base locale")
-        for source_message_id in draft.sourceMessageIds:
-            source = messages_by_id.get(source_message_id)
-            if source is None or source.role != "USER":
-                raise AiResponseInvalidError("candidate source must be a user message")
-
+    _validate_contiguous_indexes(drafts)
+    _validate_candidate_sources(drafts, payload)
     return drafts
 
 
@@ -131,10 +110,63 @@ class _MemoryCandidateDraftResponse(BaseModel):
     candidates: list[dict[str, object]] = Field(max_length=_MAX_CANDIDATES)
 
 
+def _candidate_drafts(
+    envelope: _MemoryCandidateDraftResponse,
+) -> list[MemoryCandidate]:
+    drafts = []
+    for raw_candidate in envelope.candidates:
+        if "embeddingModel" in raw_candidate or "embedding" in raw_candidate:
+            raise AiResponseInvalidError("candidate must not contain embedding")
+        drafts.append(
+            MemoryCandidate.model_validate(
+                {
+                    **raw_candidate,
+                    "embeddingModel": EMBEDDING_MODEL,
+                    "embedding": [0.0] * EMBEDDING_DIMENSIONS,
+                },
+            ),
+        )
+    return drafts
+
+
+def _validate_contiguous_indexes(drafts: list[MemoryCandidate]) -> None:
+    """후보 인덱스는 0부터 빈틈없이 이어져야 resolution 순서를 보장한다."""
+    if [draft.candidateIndex for draft in drafts] != list(range(len(drafts))):
+        raise AiResponseInvalidError("candidate indexes must be contiguous")
+
+
+def _validate_candidate_sources(
+    drafts: list[MemoryCandidate],
+    payload: MemoryCandidatesRequest,
+) -> None:
+    """후보 언어와 출처는 요청 기준 언어 및 USER 메시지에만 연결한다."""
+    messages_by_id = {message.messageId: message for message in payload.conversationHistory}
+    for draft in drafts:
+        if draft.contentLocale != payload.baseLocale:
+            raise AiResponseInvalidError("candidate locale must match base locale")
+        if any(
+            messages_by_id.get(source_message_id) is None
+            or messages_by_id[source_message_id].role != "USER"
+            for source_message_id in draft.sourceMessageIds
+        ):
+            raise AiResponseInvalidError("candidate source must be a user message")
+
+
 def _validate_resolutions(
     resolutions: list[MemoryResolution],
     payload: MemoryResolutionRequest,
 ) -> None:
+    """모든 후보의 resolution과 supersede 대상 격리를 한 번에 검증한다."""
+    _validate_resolution_indexes(resolutions, payload)
+    comparable_ids_by_candidate = _comparable_ids_by_candidate(payload)
+    _validate_superseded_ids(resolutions, comparable_ids_by_candidate)
+
+
+def _validate_resolution_indexes(
+    resolutions: list[MemoryResolution],
+    payload: MemoryResolutionRequest,
+) -> None:
+    """요청 후보마다 정확히 하나의 고유한 resolution이 있어야 한다."""
     requested_indexes = [candidate.candidateIndex for candidate in payload.candidates]
     resolved_indexes = [resolution.candidateIndex for resolution in resolutions]
     if sorted(requested_indexes) != sorted(resolved_indexes):
@@ -142,12 +174,23 @@ def _validate_resolutions(
     if len(resolved_indexes) != len(set(resolved_indexes)):
         raise AiResponseInvalidError("candidate resolutions must be unique")
 
-    comparable_ids_by_candidate = {
+
+def _comparable_ids_by_candidate(
+    payload: MemoryResolutionRequest,
+) -> dict[int, set[int]]:
+    return {
         candidate.candidateIndex: {
             memory.memoryId for memory in candidate.comparableMemories
         }
         for candidate in payload.candidates
     }
+
+
+def _validate_superseded_ids(
+    resolutions: list[MemoryResolution],
+    comparable_ids_by_candidate: dict[int, set[int]],
+) -> None:
+    """supersede ID는 해당 후보의 비교 목록에만 있고 후보 간 중복될 수 없다."""
     superseded_ids = []
     for resolution in resolutions:
         comparable_ids = comparable_ids_by_candidate[resolution.candidateIndex]
