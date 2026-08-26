@@ -190,6 +190,61 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
 
+    def test_numeric_word_is_accepted_and_aligned_as_spelled_word(self):
+        captured = {}
+        body = {
+            **REQUEST_BODY,
+            "sentenceText": "The flight takes off at 9.",
+            "words": [
+                {"order": 1, "word": "The"},
+                {"order": 2, "word": "flight"},
+                {"order": 3, "word": "takes"},
+                {"order": 4, "word": "off"},
+                {"order": 5, "word": "at"},
+                {"order": 6, "word": "9"},
+            ],
+        }
+        spans = [
+            WordSpan(word=w, start_ms=i * 100, end_ms=i * 100 + 90)
+            for i, w in enumerate(["The", "flight", "takes", "off", "at", "nine"])
+        ]
+
+        patches = patch_pipeline(spans=spans)
+
+        def capture_align(wav, words):
+            captured["words"] = words
+            return spans
+
+        with patches[0], patches[1], patches[3], patches[4], patches[5], patch(
+            "app.pronunciation.application.analysis_service.align_words",
+            side_effect=capture_align,
+        ):
+            response = make_client().post(
+                "/api/v1/pronunciation/analyze", json=body
+            )
+
+        self.assertEqual(response.status_code, 200)
+        # 정렬에는 발화 철자가 전달된다
+        self.assertEqual(captured["words"][-1], "nine")
+        words = response.json()["data"]["words"]
+        self.assertEqual(words[-1]["word"], "9")
+        self.assertEqual(words[-1]["status"], "CORRECT")
+
+    def test_numeric_word_above_99_returns_400(self):
+        body = {
+            **REQUEST_BODY,
+            "sentenceText": "Room 101 is ready.",
+            "words": [
+                {"order": 1, "word": "Room"},
+                {"order": 2, "word": "101"},
+                {"order": 3, "word": "is"},
+                {"order": 4, "word": "ready"},
+            ],
+        }
+        response = self.post(body=body)
+
+        self.assertEqual(response.status_code, 400)
+
     def test_duplicate_word_orders_return_400(self):
         body = {
             **REQUEST_BODY,

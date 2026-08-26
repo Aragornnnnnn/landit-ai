@@ -92,7 +92,8 @@ def _normalize_for_tier(ipa: str) -> str:
 
 
 def tokenize(sentence: str) -> list[str]:
-    return re.findall(r"[A-Za-z']+", sentence)
+    # 숫자 단어("9")도 포함한다 — API가 정렬 시 철자("nine")로 변환해 처리한다
+    return re.findall(r"[A-Za-z0-9']+", sentence)
 
 
 _CMUDICT_CACHE: dict | None = None
@@ -187,8 +188,28 @@ def _contrast_for(
 
 
 def build_words(sentence: str, locale: str) -> list[ReferenceWord]:
+    from app.pronunciation.numbers import spell_out
+
     results = []
     for word in tokenize(sentence):
+        spelled = spell_out(word)
+        if spelled is not None:
+            # 숫자 단어는 판정에서 제외되므로 발화 철자만 기록해 둔다
+            results.append(
+                ReferenceWord(
+                    word=word,
+                    phonemes="",
+                    syllables=[word],
+                    stress_index=0,
+                    native_display=word,
+                    review_reason=f"숫자 단어 — 판정 제외, 정렬은 '{spelled}'",
+                    contrast_expected=None,
+                    contrast_other=None,
+                    contrast_error_type=None,
+                    contrast_tier=None,
+                )
+            )
+            continue
         function_word = word.lower() in FUNCTION_WORDS
         reviews: list[str] = []
 

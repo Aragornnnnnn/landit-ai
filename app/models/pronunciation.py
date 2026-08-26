@@ -19,8 +19,9 @@ def _validate_not_blank(value: str) -> str:
 
 
 def _word_tokens(text: str) -> list[str]:
-    # PoC 채점과 동일한 단어 정규화: 소문자 영문자와 아포스트로피만 남긴다
-    return re.findall(r"[a-z']+", text.lower())
+    # PoC 채점과 동일한 단어 정규화에 숫자를 더한다. 숫자 단어("9")는 판정 없이
+    # 통과 처리하지만 words 목록과 정렬에는 포함돼야 한다.
+    return re.findall(r"[a-z0-9']+", text.lower())
 
 
 class PronunciationAudioFormat(StrEnum):
@@ -78,7 +79,11 @@ class PronunciationWordInput(BaseModel):
     @field_validator("word")
     @classmethod
     def word_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
+        value = _validate_not_blank(value)
+        # 숫자 단어는 정렬 시 철자로 변환하는데 0~99만 지원한다
+        if value.strip().isdigit() and int(value.strip()) > 99:
+            raise ValueError("numeric words above 99 are not supported")
+        return value
 
 
 class PronunciationAnalyzeRequest(BaseModel):

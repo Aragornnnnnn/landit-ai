@@ -28,6 +28,7 @@ from app.pronunciation.llm.accent_check import (
 )
 from app.pronunciation.llm.compare import JudgedDifference, judge_pronunciation
 from app.pronunciation.llm.describe import ErrorDescription, describe_error
+from app.pronunciation.numbers import spell_out
 
 
 class ReferenceAudioUnavailableError(Exception):
@@ -48,7 +49,10 @@ def analyze_pronunciation(
         payload.decoded_user_audio(), payload.userAudioFormat.value
     )
     ordered_words = sorted(payload.words, key=lambda word: word.order)
-    word_texts = [word.word for word in ordered_words]
+    # 숫자 단어("9")는 발화 철자("nine")로 정렬해야 타임스탬프가 맞는다
+    word_texts = [
+        spell_out(word.word) or word.word for word in ordered_words
+    ]
 
     contrasts = _accent_contrasts(ordered_words)
     with ThreadPoolExecutor(max_workers=2 + len(contrasts)) as executor:
