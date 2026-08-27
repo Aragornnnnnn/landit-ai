@@ -9,8 +9,10 @@ from app.models.pronunciation import (
 )
 from app.pronunciation.alignment.forced_align import AlignmentError
 from app.pronunciation.application.analysis_service import (
+    AnalysisBudgetExceededError,
     ReferenceAudioUnavailableError,
     analyze_pronunciation,
+    is_reference_url_allowed,
 )
 from app.pronunciation.audio import AudioDecodeError
 from app.pronunciation.llm.compare import (
@@ -27,8 +29,12 @@ def analyze(
     payload: PronunciationAnalyzeRequest,
     request: Request,
 ) -> ApiResponse[PronunciationAnalyzeResponse]:
+    settings = request.app.state.settings
+    # SSRF 차단: 참조 URL은 허용된 origin(기본: 콘텐츠 CDN https)만 받는다
+    if not is_reference_url_allowed(payload.referenceAudioUrl, settings):
+        raise ApiException(400, ErrorCode.INVALID_REQUEST)
     try:
-        result = analyze_pronunciation(payload, request.app.state.settings)
+        result = analyze_pronunciation(payload, settings)
     except AudioDecodeError as exc:
         raise ApiException(400, ErrorCode.INVALID_AUDIO) from exc
     except PronunciationJudgmentInvalidError as exc:
@@ -37,6 +43,7 @@ def analyze(
         ReferenceAudioUnavailableError,
         PronunciationJudgmentError,
         AlignmentError,
+        AnalysisBudgetExceededError,
     ) as exc:
         raise ApiException(503, ErrorCode.AI_GENERATION_FAILED) from exc
     return success_response(result)

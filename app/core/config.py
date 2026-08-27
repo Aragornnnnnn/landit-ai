@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     pronunciation_reasoning_effort: str = "low"
     pronunciation_llm_timeout_seconds: float = 15.0
     pronunciation_reference_download_timeout_seconds: float = 5.0
+    # 분석 1회의 전체 wall-clock 예산. BE 타임아웃(20초)보다 먼저 반환하기 위한 상한이며
+    # 단계별 타임아웃은 이 예산의 남은 시간과 min으로 묶인다.
+    pronunciation_total_budget_seconds: float = 17.0
+    # 참조 오디오를 받아올 수 있는 origin 목록 (쉼표 구분). SSRF 차단용 —
+    # 기본값은 콘텐츠 CDN 하나뿐이라 http·내부 주소는 자동 거부된다.
+    pronunciation_reference_allowed_origins: str = (
+        "https://d19azau1un4t7r.cloudfront.net"
+    )
     # 오류 단어 묘사(respelling·오류 구간·강세)를 별도 호출로 채운다.
     # 대조 판정 프롬프트에 직접 요구하면 오탐이 생겨 분리했다 (LAN-373 골든 셋 A/B).
     pronunciation_describe_errors: bool = True

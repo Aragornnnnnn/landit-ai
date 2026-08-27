@@ -27,4 +27,9 @@ def init_sentry(settings: Settings) -> None:
         traces_sample_rate=settings.sentry_traces_sample_rate,
         integrations=[LoggingIntegration(event_level=None)],
         before_send=scrub_sensitive_request_data,
+        # 유저 음성(base64·wav bytes)이 스택 지역변수·요청 본문으로 유출되지 않도록
+        # 이벤트에서 지역변수와 본문 수집을 아예 끈다
+        include_local_variables=False,
+        max_request_body_size="never",
+        send_default_pii=False,
     )

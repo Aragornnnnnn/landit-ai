@@ -6,6 +6,7 @@
 #   - 기준 텍스트를 프롬프트에 넣는 판정 모드는 앵커링 환각으로 탈락 — 사용 금지
 import base64
 import json
+import time
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -109,6 +110,7 @@ def judge_pronunciation(
     user_wav: bytes,
     accent_locale: str = "EN_US",
     extended: bool = True,
+    deadline: float | None = None,
 ) -> list[JudgedDifference]:
     template = EXTENDED_COMPARE_PROMPT if extended else BASE_COMPARE_PROMPT
     # 프롬프트에 JSON 예시의 중괄호가 있으므로 str.format을 쓰지 않는다
@@ -118,16 +120,26 @@ def judge_pronunciation(
         _audio_part(reference_wav),
         _audio_part(user_wav),
     ]
-    return _call_with_retry(client, settings, content)
+    return _call_with_retry(client, settings, content, deadline)
 
 
 def _call_with_retry(
-    client: OpenAI, settings: Settings, content: list
+    client: OpenAI,
+    settings: Settings,
+    content: list,
+    deadline: float | None = None,
 ) -> list["JudgedDifference"]:
     # 실측(LAN-373 스파이크)에서 36회 중 1회 스키마 위반이 나왔으므로
     # JSON 파싱뿐 아니라 스키마 검증 실패까지 같은 재시도로 흡수한다.
+    # 단, 전체 분석 예산(deadline)이 남아 있을 때만 시도한다.
     last_error: Exception | None = None
     for _ in range(2):
+        timeout = settings.pronunciation_llm_timeout_seconds
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            timeout = min(timeout, remaining)
         try:
             response = client.chat.completions.create(
                 model=settings.pronunciation_model,
@@ -137,7 +149,7 @@ def _call_with_retry(
                 extra_body={
                     "reasoning": {"effort": settings.pronunciation_reasoning_effort}
                 },
-                timeout=settings.pronunciation_llm_timeout_seconds,
+                timeout=timeout,
             )
         except Exception as error:  # noqa: BLE001 — SDK 예외 전반을 생성 실패로 취급
             raise PronunciationJudgmentError(str(error)) from error
@@ -150,6 +162,10 @@ def _call_with_retry(
             PronunciationJudgmentInvalidError,
         ) as error:
             last_error = error
+    if last_error is None:
+        raise PronunciationJudgmentError(
+            "analysis budget exhausted before judgment"
+        )
     raise PronunciationJudgmentInvalidError(
         "judgment response did not match the expected schema"
     ) from last_error

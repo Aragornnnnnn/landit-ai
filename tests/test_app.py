@@ -382,6 +382,9 @@ class SentryInitializationTests(unittest.TestCase):
             traces_sample_rate=0.0,
             integrations=[logging_integration],
             before_send=scrub_sensitive_request_data,
+            include_local_variables=False,
+            max_request_body_size="never",
+            send_default_pii=False,
         )
 
 

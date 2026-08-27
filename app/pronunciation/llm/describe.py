@@ -9,11 +9,15 @@
 # 단어에만 수행하므로 탐지 결과를 바꾸지 못한다.
 import base64
 import json
+import logging
+import time
 from dataclasses import dataclass
 
 from openai import OpenAI
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 _SOUND_INSTRUCTION = """Also report which letters differ:
 - "targetSpan": the letters of the reference pronunciation that differ (e.g. "th")
@@ -53,8 +57,16 @@ def describe_error(
     user_wav: bytes,
     word: str,
     error_type: str,
+    deadline: float | None = None,
 ) -> ErrorDescription | None:
     """오류 단어 하나를 묘사한다. 실패하면 None을 반환해 필드를 비운 채 응답한다."""
+    timeout = settings.pronunciation_llm_timeout_seconds
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            # 전체 분석 예산 소진 — 묘사는 보조 정보이므로 호출 없이 비운다
+            return None
+        timeout = min(timeout, remaining)
     is_stress = error_type == "STRESS"
     prompt = (
         DESCRIBE_PROMPT.replace("{word}", word)
@@ -87,7 +99,7 @@ def describe_error(
             extra_body={
                 "reasoning": {"effort": settings.pronunciation_reasoning_effort}
             },
-            timeout=settings.pronunciation_llm_timeout_seconds,
+            timeout=timeout,
         )
     except Exception:  # noqa: BLE001 — 묘사는 보조 정보이므로 실패해도 판정은 유지한다
         return None
@@ -107,13 +119,38 @@ def _parse(raw: str, is_stress: bool) -> ErrorDescription | None:
     if not isinstance(payload, dict):
         return None
 
-    stress_index = payload.get("stressIndex")
+    user_heard = _text(payload.get("userHeard"))
     return ErrorDescription(
-        user_heard=_text(payload.get("userHeard")),
+        user_heard=user_heard,
         target_span=None if is_stress else _text(payload.get("targetSpan")),
         user_span=None if is_stress else _text(payload.get("userSpan")),
-        stress_index=stress_index if is_stress and isinstance(stress_index, int) else None,
+        stress_index=_valid_stress_index(payload.get("stressIndex"), user_heard)
+        if is_stress
+        else None,
     )
+
+
+def _valid_stress_index(value, user_heard: str | None) -> int | None:
+    """stressIndex는 userHeard respelling의 음절 인덱스일 때만 유효하다.
+
+    FE가 이 값을 음절 배열 인덱스로 쓰므로 범위 밖 값이 나가면 안 된다.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    if user_heard is None:
+        logger.warning(
+            "describe stressIndex %d dropped: no userHeard respelling", value
+        )
+        return None
+    syllable_count = len(user_heard.split("·"))
+    if not 0 <= value < syllable_count:
+        logger.warning(
+            "describe stressIndex %d dropped: out of range for %d syllables",
+            value,
+            syllable_count,
+        )
+        return None
+    return value
 
 
 def _text(value) -> str | None:

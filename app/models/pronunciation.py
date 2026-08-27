@@ -1,12 +1,16 @@
 # 발음 분석 API의 요청과 응답 모델을 정의하는 모듈
 import base64
 import binascii
+import logging
 import re
 from enum import StrEnum
+from urllib.parse import urlparse
 
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
 
 # base64 인코딩 기준 최대 크기 (원본 약 10MB)
 _MAX_USER_AUDIO_BASE64_LENGTH = 14_000_000
@@ -63,6 +67,12 @@ class PronunciationAccentContrast(BaseModel):
     other: str
     errorType: PronunciationAccentErrorType = PronunciationAccentErrorType.PHONEME
 
+    @field_validator("errorType", mode="before")
+    @classmethod
+    def null_error_type_means_default(cls, value):
+        # BE는 없는 키를 null로 직렬화하며 "null=생략과 동일"을 약속했다
+        return PronunciationAccentErrorType.PHONEME if value is None else value
+
     @field_validator("expected", "other")
     @classmethod
     def options_must_not_be_blank(cls, value: str) -> str:
@@ -75,6 +85,25 @@ class PronunciationWordInput(BaseModel):
     order: int = Field(gt=0)
     word: str
     accentContrast: PronunciationAccentContrast | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def contrast_without_options_is_absent(cls, data):
+        # 선택지(expected/other)가 null이면 대조로서 의미가 없으므로 요청을 거부하는
+        # 대신 대조 생략과 동일하게 처리한다 (BE의 null=생략 직렬화 정책과 일관).
+        # 조용히 버리면 자산 데이터 품질 문제를 놓치므로 경고를 남긴다 — 요청에는
+        # expressionId가 없어 order만 싣는다 (오디오 파생 텍스트 금지).
+        if isinstance(data, dict):
+            contrast = data.get("accentContrast")
+            if isinstance(contrast, dict) and (
+                contrast.get("expected") is None or contrast.get("other") is None
+            ):
+                logger.warning(
+                    "accentContrast dropped (null options) for word order=%s",
+                    data.get("order"),
+                )
+                data = {**data, "accentContrast": None}
+        return data
 
     @field_validator("word")
     @classmethod
@@ -97,10 +126,23 @@ class PronunciationAnalyzeRequest(BaseModel):
     accentLocale: PronunciationAccentLocale
     words: list[PronunciationWordInput] = Field(min_length=1)
 
-    @field_validator("sentenceText", "referenceAudioUrl")
+    @field_validator("sentenceText")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+    @field_validator("referenceAudioUrl")
+    @classmethod
+    def reference_url_must_be_plain_web_url(cls, value: str) -> str:
+        # SSRF 1차 방어(정적): http(s) URL 형태와 크리덴셜 금지만 여기서 검증한다.
+        # 허용 origin 목록은 설정값이라 라우트에서 검사한다 (analysis_service 헬퍼).
+        value = _validate_not_blank(value).strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in ("https", "http") or not parsed.hostname:
+            raise ValueError("must be an http(s) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("must not embed credentials")
+        return value
 
     @field_validator("userAudio")
     @classmethod

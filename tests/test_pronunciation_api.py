@@ -25,7 +25,9 @@ REQUEST_BODY = {
     "userAudio": USER_AUDIO_BASE64,
     "userAudioFormat": "m4a",
     "sentenceText": "There's nothing like.",
-    "referenceAudioUrl": "https://cdn.example.com/tts/1/EN_US/sentence.mp3",
+    "referenceAudioUrl": (
+        "https://d19azau1un4t7r.cloudfront.net/tts/1/EN_US/sentence.mp3"
+    ),
     "accentLocale": "EN_US",
     "words": [
         {"order": 1, "word": "There's"},
@@ -70,12 +72,12 @@ def patch_pipeline(
 ):
     service = "app.pronunciation.application.analysis_service"
 
-    def fake_decode(data, audio_format):
+    def fake_decode(data, audio_format, *args, **kwargs):
         if decode_error is not None:
             raise decode_error
         return DECODED
 
-    def fake_judge(url, wav, accent_locale, settings):
+    def fake_judge(url, wav, accent_locale, settings, *args, **kwargs):
         if judge_error is not None:
             raise judge_error
         return list(differences or []), b"reference-wav"

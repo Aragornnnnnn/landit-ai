@@ -1,9 +1,14 @@
 # 발음 분석 파이프라인을 오케스트레이션하는 서비스 모듈
 #
 # 흐름: 오디오 디코드 → [참조 다운로드 → Gemini 판정] ∥ [wav2vec2 강제 정렬] → order 병합.
-# BE 타임아웃(20초)보다 먼저 실패를 반환하도록 각 단계에 자체 타임아웃을 둔다.
+# 전체 wall-clock 예산(기본 17초)을 진입점에서 잡고 모든 단계(ffmpeg·다운로드·LLM·정렬·
+# 묘사)의 타임아웃을 남은 예산과 min으로 묶어, 어떤 조합에서도 BE 타임아웃(20초)보다
+# 먼저 반환한다. 필수 단계(판정·정렬)가 예산을 넘기면 503, 보조 단계(억양 확인·묘사)는
+# 결과에서 비운 채 판정만 반환한다.
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import replace
 from urllib.parse import urlparse
 
@@ -35,18 +40,42 @@ class ReferenceAudioUnavailableError(Exception):
     """참조 오디오 다운로드 실패."""
 
 
+class AnalysisBudgetExceededError(Exception):
+    """전체 wall-clock 예산 안에 필수 단계(판정·정렬)가 끝나지 못함."""
+
+
 _STATUS_BY_DIFFERENCE_TYPE = {
     "SOUND": PronunciationWordStatus.PHONEME_ERROR,
     "STRESS": PronunciationWordStatus.STRESS_ERROR,
 }
+
+# 남은 예산이 이보다 적으면 묘사 호출을 건너뛰고 판정만 반환한다
+_DESCRIBE_MIN_REMAINING_SECONDS = 1.0
+# 참조 오디오 다운로드 크기 상한 (문장 TTS mp3는 수백 KB 수준)
+_MAX_REFERENCE_AUDIO_BYTES = 10_000_000
+
+
+def is_reference_url_allowed(url: str, settings: Settings) -> bool:
+    """참조 URL의 origin이 설정된 allowlist에 있는지 검사한다 (SSRF 차단)."""
+    parsed = urlparse(url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return False
+    origin = f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+    allowed = {
+        entry.strip().lower().rstrip("/")
+        for entry in settings.pronunciation_reference_allowed_origins.split(",")
+        if entry.strip()
+    }
+    return origin in allowed
 
 
 def analyze_pronunciation(
     payload: PronunciationAnalyzeRequest,
     settings: Settings,
 ) -> PronunciationAnalyzeResponse:
+    deadline = time.monotonic() + settings.pronunciation_total_budget_seconds
     decoded = decode_user_audio(
-        payload.decoded_user_audio(), payload.userAudioFormat.value
+        payload.decoded_user_audio(), payload.userAudioFormat.value, deadline
     )
     ordered_words = sorted(payload.words, key=lambda word: word.order)
     # 숫자 단어("9")는 발화 철자("nine")로 정렬해야 타임스탬프가 맞는다
@@ -55,13 +84,17 @@ def analyze_pronunciation(
     ]
 
     contrasts = _accent_contrasts(ordered_words)
-    with ThreadPoolExecutor(max_workers=2 + len(contrasts)) as executor:
+    # with(=shutdown(wait=True))를 쓰면 예산을 넘긴 스레드를 기다리게 되므로
+    # 대기 없이 닫고 결과 수거에만 남은 예산을 적용한다
+    executor = ThreadPoolExecutor(max_workers=2 + len(contrasts))
+    try:
         judgment_future = executor.submit(
             _judge,
             payload.referenceAudioUrl,
             decoded.judgment_wav,
             payload.accentLocale.value,
             settings,
+            deadline,
         )
         alignment_future = executor.submit(
             align_words, decoded.alignment_wav, word_texts
@@ -71,16 +104,35 @@ def analyze_pronunciation(
             executor.submit(_check_accent, decoded.judgment_wav, contrast, settings)
             for contrast in contrasts
         ]
-        differences, reference_wav = judgment_future.result()
-        spans = alignment_future.result()
-        verdicts = [future.result() for future in accent_futures]
+        differences, reference_wav = _required_result(judgment_future, deadline)
+        spans = _required_result(alignment_future, deadline)
+        # 억양 확인은 보조 판정 — 예산을 넘기면 없는 것으로 친다
+        verdicts = [_auxiliary_result(future, deadline) for future in accent_futures]
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     differences = _describe(
-        differences, reference_wav, decoded.judgment_wav, settings
+        differences, reference_wav, decoded.judgment_wav, settings, deadline
     )
     results = _merge(ordered_words, spans, differences)
     _apply_accent_verdicts(results, ordered_words, verdicts)
     return PronunciationAnalyzeResponse(words=results)
+
+
+def _required_result(future, deadline: float):
+    try:
+        return future.result(timeout=max(0.0, deadline - time.monotonic()))
+    except FuturesTimeoutError as error:
+        raise AnalysisBudgetExceededError(
+            "analysis exceeded the total wall-clock budget"
+        ) from error
+
+
+def _auxiliary_result(future, deadline: float):
+    try:
+        return future.result(timeout=max(0.0, deadline - time.monotonic()))
+    except FuturesTimeoutError:
+        return None
 
 
 def _accent_contrasts(ordered_words) -> list[AccentContrast]:
@@ -139,8 +191,9 @@ def _judge(
     user_wav: bytes,
     accent_locale: str,
     settings: Settings,
+    deadline: float | None = None,
 ) -> tuple[list[JudgedDifference], bytes]:
-    reference_wav = _download_reference(reference_audio_url, settings)
+    reference_wav = _download_reference(reference_audio_url, settings, deadline)
     client = create_openai_client(settings)
     # 탐지는 PoC 검증본(24/24·오탐 0) 프롬프트로만 한다. 묘사는 _describe에서 따로 채운다.
     differences = judge_pronunciation(
@@ -150,6 +203,7 @@ def _judge(
         user_wav=user_wav,
         accent_locale=accent_locale,
         extended=False,
+        deadline=deadline,
     )
     return differences, reference_wav
 
@@ -159,9 +213,18 @@ def _describe(
     reference_wav: bytes,
     user_wav: bytes,
     settings: Settings,
+    deadline: float | None = None,
 ) -> list[JudgedDifference]:
-    """오류로 확정된 단어에만 묘사 호출을 붙인다. 오류가 없으면 호출하지 않는다."""
+    """오류로 확정된 단어에만 묘사 호출을 붙인다. 오류가 없으면 호출하지 않는다.
+
+    묘사는 보조 정보라 남은 예산이 부족하면 통째로 건너뛰고 판정만 반환한다.
+    """
     if not differences or not settings.pronunciation_describe_errors:
+        return differences
+    if (
+        deadline is not None
+        and deadline - time.monotonic() < _DESCRIBE_MIN_REMAINING_SECONDS
+    ):
         return differences
 
     client = create_openai_client(settings)
@@ -176,6 +239,7 @@ def _describe(
                     user_wav=user_wav,
                     word=difference.word,
                     error_type=difference.type,
+                    deadline=deadline,
                 ),
             ),
             differences,
@@ -197,22 +261,44 @@ def _with_description(
     )
 
 
-def _download_reference(url: str, settings: Settings) -> bytes:
+def _download_reference(
+    url: str, settings: Settings, deadline: float | None = None
+) -> bytes:
+    # 라우트에서 이미 거른 조건이지만 서비스 단독 호출에 대비해 재검증한다 (SSRF 차단)
+    if not is_reference_url_allowed(url, settings):
+        raise ReferenceAudioUnavailableError("reference url origin is not allowed")
+
+    timeout = settings.pronunciation_reference_download_timeout_seconds
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ReferenceAudioUnavailableError("analysis budget exhausted")
+        timeout = min(timeout, remaining)
+
+    content = bytearray()
     try:
-        response = httpx.get(
-            url,
-            timeout=settings.pronunciation_reference_download_timeout_seconds,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
+        # 자산 URL에 리다이렉트는 없어야 정상이므로 따라가지 않는다 (SSRF 우회 차단)
+        with httpx.stream(
+            "GET", url, timeout=timeout, follow_redirects=False
+        ) as response:
+            if not response.is_success:
+                raise ReferenceAudioUnavailableError(
+                    f"reference download failed: HTTP {response.status_code}"
+                )
+            for chunk in response.iter_bytes():
+                content.extend(chunk)
+                if len(content) > _MAX_REFERENCE_AUDIO_BYTES:
+                    raise ReferenceAudioUnavailableError(
+                        "reference audio is larger than the allowed size"
+                    )
     except httpx.HTTPError as error:
         raise ReferenceAudioUnavailableError(str(error)) from error
 
     suffix = urlparse(url).path.rsplit(".", 1)
     source_format = suffix[1].lower() if len(suffix) == 2 else "mp3"
     if source_format == "wav":
-        return response.content
-    return convert_to_wav(response.content, source_format)
+        return bytes(content)
+    return convert_to_wav(bytes(content), source_format, deadline)
 
 
 def _merge(

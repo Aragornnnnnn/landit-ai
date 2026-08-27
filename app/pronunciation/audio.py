@@ -6,7 +6,8 @@
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 MAX_AUDIO_DURATION_SECONDS = 30.0
@@ -33,12 +34,15 @@ class AudioDecodeError(Exception):
 
 @dataclass(frozen=True)
 class DecodedAudio:
-    judgment_wav: bytes
-    alignment_wav: bytes
+    # 유저 음성 파생 바이트는 예외 로그·Sentry에 노출되면 안 되므로 repr에서 제외한다
+    judgment_wav: bytes = field(repr=False)
+    alignment_wav: bytes = field(repr=False)
     duration_seconds: float
 
 
-def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
+def decode_user_audio(
+    data: bytes, audio_format: str, deadline: float | None = None
+) -> DecodedAudio:
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         raise AudioDecodeError("ffmpeg is not available on this server")
 
@@ -46,7 +50,7 @@ def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
         source = Path(tmp_dir) / f"input.{audio_format}"
         source.write_bytes(data)
 
-        duration = _probe_duration(source)
+        duration = _probe_duration(source, deadline)
         if duration > MAX_AUDIO_DURATION_SECONDS:
             raise AudioDecodeError(
                 f"audio is longer than {MAX_AUDIO_DURATION_SECONDS:.0f} seconds"
@@ -66,12 +70,15 @@ def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
                 "-af",
                 _EDGE_SILENCE_TRIM_FILTER,
                 str(trimmed),
-            ]
+            ],
+            deadline,
         )
-        if duration - _probe_duration(trimmed) >= _MIN_TRIMMED_SILENCE_SECONDS:
+        if duration - _probe_duration(trimmed, deadline) >= (
+            _MIN_TRIMMED_SILENCE_SECONDS
+        ):
             judgment = trimmed
         else:
-            _run_ffmpeg([str(source), str(judgment)])
+            _run_ffmpeg([str(source), str(judgment)], deadline)
         _run_ffmpeg(
             [
                 str(source),
@@ -80,7 +87,8 @@ def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
                 "-ac",
                 "1",
                 str(alignment),
-            ]
+            ],
+            deadline,
         )
         return DecodedAudio(
             judgment_wav=judgment.read_bytes(),
@@ -89,17 +97,19 @@ def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
         )
 
 
-def convert_to_wav(data: bytes, source_format: str) -> bytes:
+def convert_to_wav(
+    data: bytes, source_format: str, deadline: float | None = None
+) -> bytes:
     """참조 오디오(mp3 등)를 판정용 WAV로 변환한다."""
     with tempfile.TemporaryDirectory(prefix="pronunciation-ref-") as tmp_dir:
         source = Path(tmp_dir) / f"reference.{source_format}"
         target = Path(tmp_dir) / "reference.wav"
         source.write_bytes(data)
-        _run_ffmpeg([str(source), str(target)])
+        _run_ffmpeg([str(source), str(target)], deadline)
         return target.read_bytes()
 
 
-def _probe_duration(source: Path) -> float:
+def _probe_duration(source: Path, deadline: float | None = None) -> float:
     result = _run(
         [
             "ffprobe",
@@ -110,7 +120,8 @@ def _probe_duration(source: Path) -> float:
             "-of",
             "default=noprint_wrappers=1:nokey=1",
             str(source),
-        ]
+        ],
+        deadline,
     )
     try:
         return float(result.stdout.strip())
@@ -118,17 +129,26 @@ def _probe_duration(source: Path) -> float:
         raise AudioDecodeError("could not read audio duration") from error
 
 
-def _run_ffmpeg(args: list[str]) -> None:
-    _run(["ffmpeg", "-v", "error", "-y", "-i", *args])
+def _run_ffmpeg(args: list[str], deadline: float | None = None) -> None:
+    _run(["ffmpeg", "-v", "error", "-y", "-i", *args], deadline)
 
 
-def _run(command: list[str]) -> subprocess.CompletedProcess:
+def _run(
+    command: list[str], deadline: float | None = None
+) -> subprocess.CompletedProcess:
+    # 전체 분석 예산(deadline)이 있으면 subprocess 타임아웃을 남은 시간과 min으로 묶는다
+    timeout = _FFMPEG_TIMEOUT_SECONDS
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AudioDecodeError("audio processing timed out")
+        timeout = min(timeout, remaining)
     try:
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            timeout=_FFMPEG_TIMEOUT_SECONDS,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as error:
