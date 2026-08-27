@@ -339,12 +339,15 @@ def _contrast_for(
         or _normalize_for_tier(us.ipa) != _normalize_for_tier(target.ipa)
         else "minor"
     )
-    # 검수 확정: 제외 목록과 AU의 BATH 정책을 적용한다
+    # 검수 확정: 제외 목록을 적용한다. EN_AU는 억양 대조를 전면 비활성화한다 —
+    # 실제 호주 발화는 flap·BATH 변이로 미국식과 겹쳐, 참조 오디오가 영국식으로
+    # 생성된 인스턴스에서도 정당한 호주 발음이 오탐된다 (게이트 A 실측: Apple 호주
+    # 음성의 water flap·can't가 4/4 오탐).
     dropped_reason = DROPPED_CONTRAST_WORDS.get(word.lower())
-    if dropped_reason:
+    if locale == "EN_AU":
+        tier = "dropped(EN_AU 대조 전면 비활성화 — 게이트 A 실측)"
+    elif dropped_reason:
         tier = f"dropped({dropped_reason})"
-    elif locale == "EN_AU" and word.lower() in AU_VARIABLE_BATH_WORDS:
-        tier = "dropped(호주 변이 BATH — 미국식 모음도 정당한 호주 발음)"
     error_type = "STRESS" if is_stress_only else "PHONEME"
     review = None
 

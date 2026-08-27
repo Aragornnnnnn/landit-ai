@@ -12,6 +12,10 @@ from pathlib import Path
 MAX_AUDIO_DURATION_SECONDS = 30.0
 ALIGNMENT_SAMPLE_RATE = 16_000
 _FFMPEG_TIMEOUT_SECONDS = 10.0
+# 이보다 적게 잘리면 침묵 컷을 적용하지 않는다. 컷의 목적은 폰 녹음의 비정상적으로 긴
+# 가장자리 침묵(3초대) 제거다 — 1초 남짓의 자연스러운 리드인까지 자르면 판정 유형이
+# 바뀌는 회귀가 실측됐다 (골든 s2_stress, 침묵 1.1초).
+_MIN_TRIMMED_SILENCE_SECONDS = 2.0
 
 # 앞뒤 침묵 제거: -35dB (="얼마나 조용해야 침묵으로 칠 거냐"의 기준) 이하가 0.3초 넘게 이어지는 가장자리 구간을 자른다.
 # 발화 사이 침묵은 건드리지 않는다 (뒤집어서 앞만 자르는 방식을 양방향 적용).
@@ -49,17 +53,25 @@ def decode_user_audio(data: bytes, audio_format: str) -> DecodedAudio:
             )
 
         judgment = Path(tmp_dir) / "judgment.wav"
+        trimmed = Path(tmp_dir) / "trimmed.wav"
         alignment = Path(tmp_dir) / "alignment.wav"
         # 판정용은 앞뒤 침묵을 잘라 LLM이 듣는 길이를 줄인다 (지연이 오디오 길이에
-        # 비례한다). 정렬용은 타임스탬프가 앱의 원본 녹음 재생 구간이므로 원본 그대로 둔다.
+        # 비례하고, 폰 녹음의 가장자리 잡음이 오탐을 만든다). 단, 실제로 잘린 침묵이
+        # 1초 미만이면 원본을 쓴다 — 깨끗한 오디오에 컷을 적용하면 판정 유형이 바뀌는
+        # 회귀가 실측됐다 (LAN-373 게이트 B: s2_stress STRESS→SOUND).
+        # 정렬용은 타임스탬프가 앱의 원본 녹음 재생 구간이므로 항상 원본 그대로 둔다.
         _run_ffmpeg(
             [
                 str(source),
                 "-af",
                 _EDGE_SILENCE_TRIM_FILTER,
-                str(judgment),
+                str(trimmed),
             ]
         )
+        if duration - _probe_duration(trimmed) >= _MIN_TRIMMED_SILENCE_SECONDS:
+            judgment = trimmed
+        else:
+            _run_ffmpeg([str(source), str(judgment)])
         _run_ffmpeg(
             [
                 str(source),
