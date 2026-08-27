@@ -127,7 +127,8 @@ def _report(results: list[dict], extended: bool, out_dir: Path) -> None:
 
     print("\n===== 요약 =====")
     print(f"프롬프트: {'확장' if extended else 'PoC 검증본'}")
-    print(f"정확일치 {exact}/{len(ok)} · 오탐 run {false_positive_runs} · "
+    # 분모는 에러 run 포함 전체 — 에러 run을 빼면 성적이 실제보다 좋아 보인다
+    print(f"정확일치 {exact}/{len(results)} · 오탐 run {false_positive_runs} · "
           f"에러 {len(results) - len(ok)}")
     if latencies:
         print(f"지연 p50={statistics.median(latencies):.1f}s max={latencies[-1]}s")

@@ -473,13 +473,16 @@ def main() -> None:
 
     if not args.sentence and not args.input:
         parser.error("--sentence 또는 --input 중 하나가 필요하다")
-    if args.locale != "EN_US" and not espeak.espeak_available():
-        parser.error("EN_GB/EN_AU 생성에는 espeak-ng가 필요하다 (brew install espeak-ng)")
+    # EN_US도 cmudict 미수록 단어(신조어·고유명사)를 espeak으로 보충하므로 전 locale 필요
+    if not espeak.espeak_available():
+        parser.error("기준 데이터 생성에는 espeak-ng가 필요하다 (brew install espeak-ng)")
 
     if args.sentence:
         sources = [{"expressionId": None, "sentenceText": args.sentence}]
     else:
         sources = json.loads(args.input.read_text(encoding="utf-8"))
+    if not sources:
+        parser.error("입력에 표현이 하나도 없다 — --input 파일을 확인하라")
 
     results = []
     review_rows = []
@@ -510,6 +513,9 @@ def main() -> None:
                     "reviewReason": word.review_reason or "",
                 }
             )
+
+    if not review_rows:
+        parser.error("생성된 단어가 하나도 없다 — 입력 문장을 확인하라")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     payload_path = args.out_dir / f"reference_{args.locale}.json"

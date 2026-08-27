@@ -356,6 +356,83 @@ class AccentContrastNullHandlingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
 
+class MultiTokenWordTests(unittest.TestCase):
+    """words↔sentenceText 대조는 단어의 전체 토큰 시퀀스로 한다 (하이픈 합성어 등)."""
+
+    def post(self, sentence, word_names):
+        body = {
+            **REQUEST_BODY,
+            "sentenceText": sentence,
+            "words": [
+                {"order": i + 1, "word": w} for i, w in enumerate(word_names)
+            ],
+        }
+        with pipeline():
+            return make_client().post("/api/v1/pronunciation/analyze", json=body)
+
+    def test_hyphenated_word_matches_its_sentence_tokens(self):
+        response = self.post("Please check-in now.", ["Please", "check-in", "now"])
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_partial_token_match_is_still_rejected(self):
+        response = self.post("Please check-in now.", ["Please", "check", "now"])
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_tokenless_word_is_rejected(self):
+        response = self.post("Please check-in now.", ["Please", "check-in", "!!"])
+
+        self.assertEqual(response.status_code, 400)
+
+
+class AustralianContrastGuardTests(unittest.TestCase):
+    """EN_AU는 억양 대조 비활성 정책 — 낡은 AU 기준 데이터가 임포트돼도 서버가 무시한다."""
+
+    SERVICE = "app.pronunciation.application.analysis_service"
+
+    def post_with_contrast(self, locale):
+        body = {
+            **REQUEST_BODY,
+            "accentLocale": locale,
+            "words": [
+                {"order": 1, "word": "There's"},
+                {"order": 2, "word": "nothing"},
+                {
+                    "order": 3,
+                    "word": "like",
+                    "accentContrast": {"expected": "a clear t", "other": "a flap"},
+                },
+            ],
+        }
+        calls = []
+        with (
+            pipeline(),
+            patch(
+                f"{self.SERVICE}._check_accent",
+                side_effect=lambda *args, **kwargs: calls.append(1) or None,
+            ),
+        ):
+            response = make_client().post(
+                "/api/v1/pronunciation/analyze", json=body
+            )
+        return response, calls
+
+    def test_en_au_contrasts_are_ignored_with_a_warning(self):
+        with self.assertLogs(self.SERVICE, level="WARNING") as logs:
+            response, calls = self.post_with_contrast("EN_AU")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [])
+        self.assertTrue(any("EN_AU" in line for line in logs.output))
+
+    def test_other_locales_still_run_contrasts(self):
+        response, calls = self.post_with_contrast("EN_GB")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 1)
+
+
 class SlowFakeCompletions:
     def __init__(self, *, contents, delay=0.0):
         self.contents = list(contents)
@@ -449,6 +526,11 @@ class DescribeHardeningTests(unittest.TestCase):
         result, _ = self.describe('{"stressIndex": 1}')
 
         self.assertIsNone(result.stress_index)
+
+    def test_non_object_json_falls_back_to_none(self):
+        result, _ = self.describe("[1, 2]", error_type="SOUND")
+
+        self.assertIsNone(result)
 
     def test_exhausted_deadline_skips_the_call(self):
         result, client = self.describe(

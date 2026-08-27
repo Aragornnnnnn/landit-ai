@@ -173,6 +173,9 @@ def _call_with_retry(
 
 def _parse_differences(raw: str) -> list[JudgedDifference]:
     payload = json.loads(_strip_fences(raw))
+    if not isinstance(payload, dict):
+        # 배열·문자열 등 유효 JSON이지만 객체가 아닌 응답 — 스키마 위반으로 재시도한다
+        raise PronunciationJudgmentInvalidError("response must be a JSON object")
     differences = payload.get("differences")
     if not isinstance(differences, list):
         raise PronunciationJudgmentInvalidError("differences must be a list")

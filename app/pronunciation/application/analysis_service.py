@@ -5,6 +5,7 @@
 # 묘사)의 타임아웃을 남은 예산과 min으로 묶어, 어떤 조합에서도 BE 타임아웃(20초)보다
 # 먼저 반환한다. 필수 단계(판정·정렬)가 예산을 넘기면 503, 보조 단계(억양 확인·묘사)는
 # 결과에서 비운 채 판정만 반환한다.
+import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +19,7 @@ from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.pronunciation import (
     PronunciationAccentErrorType,
+    PronunciationAccentLocale,
     PronunciationAnalyzeRequest,
     PronunciationAnalyzeResponse,
     PronunciationWordResult,
@@ -34,6 +36,8 @@ from app.pronunciation.llm.accent_check import (
 from app.pronunciation.llm.compare import JudgedDifference, judge_pronunciation
 from app.pronunciation.llm.describe import ErrorDescription, describe_error
 from app.pronunciation.numbers import spell_out
+
+logger = logging.getLogger(__name__)
 
 
 class ReferenceAudioUnavailableError(Exception):
@@ -84,6 +88,14 @@ def analyze_pronunciation(
     ]
 
     contrasts = _accent_contrasts(ordered_words)
+    # EN_AU는 억양 대조 전면 비활성 정책(게이트 A 실측 — 정당한 호주 발음 오탐)이다.
+    # 비활성화 이전 기준 데이터가 임포트되는 사고에 대비한 서버측 방어.
+    if payload.accentLocale is PronunciationAccentLocale.EN_AU and contrasts:
+        logger.warning(
+            "ignoring %d accent contrast(s) for EN_AU request (policy: AU contrasts disabled)",
+            len(contrasts),
+        )
+        contrasts = []
     # with(=shutdown(wait=True))를 쓰면 예산을 넘긴 스레드를 기다리게 되므로
     # 대기 없이 닫고 결과 수거에만 남은 예산을 적용한다
     executor = ThreadPoolExecutor(max_workers=2 + len(contrasts))

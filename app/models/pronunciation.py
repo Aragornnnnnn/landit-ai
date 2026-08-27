@@ -167,11 +167,15 @@ class PronunciationAnalyzeRequest(BaseModel):
     def words_must_match_sentence(self) -> Self:
         # BE의 sentenceText(representative_sentence 스냅샷)와 words_payload가
         # 어긋난 요청을 조용히 처리하지 않도록 토큰 일치를 검증한다.
+        # 하이픈 합성어("check-in")처럼 한 단어가 여러 토큰이 될 수 있으므로
+        # 첫 토큰만이 아니라 전체 토큰 시퀀스를 이어붙여 대조한다.
         sentence_tokens = _word_tokens(self.sentenceText)
-        payload_tokens = [
-            _word_tokens(word.word)[0] if _word_tokens(word.word) else ""
-            for word in sorted(self.words, key=lambda word: word.order)
-        ]
+        payload_tokens: list[str] = []
+        for word in sorted(self.words, key=lambda word: word.order):
+            tokens = _word_tokens(word.word)
+            if not tokens:
+                raise ValueError("words do not match sentenceText")
+            payload_tokens.extend(tokens)
         if sentence_tokens != payload_tokens:
             raise ValueError("words do not match sentenceText")
         return self

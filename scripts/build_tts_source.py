@@ -37,6 +37,23 @@ def build(expressions_path: Path, reference_dir: Path, ids: set[int] | None) -> 
         expression_id = source["expressionId"]
         if ids is not None and expression_id not in ids:
             continue
+        # 3개 locale의 (order, word) 목록이 같아야 대조 병합이 안전하다.
+        # 어긋나면 잘못된 위치에 대조가 붙을 수 있으므로 생성을 중단한다.
+        base_shape = [
+            (w["order"], w["word"])
+            for w in references["EN_US"][expression_id]["words"]
+        ]
+        for locale in LOCALES[1:]:
+            shape = [
+                (w["order"], w["word"])
+                for w in references[locale][expression_id]["words"]
+            ]
+            if shape != base_shape:
+                raise ValueError(
+                    f"expression {expression_id}: {locale} word list differs "
+                    f"from EN_US — 기준 데이터를 먼저 맞춰라"
+                )
+
         words = []
         for base_word in references["EN_US"][expression_id]["words"]:
             item = {"order": base_word["order"], "word": base_word["word"]}

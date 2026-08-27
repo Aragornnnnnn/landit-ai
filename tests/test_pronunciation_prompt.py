@@ -152,6 +152,20 @@ class ResponseParsingTests(unittest.TestCase):
         self.assertEqual(judge(client), [])
         self.assertEqual(len(client.completions.calls), 2)
 
+    def test_non_object_json_recovers_on_retry(self):
+        # JSON은 유효하지만 객체가 아닌 응답(배열 등)도 스키마 위반으로 처리한다
+        client = FakeClient(contents=["[1, 2]", '{"differences": []}'])
+
+        self.assertEqual(judge(client), [])
+        self.assertEqual(len(client.completions.calls), 2)
+
+    def test_non_object_json_raises_schema_error_not_500(self):
+        client = FakeClient(contents=['"just a string"', "[]"])
+
+        with self.assertRaises(PronunciationJudgmentInvalidError):
+            judge(client)
+        self.assertEqual(len(client.completions.calls), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
