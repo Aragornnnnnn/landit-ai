@@ -49,7 +49,14 @@ def generate_memory_candidates(
             extractorVersion=EXTRACTOR_VERSION,
             candidates=[],
         )
+    return _candidates_with_embeddings(drafts, settings)
 
+
+def _candidates_with_embeddings(
+    drafts: list[MemoryCandidate],
+    settings: Settings,
+) -> MemoryCandidatesResponse:
+    """검증된 후보 내용에 서버가 생성한 임베딩을 결합해 응답 계약을 완성한다."""
     contents = [draft.content.strip() for draft in drafts]
     embeddings = request_embeddings(settings=settings, texts=contents)
     candidates = [
