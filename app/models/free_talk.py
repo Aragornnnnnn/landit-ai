@@ -56,12 +56,14 @@ class MemoryOperation(StrEnum):
 
 
 def _validate_timezone_aware(value: datetime) -> datetime:
+    """기억 시각은 사용자 시간대 해석을 위해 명시적 오프셋을 포함해야 한다."""
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must include a timezone offset")
     return value
 
 
 def _validate_unique_positive_ids(value: list[int]) -> list[int]:
+    """기억 참조 ID는 저장 계약상 양수이며 중복될 수 없다."""
     if any(identifier <= 0 for identifier in value):
         raise ValueError("ids must be positive")
     if len(value) != len(set(value)):
@@ -70,6 +72,7 @@ def _validate_unique_positive_ids(value: list[int]) -> list[int]:
 
 
 def _validate_finite_embedding(value: list[float]) -> list[float]:
+    """벡터 검색에 사용할 임베딩은 유한한 실수로만 구성되어야 한다."""
     if any(not math.isfinite(number) for number in value):
         raise ValueError("embedding values must be finite numbers")
     return value
@@ -118,6 +121,7 @@ class MemoryCandidatesRequest(BaseModel):
 
     @model_validator(mode="after")
     def history_must_contain_user_message(self) -> Self:
+        """후보 추출의 계보를 보장하려면 USER 원문이 하나 이상 필요하다."""
         if all(message.role != "USER" for message in self.conversationHistory):
             raise ValueError("conversation history requires at least one user message")
         return self
@@ -169,6 +173,7 @@ class MemoryCandidate(BaseModel):
 
     @model_validator(mode="after")
     def validity_range_must_be_ordered(self) -> Self:
+        """기억의 유효 종료 시각은 시작 시각보다 앞설 수 없다."""
         if (
             self.validFrom is not None
             and self.validTo is not None
@@ -249,6 +254,7 @@ class ComparableMemory(BaseModel):
 
     @model_validator(mode="after")
     def validity_range_must_be_ordered(self) -> Self:
+        """비교 기억의 유효 종료 시각은 시작 시각보다 앞설 수 없다."""
         if (
             self.validFrom is not None
             and self.validTo is not None
@@ -278,6 +284,7 @@ class MemoryResolution(BaseModel):
 
     @model_validator(mode="after")
     def superseded_ids_must_match_operation(self) -> Self:
+        """기존 기억을 참조하는 ID는 SUPERSEDE 연산에서만 허용한다."""
         if self.operation == MemoryOperation.SUPERSEDE:
             if not self.supersededMemoryIds:
                 raise ValueError("SUPERSEDE requires superseded memory IDs")

@@ -80,6 +80,7 @@ def _validated_resolution(
     data: dict[str, object],
     payload: MemoryResolutionRequest,
 ) -> MemoryResolutionResponse:
+    """AI resolution 응답을 형식과 후보별 참조 범위까지 검증한다."""
     try:
         response = MemoryResolutionResponse.model_validate(data)
         _validate_resolutions(response.resolutions, payload)
@@ -113,6 +114,7 @@ class _MemoryCandidateDraftResponse(BaseModel):
 def _candidate_drafts(
     envelope: _MemoryCandidateDraftResponse,
 ) -> list[MemoryCandidate]:
+    """임베딩은 AI 응답이 아닌 서버 생성값만 후보에 주입한다."""
     drafts = []
     for raw_candidate in envelope.candidates:
         if "embeddingModel" in raw_candidate or "embedding" in raw_candidate:
