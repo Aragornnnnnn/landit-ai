@@ -134,6 +134,7 @@ def _request_turn_completion(
     payload: FreeTalkTurnRequest,
     settings: Settings,
 ) -> dict[str, object]:
+    """CONTINUE 응답에 메시지가 없으면 같은 요청을 복구 계약으로 한 번 재호출한다."""
     data = request_json_completion(
         settings=settings,
         system_prompt=_turn_system_prompt(payload.responseMode, payload.characterId),
@@ -155,6 +156,7 @@ def _validated_turn_candidate(
     data: dict[str, object],
     payload: FreeTalkTurnRequest,
 ) -> _TurnCandidate:
+    """종료 의도에 따라 생성 필드를 정리하고 CONTINUE의 종료 판정은 무시한다."""
     candidate_data = dict(data)
     candidate_data["inferredTitle"] = None
     if payload.responseMode == FreeTalkResponseMode.NORMAL:
@@ -174,6 +176,7 @@ def _is_exit_detected(
     candidate: _TurnCandidate,
     payload: FreeTalkTurnRequest,
 ) -> bool:
+    """AI 종료 판정은 NORMAL 모드에서만 응답 계약에 반영한다."""
     if payload.responseMode != FreeTalkResponseMode.NORMAL:
         return False
     return candidate.userExitIntentDetected is True
@@ -184,6 +187,7 @@ def _turn_response(
     exit_detected: bool,
     used_memory_ids: list[int],
 ) -> FreeTalkTurnResponse:
+    """종료 응답은 메시지와 기억 ID를 노출하지 않는 계약으로 조립한다."""
     if exit_detected:
         return FreeTalkTurnResponse(
             userExitIntentDetected=True,
