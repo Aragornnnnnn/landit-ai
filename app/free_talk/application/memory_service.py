@@ -36,6 +36,19 @@ def generate_memory_candidates(
     payload: MemoryCandidatesRequest,
     settings: Settings,
 ) -> MemoryCandidatesResponse:
+    """프리톡에서 저장할 기억 후보를 추출한다.
+
+    후보별 임베딩을 생성한다.
+
+    Args:
+        payload: 후보 추출에 필요한 세션, 언어, 시간대 및 대화 이력.
+        settings: OpenRouter와 임베딩 호출에 사용하는 서버 설정.
+    Returns:
+        검증된 후보와 서버가 생성한 임베딩을 포함한 응답.
+    Raises:
+        AiResponseInvalidError: AI 또는 임베딩 응답이 계약을 위반할 때.
+        AiGenerationFailedError: AI/임베딩 호출 또는 모델 설정이 실패할 때.
+    """
     drafts = _validated_candidate_drafts(
         request_json_completion(
             settings=settings,
@@ -73,6 +86,17 @@ def generate_memory_resolution(
     payload: MemoryResolutionRequest,
     settings: Settings,
 ) -> MemoryResolutionResponse:
+    """장기기억 후보별로 추가, 대체 또는 무시 상태를 판정한다.
+
+    Args:
+        payload: 후보와 후보별 비교 대상 장기기억 목록.
+        settings: OpenRouter 호출에 사용하는 서버 설정.
+    Returns:
+        후보마다 하나의 검증된 상태 판정을 포함한 응답.
+    Raises:
+        AiResponseInvalidError: AI 응답이 후보별 참조 계약을 위반할 때.
+        AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
+    """
     return _validated_resolution(
         request_json_completion(
             settings=settings,

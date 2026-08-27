@@ -113,6 +113,17 @@ def create_memory_candidates(
     payload: MemoryCandidatesRequest,
     request: Request,
 ) -> ApiResponse[MemoryCandidatesResponse]:
+    """완료된 프리톡의 장기기억 저장 후보를 추출한다.
+
+    Args:
+        payload: 장기기억 후보 추출 요청.
+        request: 애플리케이션 설정을 보유한 FastAPI 요청.
+    Returns:
+        검증된 장기기억 후보와 임베딩을 담은 성공 응답.
+    Raises:
+        ApiException: AI 응답이 잘못되었으면 502, AI 호출이 실패했으면
+            503을 발생시킨다.
+    """
     return success_response(_generate(payload, request, generate_memory_candidates))
 
 
@@ -124,6 +135,18 @@ def create_memory_resolution(
     payload: MemoryResolutionRequest,
     request: Request,
 ) -> ApiResponse[MemoryResolutionResponse]:
+    """장기기억 후보별 저장 상태를 판정한다.
+
+    Args:
+        payload: 후보와 후보별 비교 대상 장기기억을 담은 상태 판정
+            요청.
+        request: 애플리케이션 설정을 보유한 FastAPI 요청.
+    Returns:
+        후보별 상태 판정을 담은 성공 응답.
+    Raises:
+        ApiException: AI 응답이 잘못되었으면 502, AI 호출이 실패했으면
+            503을 발생시킨다.
+    """
     return success_response(_generate(payload, request, generate_memory_resolution))
 
 
