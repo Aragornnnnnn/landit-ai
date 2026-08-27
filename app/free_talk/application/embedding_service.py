@@ -50,6 +50,17 @@ def generate_memory_query_embedding(
     payload: MemoryQueryEmbeddingRequest,
     settings: Settings,
 ) -> MemoryQueryEmbeddingResponse:
+    """장기기억 검색어를 고정 임베딩 모델의 벡터로 변환한다.
+
+    Args:
+        payload: 임베딩할 검색어 요청.
+        settings: 임베딩 호출에 사용하는 서버 설정.
+    Returns:
+        임베딩 모델 식별자와 1536차원 벡터를 포함한 응답.
+    Raises:
+        AiResponseInvalidError: 임베딩 응답이 벡터 계약을 위반할 때.
+        AiGenerationFailedError: 임베딩 호출에 실패할 때.
+    """
     vector = request_embeddings(settings=settings, texts=[payload.query])[0]
     try:
         return MemoryQueryEmbeddingResponse(

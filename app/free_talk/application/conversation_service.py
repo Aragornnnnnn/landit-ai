@@ -96,6 +96,17 @@ def generate_opening(
     payload: FreeTalkOpeningRequest,
     settings: Settings,
 ) -> FreeTalkOpeningResponse:
+    """프리톡 시작 메시지를 생성하고 사용된 기억 ID를 검증한다.
+
+    Args:
+        payload: 캐릭터, 주제 및 참고할 장기기억이 담긴 시작 요청.
+        settings: OpenRouter 호출에 사용하는 서버 설정.
+    Returns:
+        생성 메시지와 문맥 부분집합으로 정규화한 기억 ID를 포함한 응답.
+    Raises:
+        AiResponseInvalidError: AI 응답 또는 사용 기억 ID가 계약을 위반할 때.
+        AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
+    """
     data = request_json_completion(
         settings=settings,
         system_prompt=_opening_system_prompt(payload.characterId),
@@ -120,6 +131,17 @@ def generate_turn(
     payload: FreeTalkTurnRequest,
     settings: Settings,
 ) -> FreeTalkTurnResponse:
+    """프리톡 다음 턴과 종료 및 기억 사용 계약을 생성한다.
+
+    Args:
+        payload: 최근 메시지, 응답 모드 및 참고 기억이 담긴 턴 요청.
+        settings: OpenRouter 호출에 사용하는 서버 설정.
+    Returns:
+        종료 여부에 맞게 메시지와 사용 기억 ID를 조립한 턴 응답.
+    Raises:
+        AiResponseInvalidError: AI 응답 또는 사용 기억 ID가 계약을 위반할 때.
+        AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
+    """
     data = _request_turn_completion(payload, settings)
     try:
         candidate = _validated_turn_candidate(data, payload)

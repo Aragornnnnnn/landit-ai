@@ -161,6 +161,17 @@ def create_memory_query_embedding(
     payload: MemoryQueryEmbeddingRequest,
     request: Request,
 ) -> ApiResponse[MemoryQueryEmbeddingResponse]:
+    """장기기억 검색어를 임베딩 벡터로 변환한다.
+
+    Args:
+        payload: 임베딩할 검색어 요청.
+        request: 애플리케이션 설정을 보유한 FastAPI 요청.
+    Returns:
+        임베딩 모델과 벡터를 담은 성공 응답.
+    Raises:
+        ApiException: AI 응답이 잘못되었으면 502, AI 호출이 실패했으면
+            503을 발생시킨다.
+    """
     return success_response(_generate(payload, request, generate_memory_query_embedding))
 
 
