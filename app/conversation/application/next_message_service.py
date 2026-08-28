@@ -223,27 +223,31 @@ def _recover_next_message_response(
     data: dict[str, Any],
     request: NextMessageRequest,
 ) -> NextMessageResponse:
-    ai_message = _remove_adjacent_repeated_sentences(
-        _response_text(data, "aiMessage", request.nextQuestion.questionEn),
-    )
-    translated_message = _remove_adjacent_repeated_sentences(
-        _response_text(
-            data,
-            "translatedMessage",
-            request.nextQuestion.questionKo,
+    acknowledgement = _remove_fixed_question(
+        _remove_adjacent_repeated_sentences(
+            _response_text(data, "acknowledgement", "Got it."),
         ),
+        request.nextQuestion.questionEn,
+        "Got it.",
     )
-    if request.nextQuestion.questionEn not in ai_message:
-        ai_message = f"{ai_message} {request.nextQuestion.questionEn}"
-    if request.nextQuestion.questionKo not in translated_message:
-        translated_message = f"{translated_message} {request.nextQuestion.questionKo}"
+    translated_acknowledgement = _remove_fixed_question(
+        _remove_adjacent_repeated_sentences(
+            _response_text(
+                data,
+                "translatedAcknowledgement",
+                "알겠어.",
+            ),
+        ),
+        request.nextQuestion.questionKo,
+        "알겠어.",
+    )
     try:
         status = GoalCompletionStatus(data.get("goalCompletionStatus"))
     except (TypeError, ValueError):
         status = GoalCompletionStatus.PARTIAL
     return NextMessageResponse(
-        aiMessage=ai_message,
-        translatedMessage=translated_message,
+        acknowledgement=acknowledgement,
+        translatedAcknowledgement=translated_acknowledgement,
         goalCompletionStatus=status,
     )
 
@@ -251,6 +255,11 @@ def _recover_next_message_response(
 def _response_text(data: dict[str, Any], key: str, fallback: str) -> str:
     value = data.get(key)
     return value.strip() if isinstance(value, str) and value.strip() else fallback
+
+
+def _remove_fixed_question(value: str, fixed_question: str, fallback: str) -> str:
+    acknowledgement = value.replace(fixed_question, "").strip()
+    return acknowledgement or fallback
 
 
 def _remove_adjacent_repeated_sentences(text: str) -> str:
@@ -1562,7 +1571,7 @@ def _next_message_system_prompt() -> str:
             "Role:\n"
             "You generate the next visible AI utterance for a topic-based English free talk scenario. "
             "The user just sent an English utterance. "
-            "Write a short natural acknowledgement, then connect to the backend-provided next fixed question."
+            "Write a short natural acknowledgement that connects to the backend-provided next fixed question."
         ),
         (
             "Counterpart Perspective:\n"
@@ -1582,12 +1591,12 @@ def _next_message_system_prompt() -> str:
             "Fixed Question Policy:\n"
             "Do not choose a new next question. "
             "Do not change the intent of the next fixed question. "
-            "Use the provided next fixed question as the question part of aiMessage. "
-            "Use the provided next fixed question Korean as the question part of translatedMessage. "
+            "Use the provided next fixed question only as context for a natural transition. "
+            "Do not include the next fixed question in acknowledgement. "
+            "Do not include the next fixed question Korean in translatedAcknowledgement. "
             "If the next fixed question Korean is casual banmal, the Korean acknowledgement must also be casual banmal. "
             "If the next fixed question Korean is polite, the Korean acknowledgement must also be polite. "
-            "Do not rewrite the next fixed question Korean itself. "
-            "Always add one short acknowledgement before the fixed question. "
+            "Return only one short acknowledgement that will be played before the fixed question. "
             "Keep the acknowledgement easy to continue from. "
             "Do not use a standalone generic acknowledgement such as 'I see.' "
             "Do not mechanically summarize or quote the user. "
@@ -1595,7 +1604,7 @@ def _next_message_system_prompt() -> str:
             "Prefer a human conversational reaction over keyword restatement. "
             "Use exactly one acknowledgement clause. "
             "Do not stack equivalent reactions such as 'Thanks, I appreciate it'. "
-            "Do not repeat the acknowledgement or fixed question."
+            "Do not repeat the acknowledgement."
         ),
         (
             "Goal Completion Policy:\n"
@@ -1617,17 +1626,17 @@ def _next_message_system_prompt() -> str:
         (
             "Conversation Style Examples:\n"
             "Good JSON for user 'I like pizza because it is spicy.': "
-            '{"aiMessage":"Sounds tasty. Do you cook often?","translatedMessage":"맛있겠다. 요리는 자주 해?","goalCompletionStatus":"PARTIAL"}\n'
+            '{"acknowledgement":"Sounds tasty.","translatedAcknowledgement":"맛있겠다.","goalCompletionStatus":"PARTIAL"}\n'
             "Good JSON for blunt user 'Anywhere is fine. I don't care.': "
-            '{"aiMessage":"Okay, anywhere works. What would make tonight feel comfortable for you?","translatedMessage":"그래, 어디든 괜찮구나. 오늘 밤이 편하려면 뭐가 좋을까?","goalCompletionStatus":"PARTIAL"}\n'
-            "Bad aiMessage style: 'I see.'\n"
-            "Bad aiMessage style: 'You said you like spicy pizza because it is spicy. What else do you like?'\n"
-            "Bad output format: Sounds tasty. Do you cook often?"
+            '{"acknowledgement":"Okay, anywhere works.","translatedAcknowledgement":"그래, 어디든 괜찮구나.","goalCompletionStatus":"PARTIAL"}\n'
+            "Bad acknowledgement style: 'I see.'\n"
+            "Bad acknowledgement style: 'You said you like spicy pizza because it is spicy.'\n"
+            "Bad output format: Sounds tasty."
         ),
         (
             "Self-check before final JSON:\n"
-            "1. aiMessage contains the exact next fixed question English unchanged. "
-            "2. translatedMessage contains the exact next fixed question Korean unchanged. "
+            "1. acknowledgement does not contain the next fixed question English. "
+            "2. translatedAcknowledgement does not contain the next fixed question Korean. "
             "3. goalCompletionStatus is judged from Scenario conversation goal and Conversation history. "
             "4. The counterpart perspective stays consistent with the conversation history. "
             "5. No sentence or question is repeated. "
@@ -1636,9 +1645,9 @@ def _next_message_system_prompt() -> str:
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"aiMessage":"...","translatedMessage":"...","goalCompletionStatus":"PARTIAL"}. '
-            "aiMessage must be English. "
-            "translatedMessage must be a natural Korean translation of aiMessage. "
+            '{"acknowledgement":"...","translatedAcknowledgement":"...","goalCompletionStatus":"PARTIAL"}. '
+            "acknowledgement must be English. "
+            "translatedAcknowledgement must be a natural Korean translation of acknowledgement. "
             "goalCompletionStatus must be NOT_STARTED, PARTIAL, or COMPLETED. "
             "Never return plain text outside the JSON object."
         ),
