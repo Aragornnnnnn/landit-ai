@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from app.api.conversation import router as conversation_router
 from app.api.free_talk import router as free_talk_router
 from app.api.health import router as health_router
+from app.api.pronunciation import router as pronunciation_router
 from app.common.exception_handlers import register_exception_handlers
 from app.core.config import Settings
 from app.core.logging import configure_logging
@@ -31,6 +32,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     fastapi_app.include_router(health_router)
     fastapi_app.include_router(conversation_router)
     fastapi_app.include_router(free_talk_router)
+    fastapi_app.include_router(pronunciation_router)
     register_exception_handlers(fastapi_app)
     init_metrics(fastapi_app, resolved_settings)
 

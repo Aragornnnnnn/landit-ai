@@ -12,7 +12,7 @@ from app.common.errors import ApiException, ErrorCode
 from app.common.response import error_response, success_response
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
-from app.core.sentry import init_sentry
+from app.core.sentry import init_sentry, scrub_sensitive_request_data
 from app.main import create_app
 
 
@@ -441,6 +441,10 @@ class SentryInitializationTests(unittest.TestCase):
             environment="local",
             traces_sample_rate=0.0,
             integrations=[logging_integration],
+            before_send=scrub_sensitive_request_data,
+            include_local_variables=False,
+            max_request_body_size="never",
+            send_default_pii=False,
         )
 
 
