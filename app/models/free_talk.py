@@ -381,6 +381,9 @@ class MemoryContext(BaseModel):
     memoryId: int = Field(gt=0)
     memoryType: MemoryType
     content: str = Field(max_length=500)
+    validFrom: datetime | None = None
+    validTo: datetime | None = None
+    observedAt: datetime | None = None
 
     @field_validator("content", mode="before")
     @classmethod

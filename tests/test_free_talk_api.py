@@ -107,6 +107,9 @@ def valid_memory_context(memory_id=77, **overrides):
         "memoryId": memory_id,
         "memoryType": "EVENT",
         "content": "사용자는 다음 주에 면접이 있다.",
+        "validFrom": "2026-09-01T09:00:00",
+        "validTo": "2026-09-30T18:00:00",
+        "observedAt": "2026-08-28T10:30:00",
     }
     context.update(overrides)
     return context
@@ -397,6 +400,9 @@ class FreeTalkApiTests(unittest.TestCase):
         user_prompt = fake_openai.completions.calls[0]["messages"][1]["content"]
         system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
         self.assertIn("memoryContext", user_prompt)
+        self.assertIn('"validFrom": "2026-09-01T09:00:00"', user_prompt)
+        self.assertIn('"validTo": "2026-09-30T18:00:00"', user_prompt)
+        self.assertIn('"observedAt": "2026-08-28T10:30:00"', user_prompt)
         self.assertIn("untrusted reference data", system_prompt)
 
     def test_opening_normalizes_used_memory_id_outside_context(self):
@@ -2315,5 +2321,7 @@ class FreeTalkApiTests(unittest.TestCase):
             schemas["FreeTalkClosingResponse"]["properties"],
         )
         self.assertIn("memoryContext", schemas["FreeTalkOpeningRequest"]["properties"])
+        for field in ("validFrom", "validTo", "observedAt"):
+            self.assertIn(field, schemas["MemoryContext"]["properties"])
         self.assertIn("usedMemoryIds", schemas["FreeTalkOpeningResponse"]["properties"])
         self.assertIn("embedding", schemas["MemoryQueryEmbeddingResponse"]["properties"])
