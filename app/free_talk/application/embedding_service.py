@@ -5,7 +5,7 @@ import logging
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.free_talk.llm.embeddings import request_embeddings
+from app.free_talk.llm.embeddings import EMBEDDING_MODEL, request_embeddings
 from app.free_talk.llm.json_completion import (
     AiResponseInvalidError,
     request_json_completion,
@@ -13,6 +13,8 @@ from app.free_talk.llm.json_completion import (
 from app.models.free_talk import (
     ConversationEmbeddingsRequest,
     ConversationEmbeddingsResponse,
+    MemoryQueryEmbeddingRequest,
+    MemoryQueryEmbeddingResponse,
 )
 
 
@@ -39,6 +41,31 @@ def generate_conversation_embeddings(
                     for text, vector in zip(excerpt_texts, vectors, strict=True)
                 ],
             },
+        )
+    except (ValidationError, ValueError) as exc:
+        raise AiResponseInvalidError from exc
+
+
+def generate_memory_query_embedding(
+    payload: MemoryQueryEmbeddingRequest,
+    settings: Settings,
+) -> MemoryQueryEmbeddingResponse:
+    """장기기억 검색어를 고정 임베딩 모델의 벡터로 변환한다.
+
+    Args:
+        payload: 임베딩할 검색어 요청.
+        settings: 임베딩 호출에 사용하는 서버 설정.
+    Returns:
+        임베딩 모델 식별자와 1536차원 벡터를 포함한 응답.
+    Raises:
+        AiResponseInvalidError: 임베딩 응답이 벡터 계약을 위반할 때.
+        AiGenerationFailedError: 임베딩 호출에 실패할 때.
+    """
+    vector = request_embeddings(settings=settings, texts=[payload.query])[0]
+    try:
+        return MemoryQueryEmbeddingResponse(
+            embeddingModel=EMBEDDING_MODEL,
+            embedding=vector,
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
