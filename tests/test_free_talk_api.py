@@ -272,6 +272,76 @@ def valid_conversation_embeddings_payload(**overrides):
     return payload
 
 
+def valid_memory_candidates_payload(**overrides):
+    payload = {
+        "sessionId": 300,
+        "characterId": "chloe",
+        "targetLocale": "EN",
+        "baseLocale": "KR",
+        "timezone": "Asia/Seoul",
+        "conversationHistory": [
+            {
+                "messageId": 3001,
+                "turnNumber": 1,
+                "role": "AI",
+                "content": "How was your weekend?",
+                "translatedContent": "주말은 어땠어?",
+                "occurredAt": "2026-08-25T20:00:00+09:00",
+            },
+            {
+                "messageId": 3002,
+                "turnNumber": 1,
+                "role": "USER",
+                "content": "I have an interview next Friday.",
+                "translatedContent": None,
+                "occurredAt": "2026-08-25T20:10:00+09:00",
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def valid_memory_candidate_completion(**overrides):
+    candidate = {
+        "candidateIndex": 0,
+        "memoryType": "EVENT",
+        "content": "사용자는 2026년 8월 28일에 면접이 있다.",
+        "contentLocale": "KR",
+        "sourceMessageIds": [3002],
+        "confidence": 0.94,
+        "validFrom": "2026-08-25T20:10:00+09:00",
+        "validTo": None,
+    }
+    candidate.update(overrides)
+    return {"candidates": [candidate]}
+
+
+def valid_memory_resolution_payload(**overrides):
+    payload = {
+        "candidates": [
+            {
+                "candidateIndex": 0,
+                "content": "사용자는 면접에 합격했다.",
+                "memoryType": "EVENT",
+                "sourceMessageIds": [3002],
+                "observedAt": "2026-08-29T19:20:00+09:00",
+                "comparableMemories": [
+                    {
+                        "memoryId": 77,
+                        "content": "사용자는 다음 주에 면접이 있다.",
+                        "validFrom": "2026-08-25T20:10:00+09:00",
+                        "validTo": None,
+                        "observedAt": "2026-08-25T20:10:00+09:00",
+                    },
+                ],
+            },
+        ],
+    }
+    payload.update(overrides)
+    return payload
+
+
 class FreeTalkApiTests(unittest.TestCase):
     def _app(self, **overrides):
         settings = {
@@ -1688,6 +1758,415 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_memory_candidates_returns_normalized_candidates_and_embeddings(self):
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(valid_memory_candidate_completion())],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        candidate = response.json()["data"]["candidates"][0]
+        self.assertEqual(candidate["candidateIndex"], 0)
+        self.assertEqual(
+            response.json()["data"]["extractorVersion"],
+            "memory-candidate-v1",
+        )
+        self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
+        self.assertEqual(len(candidate["embedding"]), 1536)
+        self.assertEqual(
+            fake_openai.embeddings.calls[0]["model"],
+            "openai/text-embedding-3-small",
+        )
+
+    def test_memory_candidates_rejects_ai_message_as_source(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(sourceMessageIds=[3001]),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_rejects_non_contiguous_candidate_index(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "candidates": [
+                            valid_memory_candidate_completion()["candidates"][0]
+                            | {"candidateIndex": 1},
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_candidates_allows_empty_candidate_list(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps({"candidates": []})])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "candidates": [],
+                "extractorVersion": "memory-candidate-v1",
+            },
+        )
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_rejects_locale_mismatch_without_embedding_call(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(contentLocale="EN"),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_rejects_naive_validity_time(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        validFrom="2026-08-25T20:10:00",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_rejects_malformed_json_without_repair(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                "not json",
+                json.dumps(valid_memory_candidate_completion()),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_memory_candidates_rejects_missing_fields_without_repair(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps({"candidates": [{}]}),
+                json.dumps(valid_memory_candidate_completion()),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_memory_candidates_does_not_repair_type_errors(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(candidateIndex="zero"),
+                ),
+                json.dumps(valid_memory_candidate_completion()),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_memory_candidates_trims_content_before_length_validation(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(content="x" * 500 + " "),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            valid_memory_candidates_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["data"]["candidates"][0]["content"]), 500)
+
+    def test_memory_resolution_returns_resolution_for_each_candidate(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["resolutions"][0]["operation"],
+            "SUPERSEDE",
+        )
+        self.assertEqual(
+            fake_openai.completions.calls[0]["response_format"],
+            {"type": "json_object"},
+        )
+
+    def test_memory_resolution_rejects_missing_candidate_resolution(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps({"resolutions": []})])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_unknown_superseded_memory(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [999],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_superseded_ids_for_ignore(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "IGNORE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_memory_from_another_candidate(self):
+        payload = valid_memory_resolution_payload()
+        payload["candidates"].append(
+            {
+                "candidateIndex": 1,
+                "content": "사용자는 새 직장에 적응 중이다.",
+                "memoryType": "EVENT",
+                "sourceMessageIds": [3002],
+                "observedAt": "2026-08-29T19:20:00+09:00",
+                "comparableMemories": [
+                    {
+                        "memoryId": 88,
+                        "content": "사용자는 새 직장을 시작했다.",
+                        "validFrom": "2026-08-25T20:10:00+09:00",
+                        "validTo": None,
+                        "observedAt": "2026-08-25T20:10:00+09:00",
+                    },
+                ],
+            },
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [88],
+                            },
+                            {
+                                "candidateIndex": 1,
+                                "operation": "ADD",
+                                "supersededMemoryIds": [],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_memory_resolution_rejects_missing_fields_without_repair(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps({}),
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
+    def test_memory_resolution_does_not_repair_type_errors(self):
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "INVALID",
+                                "supersededMemoryIds": [],
+                            },
+                        ],
+                    },
+                ),
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            valid_memory_resolution_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 1)
+
     def test_openapi_exposes_all_free_talk_generation_routes(self):
         paths = self._app().openapi()["paths"]
 
@@ -1698,15 +2177,23 @@ class FreeTalkApiTests(unittest.TestCase):
             "/api/v1/free-talk/closing",
             "/api/v1/free-talk/expression-recommendations",
             "/api/v1/free-talk/conversation-embeddings",
+            "/api/v1/free-talk/memory-candidates",
+            "/api/v1/free-talk/memory-resolution",
         ):
             with self.subTest(path=path):
                 self.assertIn(path, paths)
+        self.assertNotIn("/api/v1/free-talk/memory-query-embedding", paths)
         self.assertNotIn("/api/v1/free-talk/expression-learning-content", paths)
         self.assertNotIn("/api/v1/free-talk/embeddings", paths)
 
     def test_openapi_exposes_closing_title_contract(self):
         schemas = self._app().openapi()["components"]["schemas"]
 
+        self.assertIn(
+            "extractorVersion",
+            schemas["MemoryCandidatesResponse"]["properties"],
+        )
+        self.assertNotIn("sensitivity", schemas["MemoryCandidate"]["properties"])
         self.assertIn(
             "titleGenerationRequired",
             schemas["FreeTalkClosingRequest"]["properties"],
