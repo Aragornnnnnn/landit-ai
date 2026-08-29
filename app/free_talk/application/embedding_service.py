@@ -66,7 +66,7 @@ def _extract_excerpt_texts(
         user_prompt=user_prompt,
     )
     try:
-        return _validated_excerpt_texts(repaired_data)
+        return _validated_excerpt_texts(repaired_data, limit_excess=True)
     except _RepairableExcerptError as repair_exc:
         _log_invalid_excerpts("repair", repair_exc, repaired_data)
         raise
@@ -88,7 +88,11 @@ def _log_invalid_excerpts(
     )
 
 
-def _validated_excerpt_texts(data: dict[str, object]) -> list[str]:
+def _validated_excerpt_texts(
+    data: dict[str, object],
+    *,
+    limit_excess: bool = False,
+) -> list[str]:
     if "excerpts" not in data:
         raise _RepairableExcerptError("missing_excerpts")
     excerpts = data["excerpts"]
@@ -96,13 +100,13 @@ def _validated_excerpt_texts(data: dict[str, object]) -> list[str]:
         raise AiResponseInvalidError("invalid_excerpts_type")
     if not excerpts:
         raise _RepairableExcerptError("empty_excerpts")
-    if len(excerpts) > _MAX_EXCERPTS:
+    if len(excerpts) > _MAX_EXCERPTS and not limit_excess:
         raise _RepairableExcerptError("too_many_excerpts")
     if any(not isinstance(text, str) for text in excerpts):
         raise AiResponseInvalidError("invalid_excerpt_type")
     if any(not text.strip() for text in excerpts):
         raise _RepairableExcerptError("blank_excerpt")
-    return [text.strip() for text in excerpts]
+    return [text.strip() for text in excerpts[:_MAX_EXCERPTS]]
 
 
 def _extraction_repair_system_prompt(reason: str) -> str:
