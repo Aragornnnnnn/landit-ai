@@ -158,6 +158,13 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "INVALID_AUDIO")
 
+    def test_webm_format_is_accepted(self):
+        # 웹(크롬 MediaRecorder) 녹음 형식 — BE가 통과시키기 전에 AI가 먼저 받아야 한다
+        response = self.post(body={**REQUEST_BODY, "userAudioFormat": "webm"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+
     def test_judgment_invalid_returns_502(self):
         response = self.post(
             judge_error=PronunciationJudgmentInvalidError("bad json")
