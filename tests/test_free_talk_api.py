@@ -1732,6 +1732,36 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
 
+    def test_conversation_embeddings_limits_too_many_excerpts_after_repair(self):
+        repaired_excerpts = [f"Sentence {index}." for index in range(5)]
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps({"excerpts": repaired_excerpts}),
+                json.dumps({"excerpts": repaired_excerpts}),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/conversation-embeddings",
+            valid_conversation_embeddings_payload(),
+            fake_openai,
+        )
+
+        expected_excerpts = repaired_excerpts[:4]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [
+                excerpt["excerptText"]
+                for excerpt in response.json()["data"]["excerpts"]
+            ],
+            expected_excerpts,
+        )
+        self.assertEqual(
+            fake_openai.embeddings.calls[0]["input"],
+            expected_excerpts,
+        )
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
     def test_conversation_embeddings_rejects_wrong_dimensions(self):
         response = self._post(
             "/api/v1/free-talk/conversation-embeddings",
