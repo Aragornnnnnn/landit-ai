@@ -1,18 +1,29 @@
 # 발음 분석용 오디오 디코드·변환 유틸리티 모듈
 #
-# ffmpeg subprocess로 m4a/mp3/wav를 두 가지 WAV로 변환한다:
+# ffmpeg subprocess로 m4a/mp3/wav/webm을 두 가지 WAV로 변환한다:
 #   - 판정용: 원 샘플레이트 유지 (PoC에서 16kHz 축소 시 오분류가 발생해 원본 유지)
 #   - 정렬용: wav2vec2 입력 규격인 16kHz mono
+import logging
 import shutil
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from itertools import count
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 MAX_AUDIO_DURATION_SECONDS = 30.0
 ALIGNMENT_SAMPLE_RATE = 16_000
 _FFMPEG_TIMEOUT_SECONDS = 10.0
+# duration 폴백 디코드 상한. 크롬 MediaRecorder의 webm은 스트리밍 컨테이너라
+# duration 메타데이터가 없는 경우가 흔한데(ffprobe가 N/A 반환 — 실측 확인),
+# opus는 압축률이 높아 크기 제한(10MB) 안에서도 수십 분짜리 오디오가 가능하다.
+# 상한 없이 디코드해 길이를 재면 그 자체가 DoS 경로가 되므로 31초에서 끊는다.
+_PROBE_DECODE_LIMIT_SECONDS = MAX_AUDIO_DURATION_SECONDS + 1.0
+# 폴백 발생 빈도 관측용 프로세스 누적 카운트 (warning 로그에 실린다)
+_duration_fallback_count = count(1)
 # 이보다 적게 잘리면 침묵 컷을 적용하지 않는다. 컷의 목적은 폰 녹음의 비정상적으로 긴
 # 가장자리 침묵(3초대) 제거다 — 1초 남짓의 자연스러운 리드인까지 자르면 판정 유형이
 # 바뀌는 회귀가 실측됐다 (골든 s2_stress, 침묵 1.1초).
@@ -50,7 +61,7 @@ def decode_user_audio(
         source = Path(tmp_dir) / f"input.{audio_format}"
         source.write_bytes(data)
 
-        duration = _probe_duration(source, deadline)
+        duration = _measure_duration(source, Path(tmp_dir), deadline)
         if duration > MAX_AUDIO_DURATION_SECONDS:
             raise AudioDecodeError(
                 f"audio is longer than {MAX_AUDIO_DURATION_SECONDS:.0f} seconds"
@@ -107,6 +118,40 @@ def convert_to_wav(
         source.write_bytes(data)
         _run_ffmpeg([str(source), str(target)], deadline)
         return target.read_bytes()
+
+
+def _measure_duration(
+    source: Path, tmp_dir: Path, deadline: float | None = None
+) -> float:
+    """오디오 실길이를 잰다. 컨테이너에 duration 메타데이터가 없으면 유계 디코드로 폴백.
+
+    30초 검증은 어떤 경로로도 우회되지 않아야 한다(fail-closed): 폴백은 최대
+    31초만 디코드하므로 아무리 긴 파일이 와도 CPU를 31초어치만 쓰고, 컷에 걸린
+    출력은 30초 이상으로 측정돼 거부된다.
+    """
+    try:
+        duration = _probe_duration(source, deadline)
+    except AudioDecodeError:
+        duration = 0.0
+    if duration > 0:
+        return duration
+    logger.warning(
+        "duration probe failed; measuring via bounded decode "
+        "(format=%s, fallback_count=%d)",
+        source.suffix.lstrip("."),
+        next(_duration_fallback_count),
+    )
+    probe_wav = tmp_dir / "duration-probe.wav"
+    _run_ffmpeg(
+        [str(source), "-t", f"{_PROBE_DECODE_LIMIT_SECONDS:.0f}", str(probe_wav)],
+        deadline,
+    )
+    measured = _probe_duration(probe_wav, deadline)
+    if measured >= MAX_AUDIO_DURATION_SECONDS:
+        raise AudioDecodeError(
+            f"audio is longer than {MAX_AUDIO_DURATION_SECONDS:.0f} seconds"
+        )
+    return measured
 
 
 def _probe_duration(source: Path, deadline: float | None = None) -> float:

@@ -32,6 +32,8 @@ class PronunciationAudioFormat(StrEnum):
     M4A = "m4a"
     WAV = "wav"
     MP3 = "mp3"
+    # 웹(크롬·안드로이드 웹뷰) MediaRecorder 산출 형식 (보통 opus 코덱)
+    WEBM = "webm"
 
 
 class PronunciationAccentLocale(StrEnum):
