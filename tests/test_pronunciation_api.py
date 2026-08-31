@@ -82,7 +82,7 @@ def patch_pipeline(
             raise judge_error
         return list(differences or []), b"reference-wav"
 
-    def fake_align(wav, words):
+    def fake_align(wav, words, *args):
         if align_error is not None:
             raise align_error
         return spans
@@ -220,7 +220,7 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
 
         patches = patch_pipeline(spans=spans)
 
-        def capture_align(wav, words):
+        def capture_align(wav, words, *args):
             captured["words"] = words
             return spans
 

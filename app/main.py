@@ -52,11 +52,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 서버 기동은 막지 않고 백그라운드에서 정렬 모델을 미리 올린다.
         # daemon=True: 워밍업이 끝나기 전에 프로세스가 종료돼도 붙잡지 않는다
         threading.Thread(
-            target=warm_up, name="alignment-warmup", daemon=True
+            target=warm_up,
+            args=(resolved_settings.pronunciation_alignment_model_path,),
+            name="alignment-warmup",
+            daemon=True,
         ).start()
 
     # 로컬·테스트(app_env=local)는 정렬 모델 워밍업이 필요 없고, 테스트에서
-    # 모델(~378MB) 로드를 유발하면 안 되므로 배포 환경에서만 등록한다
+    # 모델(int8 ~95MB) 로드를 유발하면 안 되므로 배포 환경에서만 등록한다
     if resolved_settings.app_env != "local":
         fastapi_app.router.add_event_handler(
             "startup", warm_pronunciation_alignment

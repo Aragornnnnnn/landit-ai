@@ -109,7 +109,10 @@ def analyze_pronunciation(
             deadline,
         )
         alignment_future = executor.submit(
-            align_words, decoded.alignment_wav, word_texts
+            align_words,
+            decoded.alignment_wav,
+            word_texts,
+            settings.pronunciation_alignment_model_path,
         )
         # 억양 확인은 단어 단위 양자택일이라 서로 독립이므로 본 판정과 함께 병렬로 던진다
         accent_futures = [
