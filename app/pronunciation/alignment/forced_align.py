@@ -4,14 +4,19 @@
 # 오디오에 정렬해 단어별 start/end를 얻는다. 컷 보정 규칙까지 적용해 반환한다:
 #   start-30ms ~ min(end+50ms, 다음 단어 start-10ms)
 import io
+import logging
 import re
 import threading
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 CUT_START_PADDING_MS = 30
 CUT_END_PADDING_MS = 50
 CUT_NEXT_WORD_GAP_MS = 10
 
+# 모델(~378MB)은 프로세스당 한 번만 로드해 캐시로 재사용한다. 락이 없으면 동시에
+# 들어온 요청들이 각자 중복 로드하므로, 한 스레드만 로드하고 나머지는 완료까지 대기한다
 _model_lock = threading.Lock()
 _bundle_cache: dict[str, object] = {}
 
@@ -149,6 +154,26 @@ def _read_pcm_wav(wav_bytes: bytes):
     if channels > 1:
         waveform = waveform.view(-1, channels).mean(dim=1)
     return waveform.unsqueeze(0), sample_rate
+
+
+def warm_up() -> None:
+    """모델 로드와 첫 추론(커널 워밍)을 미리 치른다.
+
+    모델(~378MB) 로드를 첫 사용자 요청 안에서 치르면 17초 분석 예산을 넘겨
+    배포 직후 연쇄 503이 난다 — 후속 요청도 _model_lock에 매달려 같이 죽는
+    것을 dev에서 실측했다. 워밍업 실패는 로그만 남기고 서비스는 계속한다
+    (요청 경로의 지연 로드가 최후 수단으로 남아 있다).
+    """
+    import torch
+
+    try:
+        model, _labels, sample_rate = _load_model()
+        with torch.inference_mode():
+            # 1초짜리 무음으로 더미 추론 1회 — 첫 추론에만 붙는 초기화 비용을 미리 치른다
+            model(torch.zeros(1, sample_rate))
+        logger.info("alignment model warm-up finished")
+    except Exception:  # 워밍업 실패가 기동을 막으면 안 된다
+        logger.exception("alignment model warm-up failed")
 
 
 def _load_model():

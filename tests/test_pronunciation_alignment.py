@@ -52,5 +52,35 @@ class ForcedAlignmentTests(unittest.TestCase):
             align_words(wav, ["1234"])
 
 
+class WarmUpTests(unittest.TestCase):
+    """워밍업은 모델 없이 검증한다 (로드는 mock) — 게이트 없이 항상 실행."""
+
+    def test_warm_up_loads_model_and_runs_inference(self):
+        from unittest.mock import MagicMock, patch
+
+        from app.pronunciation.alignment import forced_align
+
+        model = MagicMock()
+        with patch.object(
+            forced_align, "_load_model", return_value=(model, ("|",), 16_000)
+        ):
+            forced_align.warm_up()
+
+        model.assert_called_once()
+
+    def test_warm_up_failure_is_swallowed(self):
+        from unittest.mock import patch
+
+        from app.pronunciation.alignment import forced_align
+
+        with (
+            patch.object(
+                forced_align, "_load_model", side_effect=RuntimeError("boom")
+            ),
+            self.assertLogs(forced_align.logger.name, level="ERROR"),
+        ):
+            forced_align.warm_up()  # 예외가 새어 나오면 테스트 실패
+
+
 if __name__ == "__main__":
     unittest.main()
