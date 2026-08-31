@@ -504,6 +504,35 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("do not mention that you ignored them", system_prompt)
         self.assertIn("respond naturally to the meaning", system_prompt)
 
+    def test_turn_prompt_sets_concise_response_budget(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("20 to 35 words", system_prompt)
+        self.assertIn("one or two sentences", system_prompt)
+
+    def test_turn_prompt_avoids_restatement_and_limits_follow_up_question(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(normal_turn_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("without restating it", system_prompt)
+        self.assertIn("at most one follow-up question", system_prompt)
+        self.assertIn("Do not repeat the same reaction or empathy", system_prompt)
+
     def test_closing_prompt_prohibits_language_feedback(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(closing_completion())])
 
@@ -518,6 +547,21 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("Do not correct, rewrite, or evaluate", system_prompt)
         self.assertIn("Do not provide language-learning feedback", system_prompt)
         self.assertIn("Do not mention English proficiency", system_prompt)
+
+    def test_closing_prompt_sets_concise_budget_without_summary(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps(closing_completion())])
+
+        response = self._post(
+            "/api/v1/free-talk/closing",
+            valid_closing_payload(),
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("15 to 30 words", system_prompt)
+        self.assertIn("one or two sentences", system_prompt)
+        self.assertIn("without summarizing it", system_prompt)
 
     def test_opening_prompt_prohibits_language_proficiency_feedback(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(opening_completion())])

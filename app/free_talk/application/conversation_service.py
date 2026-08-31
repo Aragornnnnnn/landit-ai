@@ -449,6 +449,10 @@ def _turn_system_prompt(
         "Always return userExitIntentDetected. "
         "When userExitIntentDetected is true, leave all generated message fields null. "
         "Otherwise return aiMessage and translatedMessage. "
+        "Keep aiMessage to 20 to 35 words in one or two sentences. "
+        "Briefly acknowledge the user's meaning without restating it, then ask at most one "
+        "follow-up question. Do not repeat the same reaction or empathy in different words. "
+        "Make translatedMessage a concise equivalent without adding details. "
         + _memory_system_policy()
         + "Return inferredTitle as null."
     )
@@ -482,6 +486,9 @@ def _closing_system_prompt(
         "Do not correct, rewrite, or evaluate the user's grammar, vocabulary, or phrasing. "
         "Do not provide language-learning feedback. "
         "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
+        "Keep aiMessage to 15 to 30 words in one or two sentences. "
+        "Briefly acknowledge the conversation without summarizing it or repeating the same "
+        "sentiment. Make translatedMessage a concise equivalent without adding details. "
         "Return aiMessage, translatedMessage, and inferredTitle. "
         + title_instruction
     )
