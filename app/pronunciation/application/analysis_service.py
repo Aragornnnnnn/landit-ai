@@ -1,9 +1,9 @@
 # 발음 분석 파이프라인을 오케스트레이션하는 서비스 모듈
 #
-# 흐름: 오디오 디코드 → 참조 다운로드 → Gemini 판정 → order 병합.
-# 전체 wall-clock 예산(기본 17초)을 진입점에서 잡고 모든 단계(ffmpeg·다운로드·LLM·
+# 흐름: 오디오 디코드 → [참조 다운로드 → Gemini 판정] ∥ [wav2vec2 강제 정렬] → order 병합.
+# 전체 wall-clock 예산(기본 17초)을 진입점에서 잡고 모든 단계(ffmpeg·다운로드·LLM·정렬·
 # 묘사)의 타임아웃을 남은 예산과 min으로 묶어, 어떤 조합에서도 BE 타임아웃(20초)보다
-# 먼저 반환한다. 필수 단계(판정)가 예산을 넘기면 503, 보조 단계(억양 확인·묘사)는
+# 먼저 반환한다. 필수 단계(판정·정렬)가 예산을 넘기면 503, 보조 단계(억양 확인·묘사)는
 # 결과에서 비운 채 판정만 반환한다.
 import logging
 import re
@@ -25,6 +25,7 @@ from app.models.pronunciation import (
     PronunciationWordResult,
     PronunciationWordStatus,
 )
+from app.pronunciation.alignment.forced_align import WordSpan, align_words
 from app.pronunciation.audio import convert_to_wav, decode_user_audio
 from app.pronunciation.llm.accent_check import (
     AccentCheckError,
@@ -34,6 +35,7 @@ from app.pronunciation.llm.accent_check import (
 )
 from app.pronunciation.llm.compare import JudgedDifference, judge_pronunciation
 from app.pronunciation.llm.describe import ErrorDescription, describe_error
+from app.pronunciation.numbers import spell_out
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ class ReferenceAudioUnavailableError(Exception):
 
 
 class AnalysisBudgetExceededError(Exception):
-    """전체 wall-clock 예산 안에 필수 단계(판정)가 끝나지 못함."""
+    """전체 wall-clock 예산 안에 필수 단계(판정·정렬)가 끝나지 못함."""
 
 
 _STATUS_BY_DIFFERENCE_TYPE = {
@@ -80,6 +82,10 @@ def analyze_pronunciation(
         payload.decoded_user_audio(), payload.userAudioFormat.value, deadline
     )
     ordered_words = sorted(payload.words, key=lambda word: word.order)
+    # 숫자 단어("9")는 발화 철자("nine")로 정렬해야 타임스탬프가 맞는다
+    word_texts = [
+        spell_out(word.word) or word.word for word in ordered_words
+    ]
 
     contrasts = _accent_contrasts(ordered_words)
     # EN_AU는 억양 대조 전면 비활성 정책(게이트 A 실측 — 정당한 호주 발음 오탐)이다.
@@ -92,7 +98,7 @@ def analyze_pronunciation(
         contrasts = []
     # with(=shutdown(wait=True))를 쓰면 예산을 넘긴 스레드를 기다리게 되므로
     # 대기 없이 닫고 결과 수거에만 남은 예산을 적용한다
-    executor = ThreadPoolExecutor(max_workers=1 + len(contrasts))
+    executor = ThreadPoolExecutor(max_workers=2 + len(contrasts))
     try:
         judgment_future = executor.submit(
             _judge,
@@ -102,12 +108,16 @@ def analyze_pronunciation(
             settings,
             deadline,
         )
+        alignment_future = executor.submit(
+            align_words, decoded.alignment_wav, word_texts
+        )
         # 억양 확인은 단어 단위 양자택일이라 서로 독립이므로 본 판정과 함께 병렬로 던진다
         accent_futures = [
             executor.submit(_check_accent, decoded.judgment_wav, contrast, settings)
             for contrast in contrasts
         ]
         differences, reference_wav = _required_result(judgment_future, deadline)
+        spans = _required_result(alignment_future, deadline)
         # 억양 확인은 보조 판정 — 예산을 넘기면 없는 것으로 친다
         verdicts = [_auxiliary_result(future, deadline) for future in accent_futures]
     finally:
@@ -116,7 +126,7 @@ def analyze_pronunciation(
     differences = _describe(
         differences, reference_wav, decoded.judgment_wav, settings, deadline
     )
-    results = _merge(ordered_words, differences)
+    results = _merge(ordered_words, spans, differences)
     _apply_accent_verdicts(results, ordered_words, verdicts)
     return PronunciationAnalyzeResponse(words=results)
 
@@ -305,17 +315,18 @@ def _download_reference(
 
 def _merge(
     ordered_words,
+    spans: list[WordSpan],
     differences: list[JudgedDifference],
 ) -> list[PronunciationWordResult]:
-    # BE는 요청 단어와 개수·order·텍스트가 1:1인 응답만 받아들인다(어긋나면 502).
-    # 그 보장은 요청의 ordered_words를 그대로 뼈대로 쓰는 이 구조에서 나온다.
     results = [
         PronunciationWordResult(
             order=word.order,
             word=word.word,
             status=PronunciationWordStatus.CORRECT,
+            startMs=span.start_ms,
+            endMs=span.end_ms,
         )
-        for word in ordered_words
+        for word, span in zip(ordered_words, spans)
     ]
     flagged_indexes: set[int] = set()
     for difference in differences:
