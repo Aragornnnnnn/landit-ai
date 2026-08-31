@@ -1,5 +1,6 @@
 # FastAPI 애플리케이션 팩토리와 ASGI 앱을 제공하는 모듈
 import logging
+import threading
 
 from fastapi import FastAPI
 
@@ -44,6 +45,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     fastapi_app.router.add_event_handler("startup", log_deployment_started)
+
+    def warm_pronunciation_alignment() -> None:
+        from app.pronunciation.alignment.forced_align import warm_up
+
+        # 서버 기동은 막지 않고 백그라운드에서 정렬 모델을 미리 올린다
+        threading.Thread(
+            target=warm_up, name="alignment-warmup", daemon=True
+        ).start()
+
+    # 로컬·테스트(app_env=local)는 정렬 모델 워밍업이 필요 없고, 테스트에서
+    # 모델(~378MB) 로드를 유발하면 안 되므로 배포 환경에서만 등록한다
+    if resolved_settings.app_env != "local":
+        fastapi_app.router.add_event_handler(
+            "startup", warm_pronunciation_alignment
+        )
     return fastapi_app
 
 

@@ -4,9 +4,12 @@
 # 오디오에 정렬해 단어별 start/end를 얻는다. 컷 보정 규칙까지 적용해 반환한다:
 #   start-30ms ~ min(end+50ms, 다음 단어 start-10ms)
 import io
+import logging
 import re
 import threading
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 CUT_START_PADDING_MS = 30
 CUT_END_PADDING_MS = 50
@@ -149,6 +152,25 @@ def _read_pcm_wav(wav_bytes: bytes):
     if channels > 1:
         waveform = waveform.view(-1, channels).mean(dim=1)
     return waveform.unsqueeze(0), sample_rate
+
+
+def warm_up() -> None:
+    """모델 로드와 첫 추론(커널 워밍)을 미리 치른다.
+
+    모델(~378MB) 로드를 첫 사용자 요청 안에서 치르면 17초 분석 예산을 넘겨
+    배포 직후 연쇄 503이 난다 — 후속 요청도 _model_lock에 매달려 같이 죽는
+    것을 dev에서 실측했다. 워밍업 실패는 로그만 남기고 서비스는 계속한다
+    (요청 경로의 지연 로드가 최후 수단으로 남아 있다).
+    """
+    import torch
+
+    try:
+        model, _labels, sample_rate = _load_model()
+        with torch.inference_mode():
+            model(torch.zeros(1, sample_rate))
+        logger.info("alignment model warm-up finished")
+    except Exception:  # 워밍업 실패가 기동을 막으면 안 된다
+        logger.exception("alignment model warm-up failed")
 
 
 def _load_model():
