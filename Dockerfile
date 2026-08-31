@@ -3,8 +3,9 @@ FROM python:3.12-slim
 
 ARG APP_VERSION=local
 # 정렬용 wav2vec2 int8 ONNX 모델(~95MB). 원본과 달리 우리가 양자화해 만든 파일이라
-# 자산 CDN에 직접 호스팅한다 (재생성 절차: scripts/export_alignment_model.py)
-ARG ALIGNMENT_MODEL_URL=https://d19azau1un4t7r.cloudfront.net/models/wav2vec2_int8.onnx
+# 자산 CDN에 직접 호스팅한다 (재생성 절차: scripts/export_alignment_model.py).
+# CDN 버킷 정책이 content/* 프리픽스만 공개하므로 경로가 content/ 아래여야 한다
+ARG ALIGNMENT_MODEL_URL=https://d19azau1un4t7r.cloudfront.net/content/models/wav2vec2_int8.onnx
 ARG ALIGNMENT_MODEL_SHA256=a0e9cd656e3c6cd2fcaadf93a4fae10e6449096c53ccda9f67797f2578dd63ee
 
 ENV APP_VERSION=${APP_VERSION} \
