@@ -1,8 +1,7 @@
 # 발음 분석용 오디오 디코드·변환 유틸리티 모듈
 #
-# ffmpeg subprocess로 m4a/mp3/wav/webm을 두 가지 WAV로 변환한다:
-#   - 판정용: 원 샘플레이트 유지 (PoC에서 16kHz 축소 시 오분류가 발생해 원본 유지)
-#   - 정렬용: wav2vec2 입력 규격인 16kHz mono
+# ffmpeg subprocess로 m4a/mp3/wav/webm을 판정용 WAV로 변환한다.
+# 원 샘플레이트를 유지한다 (PoC에서 16kHz 축소 시 오분류가 발생해 원본 유지).
 import logging
 import shutil
 import subprocess
@@ -15,7 +14,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 MAX_AUDIO_DURATION_SECONDS = 30.0
-ALIGNMENT_SAMPLE_RATE = 16_000
 _FFMPEG_TIMEOUT_SECONDS = 10.0
 # duration 폴백 디코드 상한. 크롬 MediaRecorder의 webm은 스트리밍 컨테이너라
 # duration 메타데이터가 없는 경우가 흔한데(ffprobe가 N/A 반환 — 실측 확인),
@@ -47,7 +45,6 @@ class AudioDecodeError(Exception):
 class DecodedAudio:
     # 유저 음성 파생 바이트는 예외 로그·Sentry에 노출되면 안 되므로 repr에서 제외한다
     judgment_wav: bytes = field(repr=False)
-    alignment_wav: bytes = field(repr=False)
     duration_seconds: float
 
 
@@ -69,12 +66,10 @@ def decode_user_audio(
 
         judgment = Path(tmp_dir) / "judgment.wav"
         trimmed = Path(tmp_dir) / "trimmed.wav"
-        alignment = Path(tmp_dir) / "alignment.wav"
         # 판정용은 앞뒤 침묵을 잘라 LLM이 듣는 길이를 줄인다 (지연이 오디오 길이에
         # 비례하고, 폰 녹음의 가장자리 잡음이 오탐을 만든다). 단, 실제로 잘린 침묵이
         # 1초 미만이면 원본을 쓴다 — 깨끗한 오디오에 컷을 적용하면 판정 유형이 바뀌는
         # 회귀가 실측됐다 (LAN-373 게이트 B: s2_stress STRESS→SOUND).
-        # 정렬용은 타임스탬프가 앱의 원본 녹음 재생 구간이므로 항상 원본 그대로 둔다.
         _run_ffmpeg(
             [
                 str(source),
@@ -90,20 +85,8 @@ def decode_user_audio(
             judgment = trimmed
         else:
             _run_ffmpeg([str(source), str(judgment)], deadline)
-        _run_ffmpeg(
-            [
-                str(source),
-                "-ar",
-                str(ALIGNMENT_SAMPLE_RATE),
-                "-ac",
-                "1",
-                str(alignment),
-            ],
-            deadline,
-        )
         return DecodedAudio(
             judgment_wav=judgment.read_bytes(),
-            alignment_wav=alignment.read_bytes(),
             duration_seconds=duration,
         )
 
