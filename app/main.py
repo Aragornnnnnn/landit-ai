@@ -49,7 +49,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def warm_pronunciation_alignment() -> None:
         from app.pronunciation.alignment.forced_align import warm_up
 
-        # 서버 기동은 막지 않고 백그라운드에서 정렬 모델을 미리 올린다
+        # 서버 기동은 막지 않고 백그라운드에서 정렬 모델을 미리 올린다.
+        # daemon=True: 워밍업이 끝나기 전에 프로세스가 종료돼도 붙잡지 않는다
         threading.Thread(
             target=warm_up, name="alignment-warmup", daemon=True
         ).start()

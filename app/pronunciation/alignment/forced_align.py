@@ -15,6 +15,8 @@ CUT_START_PADDING_MS = 30
 CUT_END_PADDING_MS = 50
 CUT_NEXT_WORD_GAP_MS = 10
 
+# 모델(~378MB)은 프로세스당 한 번만 로드해 캐시로 재사용한다. 락이 없으면 동시에
+# 들어온 요청들이 각자 중복 로드하므로, 한 스레드만 로드하고 나머지는 완료까지 대기한다
 _model_lock = threading.Lock()
 _bundle_cache: dict[str, object] = {}
 
@@ -167,6 +169,7 @@ def warm_up() -> None:
     try:
         model, _labels, sample_rate = _load_model()
         with torch.inference_mode():
+            # 1초짜리 무음으로 더미 추론 1회 — 첫 추론에만 붙는 초기화 비용을 미리 치른다
             model(torch.zeros(1, sample_rate))
         logger.info("alignment model warm-up finished")
     except Exception:  # 워밍업 실패가 기동을 막으면 안 된다
