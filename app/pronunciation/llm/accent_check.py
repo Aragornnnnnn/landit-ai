@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 from app.core.config import Settings
+from app.pronunciation.llm.routing import llm_extra_body
 
 ACCENT_CHECK_PROMPT = """Listen to the audio and focus ONLY on how the speaker
 pronounces the word "{word}".
@@ -91,9 +92,7 @@ def check_accent(
                     ],
                 }
             ],
-            extra_body={
-                "reasoning": {"effort": settings.pronunciation_reasoning_effort}
-            },
+            extra_body=llm_extra_body(settings),
             timeout=settings.pronunciation_llm_timeout_seconds,
         )
     except Exception as error:  # noqa: BLE001 — SDK 예외 전반을 호출 실패로 취급

@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str | None = None
     pronunciation_model: str = "google/gemini-3.5-flash"
+    # 판정 프로바이더 고정 (OpenRouter 태그, 쉼표 구분 우선순위. 빈 값 = 자동 라우팅).
+    # LAN-389 실측: 같은 모델이라도 Vertex 서빙은 STRESS 검출이 죽는다 —
+    # 자동 라우팅이 Vertex로 기울면 검출 소실이 드리프트처럼 나타난다.
+    pronunciation_provider_order: str = "google-ai-studio"
     pronunciation_reasoning_effort: str = "low"
     pronunciation_llm_timeout_seconds: float = 15.0
     pronunciation_reference_download_timeout_seconds: float = 5.0

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 from app.core.config import Settings
+from app.pronunciation.llm.routing import llm_extra_body
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +97,7 @@ def describe_error(
                     ],
                 }
             ],
-            extra_body={
-                "reasoning": {"effort": settings.pronunciation_reasoning_effort}
-            },
+            extra_body=llm_extra_body(settings),
             timeout=timeout,
         )
     except Exception:  # noqa: BLE001 — 묘사는 보조 정보이므로 실패해도 판정은 유지한다

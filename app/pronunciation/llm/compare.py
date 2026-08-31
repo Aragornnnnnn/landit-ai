@@ -6,12 +6,16 @@
 #   - 기준 텍스트를 프롬프트에 넣는 판정 모드는 앵커링 환각으로 탈락 — 사용 금지
 import base64
 import json
+import logging
 import time
 from dataclasses import dataclass
 
 from openai import OpenAI
 
 from app.core.config import Settings
+from app.pronunciation.llm.routing import llm_extra_body, served_by_fallback
+
+logger = logging.getLogger(__name__)
 
 # 학습자가 고른 억양이 판정 기준이 되므로 프롬프트에 명시한다
 ACCENT_NAMES = {
@@ -20,7 +24,12 @@ ACCENT_NAMES = {
     "EN_AU": "Australian English",
 }
 
-# PoC 검증본 (scripts/poc_pronunciation_v2.py COMPARE_PROMPT과 동일 판정 규칙)
+# PoC 검증본 + LAN-389 판정 보정. 상류 서빙 변화(2026-08 말)로 STRESS 검출이
+# 죽어(hiking·yesterday 미검출) 2음절 이상 단어의 강세 위치 대조를 명시했고,
+# 그 과정에서 흔들린 축약모음 대치(available o↔schwa)는 SOUND 예시에 "full
+# vowel in place of a reduced one"을 더해 고정했다. 문구별 실측은
+# docs/tasks/LAN-389/record.md — 강세 문구가 조금만 달라져도 SOUND 검출이
+# 죽는 조합이 실측됐으므로 수정 시 반드시 골든 셋을 다시 돌릴 것.
 BASE_COMPARE_PROMPT = """You will hear two audio clips. Audio 1 is a native speaker
 of {accent_name} reading a sentence (reference). Audio 2 is a learner attempting
 the same sentence.
@@ -33,9 +42,11 @@ coloration. These are NEVER differences.
 
 Report a word ONLY when:
 - SOUND: a phoneme is clearly substituted with a different phoneme
-  (e.g. "th" pronounced as "s", "r" pronounced as "l"), or
+  (e.g. "th" pronounced as "s", "r" pronounced as "l", or a full vowel in
+  place of a reduced one), or
 - STRESS: within that word, the emphasized syllable is clearly different
-  from the reference.
+  from the reference. For every word of two or more syllables, compare which
+  syllable carries the main emphasis in each clip (e.g. "HI-king" vs "hi-KING").
 
 Typical learners get most words right — expect 0 or 1 flagged words.
 If you are not certain, do not flag the word.
@@ -59,9 +70,11 @@ coloration. These are NEVER differences.
 
 Report a word ONLY when:
 - SOUND: a phoneme is clearly substituted with a different phoneme
-  (e.g. "th" pronounced as "s", "r" pronounced as "l"), or
+  (e.g. "th" pronounced as "s", "r" pronounced as "l", or a full vowel in
+  place of a reduced one), or
 - STRESS: within that word, the emphasized syllable is clearly different
-  from the reference.
+  from the reference. For every word of two or more syllables, compare which
+  syllable carries the main emphasis in each clip (e.g. "HI-king" vs "hi-KING").
 
 Typical learners get most words right — expect 0 or 1 flagged words.
 If you are not certain, do not flag the word.
@@ -146,13 +159,19 @@ def _call_with_retry(
                 temperature=0.0,
                 max_tokens=4000,
                 messages=[{"role": "user", "content": content}],
-                extra_body={
-                    "reasoning": {"effort": settings.pronunciation_reasoning_effort}
-                },
+                extra_body=llm_extra_body(settings),
                 timeout=timeout,
             )
         except Exception as error:  # noqa: BLE001 — SDK 예외 전반을 생성 실패로 취급
             raise PronunciationJudgmentError(str(error)) from error
+        # 폴백 프로바이더 서빙은 STRESS 검출이 죽는 조용한 품질 저하다 (LAN-389).
+        # 가용성을 위해 허용하되 발동 사실은 반드시 관측 가능해야 한다.
+        fallback_provider = served_by_fallback(settings, response)
+        if fallback_provider is not None:
+            logger.warning(
+                "pronunciation judgment served by fallback provider %s",
+                fallback_provider,
+            )
         raw = (response.choices[0].message.content or "").strip()
         try:
             return _parse_differences(raw)
