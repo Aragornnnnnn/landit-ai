@@ -158,5 +158,50 @@ class PruneAccentContrastsTests(unittest.TestCase):
             )
 
 
+class GoldenDetectionGateTests(unittest.TestCase):
+    """주기 드리프트 감시 게이트 (LAN-389) — 오류 검출 소실만 잡는다."""
+
+    @staticmethod
+    def rows(label, misses_per_run):
+        return [
+            {"label": label, "missed": missed, "falsePositives": []}
+            for missed in misses_per_run
+        ]
+
+    def test_majority_miss_fails_gate(self):
+        from scripts.eval_pronunciation_golden import _detection_gate_passes
+
+        rows = self.rows("s3_stress", [["yesterday:STRESS"]] * 3 + [[]] * 2)
+
+        self.assertFalse(_detection_gate_passes(rows))
+
+    def test_minority_miss_passes_gate(self):
+        from scripts.eval_pronunciation_golden import _detection_gate_passes
+
+        rows = self.rows("s1_stress", [["hiking:STRESS"]] * 2 + [[]] * 3)
+
+        self.assertTrue(_detection_gate_passes(rows))
+
+    def test_measurement_errors_count_as_misses(self):
+        from scripts.eval_pronunciation_golden import _detection_gate_passes
+
+        rows = self.rows("s3_stress", [[]] * 2) + [
+            {"label": "s3_stress", "error": "boom"} for _ in range(3)
+        ]
+
+        self.assertFalse(_detection_gate_passes(rows))
+
+    def test_false_positives_do_not_fail_gate(self):
+        from scripts.eval_pronunciation_golden import _detection_gate_passes
+
+        # 오탐(diner류)은 허용 기준이 기획 미정이라 게이트가 아닌 리포트로 관측한다
+        rows = [
+            {"label": "s2_correct", "missed": [], "falsePositives": ["diner:SOUND"]}
+            for _ in range(5)
+        ]
+
+        self.assertTrue(_detection_gate_passes(rows))
+
+
 if __name__ == "__main__":
     unittest.main()

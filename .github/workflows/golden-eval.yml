@@ -1,0 +1,48 @@
+# 발음 골든 셋 주기 회귀 측정 (LAN-389)
+#
+# 상류 서빙(프로바이더 라우팅·모델)이 바뀌면 판정 품질이 조용히 이동한다 —
+# 실측: Vertex 서빙에서 STRESS 검출 통째 소실. 주 1회 + 수동 트리거로 5회
+# 측정해 오류 검출이 샘플별 과반 미달이면 실패시켜 알림을 만든다.
+name: Golden set drift watch
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # 매주 월요일 09:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  golden-eval:
+    name: Evaluate golden set (5 runs, base prompt)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Run golden evaluation with detection gate
+        env:
+          LLM_PROVIDER: openrouter
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: >
+          python scripts/eval_pronunciation_golden.py
+          --runs 5 --base-prompt --gate --out-dir golden-artifacts
+
+      - name: Upload result JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-eval-results
+          path: golden-artifacts/
+          retention-days: 90
