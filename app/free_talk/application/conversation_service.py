@@ -1,18 +1,24 @@
 # 프리톡 대화 생성 요청을 LLM JSON 응답으로 변환하는 유스케이스 모듈
 import json
+import logging
 import re
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.common.inner_thought_contract import (
+    InnerThoughtContractError,
+    InnerThoughtResult,
+    fallback_inner_thought,
+    parse_inner_thought,
+    report_inner_thought_fallback,
+)
 from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
-from app.free_talk.domain.rules import derive_inner_thought_type
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
     AiResponseInvalidError,
     request_json_completion,
 )
-from app.models.conversation import AnswerCoverage, RelationshipTone
 from app.models.free_talk import (
     FreeTalkCharacter,
     FreeTalkClosingReason,
@@ -29,6 +35,8 @@ from app.models.free_talk import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
 _SAFE_CLOSING_AI_MESSAGE = (
@@ -36,11 +44,6 @@ _SAFE_CLOSING_AI_MESSAGE = (
 )
 _SAFE_CLOSING_TRANSLATED_MESSAGE = (
     "그 이야기 들으니까 정말 좋았어. 얘기해 줘서 고마워!"
-)
-_PROHIBITED_INNER_THOUGHT_PATTERN = re.compile(
-    r"문법|자연스러(?:움|운)|점수|교정|피드백|"
-    r"grammar|naturalness|score|correction|feedback",
-    re.IGNORECASE,
 )
 _CLOSING_META_PATTERN = re.compile(
     r"\b(?:feedback|scores?)\b|"
@@ -83,13 +86,6 @@ class _ClosingCandidate(BaseModel):
     aiMessage: str
     translatedMessage: str
     emotion: object | None = None
-
-
-class _InnerThoughtCandidate(BaseModel):
-    innerThought: str
-    answerCoverage: AnswerCoverage
-    relationshipTone: RelationshipTone
-    directedAttack: bool
 
 
 def generate_opening(
@@ -287,36 +283,42 @@ def generate_inner_thought(
             system_prompt=_inner_thought_system_prompt(payload.characterId),
             user_prompt=_inner_thought_user_prompt(payload),
         )
-        return _to_inner_thought_response(data)
-    except (AiResponseInvalidError, ValidationError, ValueError):
+        return _to_inner_thought_response(parse_inner_thought(data))
+    except (AiResponseInvalidError, InnerThoughtContractError):
         try:
             data = request_json_completion(
                 settings=settings,
                 system_prompt=_inner_thought_repair_system_prompt(payload.characterId),
                 user_prompt=_inner_thought_user_prompt(payload),
             )
-            return _to_inner_thought_response(data)
-        except (AiResponseInvalidError, ValidationError, ValueError) as exc:
-            raise AiResponseInvalidError from exc
+            return _to_inner_thought_response(parse_inner_thought(data))
+        except AiGenerationFailedError:
+            raise
+        except AiResponseInvalidError:
+            report_inner_thought_fallback(
+                workflow="free_talk_inner_thought_contract_fallback",
+                session_id=payload.sessionId,
+                message_id=payload.submittedMessageId,
+                reason="response_invalid",
+            )
+            return _to_inner_thought_response(fallback_inner_thought(None))
+        except InnerThoughtContractError as exc:
+            report_inner_thought_fallback(
+                workflow="free_talk_inner_thought_contract_fallback",
+                session_id=payload.sessionId,
+                message_id=payload.submittedMessageId,
+                reason=exc.reason,
+                invalid_fields=exc.invalid_fields,
+            )
+            return _to_inner_thought_response(fallback_inner_thought(data))
 
 
 def _to_inner_thought_response(
-    data: dict[str, object],
+    result: InnerThoughtResult,
 ) -> FreeTalkInnerThoughtResponse:
-    directed_attack = _normalized_directed_attack(data)
-    if directed_attack is None:
-        raise ValueError("inner thought requires a boolean directed attack")
-    candidate_data = dict(data)
-    candidate_data["directedAttack"] = directed_attack
-    candidate = _InnerThoughtCandidate.model_validate(candidate_data)
-    _validate_inner_thought(candidate.innerThought)
     return FreeTalkInnerThoughtResponse(
-        innerThought=candidate.innerThought,
-        innerThoughtType=derive_inner_thought_type(
-            candidate.answerCoverage,
-            candidate.relationshipTone,
-            candidate.directedAttack,
-        ),
+        innerThought=result.inner_thought,
+        innerThoughtType=result.inner_thought_type,
     )
 
 
@@ -354,42 +356,11 @@ def _valid_title(value: object) -> str | None:
     return title
 
 
-def _validate_inner_thought(inner_thought: str | None) -> None:
-    if (
-        inner_thought is None
-        or _PROHIBITED_INNER_THOUGHT_PATTERN.search(inner_thought) is not None
-    ):
-        raise ValueError("inner thought must not include feedback language")
-
-
 def _has_missing_continue_message(data: dict[str, object]) -> bool:
     return any(
         not isinstance(data.get(field), str) or not data[field].strip()
         for field in ("aiMessage", "translatedMessage")
     )
-
-
-def _normalize_directed_attack(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().casefold()
-    if normalized in {"", "none", "no attack", "없음", "null", "not applicable"}:
-        return False
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    return None
-
-
-def _normalized_directed_attack(data: dict[str, object]) -> bool | None:
-    if "directedAttack" not in data:
-        return None
-    return _normalize_directed_attack(data["directedAttack"])
 
 
 def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) -> str:

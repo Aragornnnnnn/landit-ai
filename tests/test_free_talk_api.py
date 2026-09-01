@@ -801,23 +801,39 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["innerThoughtType"], "BAD")
         self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_inner_thought_rejects_unrecognized_directed_attack_after_repair(self):
+    def test_inner_thought_falls_back_after_unrecognized_directed_attack_repair(self):
+        inner_thought = "상대의 반응이 조금 애매하게 느껴진다."
         fake_openai = FakeOpenAI(
             contents=[
-                json.dumps(inner_thought_completion(directedAttack="unknown")),
-                json.dumps(inner_thought_completion(directedAttack="still unknown")),
+                json.dumps(
+                    inner_thought_completion(
+                        innerThought=inner_thought,
+                        directedAttack="unknown",
+                    ),
+                ),
+                json.dumps(
+                    inner_thought_completion(
+                        innerThought=inner_thought,
+                        directedAttack="still unknown",
+                    ),
+                ),
             ],
         )
 
-        response = self._post(
-            "/api/v1/free-talk/inner-thought",
-            valid_inner_thought_payload(),
-            fake_openai,
-        )
+        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+            response = self._post(
+                "/api/v1/free-talk/inner-thought",
+                valid_inner_thought_payload(),
+                fake_openai,
+            )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThought"], inner_thought)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
         self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn("workflow=free_talk_inner_thought_contract_fallback", logs.output[0])
+        self.assertIn("fields=directedAttack", logs.output[0])
+        self.assertNotIn(inner_thought, logs.output[0])
 
     def test_inner_thought_repairs_malformed_json_response(self):
         fake_openai = FakeOpenAI(
@@ -834,18 +850,26 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
         self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_inner_thought_rejects_malformed_json_after_repair(self):
+    def test_inner_thought_uses_safe_fallback_after_malformed_json_repair(self):
         fake_openai = FakeOpenAI(contents=["not JSON", "still not JSON"])
 
-        response = self._post(
-            "/api/v1/free-talk/inner-thought",
-            valid_inner_thought_payload(),
-            fake_openai,
-        )
+        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+            response = self._post(
+                "/api/v1/free-talk/inner-thought",
+                valid_inner_thought_payload(),
+                fake_openai,
+            )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "innerThought": "상대의 말을 받아들이고 있다.",
+                "innerThoughtType": "NORMAL",
+            },
+        )
         self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn("reason=response_invalid", logs.output[0])
 
     def test_inner_thought_repairs_invalid_enum_response(self):
         fake_openai = FakeOpenAI(
@@ -880,34 +904,38 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-    def test_turn_rejects_korean_or_english_feedback_style_inner_thought(self):
-        prohibited_inner_thoughts = (
-            "문법을 교정하면 더 자연스러워질 텐데.",
-            "Your grammar needs correction and feedback.",
+    def test_inner_thought_returns_repair_with_prohibited_feedback_language(self):
+        inner_thought = (
+            "답답하고 지친 마음이 느껴져서 안타까워요. "
+            "문법 실수가 계속 나와서 속상한 기분이구나 하고 받아들여졌어요."
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(inner_thought_completion(innerThought=inner_thought)),
+                json.dumps(inner_thought_completion(innerThought=inner_thought)),
+            ],
         )
 
-        for inner_thought in prohibited_inner_thoughts:
-            with self.subTest(inner_thought=inner_thought):
-                response = self._post(
-                    "/api/v1/free-talk/inner-thought",
-                    valid_inner_thought_payload(),
-                    FakeOpenAI(
-                        contents=[
-                            json.dumps(
-                                inner_thought_completion(innerThought=inner_thought),
-                            ),
-                            json.dumps(
-                                inner_thought_completion(innerThought=inner_thought),
-                            ),
-                        ],
-                    ),
-                )
+        with self.assertLogs(
+            "app.common.inner_thought_contract",
+            level="ERROR",
+        ) as logs:
+            response = self._post(
+                "/api/v1/free-talk/inner-thought",
+                valid_inner_thought_payload(),
+                fake_openai,
+            )
 
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(
-                    response.json()["error"]["code"],
-                    "AI_RESPONSE_INVALID",
-                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThought"], inner_thought)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn(
+            "workflow=free_talk_inner_thought_contract_fallback",
+            logs.output[0],
+        )
+        self.assertIn("reason=prohibited_feedback_language", logs.output[0])
+        self.assertNotIn(inner_thought, logs.output[0])
 
     def test_inner_thought_repairs_prohibited_feedback_language(self):
         fake_openai = FakeOpenAI(
@@ -1416,29 +1444,6 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"]["translatedMessage"],
             "그런 뮤지컬은 오래 기억에 남지 않아?",
         )
-
-    def test_closing_rejects_feedback_style_inner_thought(self):
-        response = self._post(
-            "/api/v1/free-talk/inner-thought",
-            valid_inner_thought_payload(),
-            FakeOpenAI(
-                contents=[
-                    json.dumps(
-                        inner_thought_completion(
-                            innerThought="문법을 교정하면 더 자연스러워질 텐데.",
-                        ),
-                    ),
-                    json.dumps(
-                        inner_thought_completion(
-                            innerThought="문법을 교정하면 더 자연스러워질 텐데.",
-                        ),
-                    ),
-                ],
-            ),
-        )
-
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
     def test_closing_replaces_other_policy_violations_with_safe_message(self):
         prohibited_messages = (

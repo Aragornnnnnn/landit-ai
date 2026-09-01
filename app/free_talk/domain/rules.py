@@ -1,25 +1,5 @@
-# 프리톡 생성 결과의 순수 계약 검증 규칙을 정의하는 모듈
-from app.models.conversation import (
-    AnswerCoverage,
-    InnerThoughtType,
-    RelationshipTone,
-)
+# 기존 프리톡 규칙 import 경로를 공통 속마음 계약에 연결하는 모듈
+from app.common.inner_thought_contract import derive_inner_thought_type
 
 
-def derive_inner_thought_type(
-    answer_coverage: AnswerCoverage,
-    relationship_tone: RelationshipTone,
-    directed_attack: bool,
-) -> InnerThoughtType:
-    if (
-        directed_attack
-        or relationship_tone == RelationshipTone.HOSTILE
-        or answer_coverage == AnswerCoverage.UNRELATED
-    ):
-        return InnerThoughtType.BAD
-    if (
-        answer_coverage in {AnswerCoverage.PARTIAL, AnswerCoverage.DECLINED}
-        or relationship_tone == RelationshipTone.BLUNT
-    ):
-        return InnerThoughtType.NORMAL
-    return InnerThoughtType.GOOD
+__all__ = ["derive_inner_thought_type"]
