@@ -757,6 +757,9 @@ class InnerThoughtApiTests(unittest.TestCase):
 
     def test_inner_thought_returns_request_identifiers_and_private_reaction(self):
         ai_response = {
+            "answerCoverage": "COMPLETE",
+            "relationshipTone": "WARM",
+            "directedAttack": False,
             "innerThought": "매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.",
             "innerThoughtType": "GOOD",
         }
@@ -782,7 +785,8 @@ class InnerThoughtApiTests(unittest.TestCase):
                 "data": {
                     "sessionId": 100,
                     "messageId": 1001,
-                    **ai_response,
+                    "innerThought": ai_response["innerThought"],
+                    "innerThoughtType": "GOOD",
                 },
                 "error": None,
             },
@@ -814,10 +818,7 @@ class InnerThoughtApiTests(unittest.TestCase):
             "A bare yes/no or choice answer with no detail or warmth is BLUNT and NORMAL, not GOOD.",
             messages[0]["content"],
         )
-        self.assertIn(
-            "directed attack, HOSTILE, or UNRELATED is BAD; PARTIAL, DECLINED, or BLUNT is NORMAL; otherwise GOOD.",
-            messages[0]["content"],
-        )
+        self.assertNotIn("innerThoughtType", messages[0]["content"])
         self.assertIn(
             "innerThought must directly reflect these classifications.",
             messages[0]["content"],
@@ -851,7 +852,7 @@ class InnerThoughtApiTests(unittest.TestCase):
         self.assertIn('"directedAttack":false', messages[0]["content"])
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_inner_thought_uses_legacy_fields_when_evidence_is_invalid(self):
+    def test_inner_thought_falls_back_after_invalid_evidence_repair(self):
         ai_response = {
             "answerCoverage": "INVALID",
             "relationshipTone": "NEUTRAL",
@@ -859,7 +860,7 @@ class InnerThoughtApiTests(unittest.TestCase):
             "innerThought": "형식이 일부 잘못됐지만 기존 속마음은 유효하다.",
             "innerThoughtType": "NORMAL",
         }
-        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+        fake_openai = FakeOpenAI(contents=[json.dumps(ai_response)] * 2)
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
@@ -867,21 +868,34 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/inner-thought",
-                json=valid_inner_thought_payload(),
-            )
+        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/inner-thought",
+                    json=valid_inner_thought_payload(),
+                )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThought"], ai_response["innerThought"])
         self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn("workflow=scenario_inner_thought_contract_fallback", logs.output[0])
+        self.assertIn("fields=answerCoverage", logs.output[0])
+        self.assertNotIn(ai_response["innerThought"], logs.output[0])
 
-    def test_inner_thought_defaults_missing_type_without_repair(self):
+    def test_inner_thought_repairs_missing_evidence(self):
         invalid_response = {
             "innerThought": "유형이 누락된 속마음이다.",
         }
-        fake_openai = FakeOpenAI(content=json.dumps(invalid_response))
+        valid_response = {
+            "answerCoverage": "COMPLETE",
+            "relationshipTone": "NEUTRAL",
+            "directedAttack": False,
+            "innerThought": "의도가 분명해서 이해하기 쉽다.",
+        }
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps(invalid_response), json.dumps(valid_response)],
+        )
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
@@ -896,11 +910,12 @@ class InnerThoughtApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(response.json()["data"]["innerThought"], valid_response["innerThought"])
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "GOOD")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_inner_thought_uses_neutral_fallback_when_text_is_missing(self):
-        fake_openai = FakeOpenAI(content=json.dumps({}))
+    def test_inner_thought_uses_neutral_fallback_when_repair_text_is_missing(self):
+        fake_openai = FakeOpenAI(contents=[json.dumps({}), json.dumps({})])
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
@@ -908,17 +923,22 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/inner-thought",
-                json=valid_inner_thought_payload(),
-            )
+        with self.assertLogs("app.common.inner_thought_contract", level="ERROR"):
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/inner-thought",
+                    json=valid_inner_thought_payload(),
+                )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["innerThought"],
+            "상대의 말을 받아들이고 있다.",
+        )
         self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_inner_thought_recovers_partial_json_response(self):
+    def test_inner_thought_falls_back_for_partial_json_after_repair(self):
         invalid_responses = [
             {"innerThought": "매운 피자를 좋아하는구나."},
             {
@@ -949,10 +969,8 @@ class InnerThoughtApiTests(unittest.TestCase):
                     )
 
                 self.assertEqual(response.status_code, 200)
-                expected_type = (
-                    "GOOD" if ai_response.get("innerThoughtType") == "GOOD" else "NORMAL"
-                )
-                self.assertEqual(response.json()["data"]["innerThoughtType"], expected_type)
+                self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
+                self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_inner_thought_generation_failure_returns_503(self):
         fake_openai = FakeOpenAI(error=RuntimeError("network failed"))
@@ -972,8 +990,10 @@ class InnerThoughtApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
 
-    def test_inner_thought_non_json_response_returns_503(self):
-        fake_openai = FakeOpenAI(content="The response is unavailable.")
+    def test_inner_thought_non_json_repair_uses_safe_fallback(self):
+        fake_openai = FakeOpenAI(
+            contents=["The response is unavailable.", "Still unavailable."],
+        )
         app = create_app(
             make_settings(
                 openrouter_api_key="test-openrouter-key",
@@ -981,14 +1001,47 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
-            response = make_client(app).post(
-                "/api/v1/conversation/inner-thought",
-                json=valid_inner_thought_payload(),
-            )
+        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/inner-thought",
+                    json=valid_inner_thought_payload(),
+                )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn("reason=response_invalid", logs.output[0])
+
+    def test_inner_thought_policy_violation_repair_returns_logged_fallback(self):
+        inner_thought = "문법 피드백을 주는 게 좋겠다."
+        ai_response = {
+            "answerCoverage": "COMPLETE",
+            "relationshipTone": "NEUTRAL",
+            "directedAttack": False,
+            "innerThought": inner_thought,
+        }
+        fake_openai = FakeOpenAI(contents=[json.dumps(ai_response)] * 2)
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+            ),
+        )
+
+        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+            with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                response = make_client(app).post(
+                    "/api/v1/conversation/inner-thought",
+                    json=valid_inner_thought_payload(),
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["innerThought"], inner_thought)
+        self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIn("reason=prohibited_feedback_language", logs.output[0])
+        self.assertNotIn(inner_thought, logs.output[0])
 
     def test_inner_thought_rejects_empty_history(self):
         payload = valid_inner_thought_payload()
