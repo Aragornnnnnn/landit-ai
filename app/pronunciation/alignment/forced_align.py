@@ -44,6 +44,11 @@ _DEFAULT_MODEL_PATH = (
 # 들어온 요청들이 각자 중복 로드하므로, 한 스레드만 로드하고 나머지는 완료까지 대기한다
 _session_lock = threading.Lock()
 _session_cache: dict[str, object] = {}
+# 추론은 직렬로 묶는다: 동시 추론 1회당 활성화 메모리 ~170MB가 누적되고(실측),
+# onnxruntime 메모리 아레나는 한 번 커지면 줄지 않아 겹친 피크가 상주로 굳는다.
+# 추론(~0.3초)은 LLM 판정(수 초)과 병렬로 돌므로 대기 비용은 예산에 영향이 없다
+_MAX_CONCURRENT_INFERENCES = 1
+_inference_semaphore = threading.Semaphore(_MAX_CONCURRENT_INFERENCES)
 
 
 class AlignmentError(Exception):
@@ -71,7 +76,8 @@ def align_words(
             f"expected {ALIGNMENT_SAMPLE_RATE}Hz wav, got {wav_rate}Hz"
         )
 
-    emission = session.run(None, {"waveform": waveform})[0][0]
+    with _inference_semaphore:
+        emission = session.run(None, {"waveform": waveform})[0][0]
     log_probs = _log_softmax(emission)
 
     flat_tokens: list[int] = []
@@ -243,7 +249,8 @@ def warm_up(model_path: str | None = None) -> None:
         session = _load_session(model_path)
         with_dummy = np.zeros((1, ALIGNMENT_SAMPLE_RATE), dtype=np.float32)
         # 1초짜리 무음으로 더미 추론 1회 — 첫 추론에만 붙는 초기화 비용을 미리 치른다
-        session.run(None, {"waveform": with_dummy})
+        with _inference_semaphore:
+            session.run(None, {"waveform": with_dummy})
         logger.info("alignment model warm-up finished")
     except Exception:  # 워밍업 실패가 기동을 막으면 안 된다
         logger.exception("alignment model warm-up failed")

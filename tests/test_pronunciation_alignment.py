@@ -117,6 +117,60 @@ class ViterbiUnitTests(unittest.TestCase):
             self.align(log_probs, [2, 2])
 
 
+class InferenceSerializationTests(unittest.TestCase):
+    """추론은 동시 1회로 직렬화된다 (동시 추론당 활성화 메모리 ~170MB 누적 방지).
+
+    모델 없이 세션을 mock으로 대체해, 스레드 4개가 동시에 align_words를 호출해도
+    세션 run이 한 번에 하나만 실행되는지 확인한다 — 게이트 없이 항상 실행.
+    """
+
+    def test_concurrent_align_calls_run_inference_one_at_a_time(self):
+        import io
+        import threading
+        import time
+        import wave
+        from concurrent.futures import ThreadPoolExecutor
+        from unittest.mock import patch
+
+        import numpy as np
+
+        from app.pronunciation.alignment import forced_align
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(16_000)
+            f.writeframes(b"\x00\x00" * 8_000)
+        wav = buffer.getvalue()
+
+        state = {"active": 0, "max_active": 0}
+        state_lock = threading.Lock()
+
+        class FakeSession:
+            def run(self, outputs, inputs):
+                with state_lock:
+                    state["active"] += 1
+                    state["max_active"] = max(state["max_active"], state["active"])
+                time.sleep(0.05)
+                with state_lock:
+                    state["active"] -= 1
+                return [np.zeros((1, 5, len(forced_align._LABELS)), dtype=np.float32)]
+
+        with (
+            patch.object(forced_align, "_load_session", return_value=FakeSession()),
+            ThreadPoolExecutor(max_workers=4) as executor,
+        ):
+            futures = [
+                executor.submit(forced_align.align_words, wav, ["A"])
+                for _ in range(4)
+            ]
+            for future in futures:
+                future.result()
+
+        self.assertEqual(state["max_active"], 1)
+
+
 class WarmUpTests(unittest.TestCase):
     """워밍업은 모델 없이 검증한다 (세션 로드는 mock) — 게이트 없이 항상 실행."""
 
