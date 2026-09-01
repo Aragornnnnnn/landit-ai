@@ -1,5 +1,6 @@
 # 프리톡 대화 생성 요청을 LLM JSON 응답으로 변환하는 유스케이스 모듈
 import json
+import logging
 import re
 
 from pydantic import BaseModel, ValidationError
@@ -27,6 +28,8 @@ from app.models.free_talk import (
     FreeTalkTurnResponse,
 )
 
+
+logger = logging.getLogger(__name__)
 
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
@@ -230,13 +233,18 @@ def generate_inner_thought(
                 system_prompt=_inner_thought_repair_system_prompt(payload.characterId),
                 user_prompt=_inner_thought_user_prompt(payload),
             )
-            return _to_inner_thought_response(data)
+            return _to_inner_thought_response(
+                data,
+                allow_prohibited_feedback_language=True,
+            )
         except (AiResponseInvalidError, ValidationError, ValueError) as exc:
             raise AiResponseInvalidError from exc
 
 
 def _to_inner_thought_response(
     data: dict[str, object],
+    *,
+    allow_prohibited_feedback_language: bool = False,
 ) -> FreeTalkInnerThoughtResponse:
     directed_attack = _normalized_directed_attack(data)
     if directed_attack is None:
@@ -244,7 +252,10 @@ def _to_inner_thought_response(
     candidate_data = dict(data)
     candidate_data["directedAttack"] = directed_attack
     candidate = _InnerThoughtCandidate.model_validate(candidate_data)
-    _validate_inner_thought(candidate.innerThought)
+    _validate_inner_thought(
+        candidate.innerThought,
+        allow_prohibited_feedback_language=allow_prohibited_feedback_language,
+    )
     return FreeTalkInnerThoughtResponse(
         innerThought=candidate.innerThought,
         innerThoughtType=derive_inner_thought_type(
@@ -289,12 +300,23 @@ def _valid_title(value: object) -> str | None:
     return title
 
 
-def _validate_inner_thought(inner_thought: str | None) -> None:
-    if (
-        inner_thought is None
-        or _PROHIBITED_INNER_THOUGHT_PATTERN.search(inner_thought) is not None
-    ):
+def _validate_inner_thought(
+    inner_thought: str | None,
+    *,
+    allow_prohibited_feedback_language: bool = False,
+) -> None:
+    if inner_thought is None:
         raise ValueError("inner thought must not include feedback language")
+    if _PROHIBITED_INNER_THOUGHT_PATTERN.search(inner_thought) is None:
+        return
+    if allow_prohibited_feedback_language:
+        logger.error(
+            "Free Talk inner thought policy violation was accepted. "
+            "workflow=free_talk_inner_thought_policy_fallback "
+            "reason=prohibited_feedback_language",
+        )
+        return
+    raise ValueError("inner thought must not include feedback language")
 
 
 def _has_missing_continue_message(data: dict[str, object]) -> bool:
