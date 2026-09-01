@@ -111,7 +111,7 @@ class PronunciationWordInput(BaseModel):
     @classmethod
     def word_must_not_be_blank(cls, value: str) -> str:
         value = _validate_not_blank(value)
-        # 숫자 단어는 0~99만 받는 기존 입력 계약을 유지한다 (BE 자산 검증과 짝)
+        # 숫자 단어는 정렬 시 철자로 변환하는데 0~99만 지원한다
         if value.strip().isdigit() and int(value.strip()) > 99:
             raise ValueError("numeric words above 99 are not supported")
         return value
@@ -190,6 +190,8 @@ class PronunciationWordResult(BaseModel):
     order: int
     word: str
     status: PronunciationWordStatus
+    startMs: int
+    endMs: int
     userDisplay: str | None = None
     errorTargetSpan: str | None = None
     errorUserSpan: str | None = None

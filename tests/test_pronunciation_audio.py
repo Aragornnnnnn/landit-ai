@@ -3,10 +3,12 @@
 # 크롬 MediaRecorder의 webm은 스트리밍 컨테이너라 duration 메타데이터가 없다.
 # ffmpeg 파이프 출력(-f webm pipe:1)은 seek이 불가해 같은 상태를 재현하므로,
 # 이 픽스처로 유계 디코드 폴백 경로를 검증한다. ffmpeg가 없는 환경은 skip한다.
+import io
 import shutil
 import subprocess
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 
 _FFMPEG_AVAILABLE = (
@@ -100,12 +102,15 @@ class DecodeUserAudioTests(unittest.TestCase):
         return data
 
     def test_streaming_webm_without_duration_metadata_decodes(self):
-        from app.pronunciation.audio import decode_user_audio
+        from app.pronunciation.audio import ALIGNMENT_SAMPLE_RATE, decode_user_audio
 
         decoded = decode_user_audio(self._streaming_webm(5.0), "webm")
 
         self.assertAlmostEqual(decoded.duration_seconds, 5.0, delta=0.2)
         self.assertGreater(len(decoded.judgment_wav), 0)
+        with wave.open(io.BytesIO(decoded.alignment_wav)) as alignment:
+            self.assertEqual(alignment.getframerate(), ALIGNMENT_SAMPLE_RATE)
+            self.assertEqual(alignment.getnchannels(), 1)
 
     def test_streaming_webm_longer_than_limit_is_rejected(self):
         from app.pronunciation.audio import AudioDecodeError, decode_user_audio

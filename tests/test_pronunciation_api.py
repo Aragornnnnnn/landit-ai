@@ -9,6 +9,7 @@ from app.core.config import Settings
 from app.core.sentry import scrub_sensitive_request_data
 from app.main import create_app
 from app.models.pronunciation import PronunciationAnalyzeRequest
+from app.pronunciation.alignment.forced_align import AlignmentError, WordSpan
 from app.pronunciation.audio import AudioDecodeError, DecodedAudio
 from app.pronunciation.llm.accent_check import AccentVerdict
 from app.pronunciation.llm.compare import (
@@ -35,7 +36,15 @@ REQUEST_BODY = {
     ],
 }
 
-DECODED = DecodedAudio(judgment_wav=b"judgment", duration_seconds=2.0)
+SPANS = [
+    WordSpan(word="There's", start_ms=90, end_ms=470),
+    WordSpan(word="nothing", start_ms=480, end_ms=930),
+    WordSpan(word="like", start_ms=940, end_ms=1200),
+]
+
+DECODED = DecodedAudio(
+    judgment_wav=b"judgment", alignment_wav=b"alignment", duration_seconds=2.0
+)
 
 
 def make_settings(**overrides):
@@ -55,8 +64,10 @@ def make_client():
 
 def patch_pipeline(
     differences=None,
+    spans=SPANS,
     decode_error=None,
     judge_error=None,
+    align_error=None,
     accent_verdicts=None,
 ):
     service = "app.pronunciation.application.analysis_service"
@@ -71,6 +82,11 @@ def patch_pipeline(
             raise judge_error
         return list(differences or []), b"reference-wav"
 
+    def fake_align(wav, words, *args):
+        if align_error is not None:
+            raise align_error
+        return spans
+
     verdicts = dict(accent_verdicts or {})
 
     def fake_check_accent(wav, contrast, settings):
@@ -79,6 +95,7 @@ def patch_pipeline(
     return (
         patch(f"{service}.decode_user_audio", side_effect=fake_decode),
         patch(f"{service}._judge", side_effect=fake_judge),
+        patch(f"{service}.align_words", side_effect=fake_align),
         patch(f"{service}._check_accent", side_effect=fake_check_accent),
         # 묘사 호출은 판정 결과를 바꾸지 않으므로 계약 테스트에서는 비운다
         patch(f"{service}.describe_error", return_value=None),
@@ -89,7 +106,7 @@ def patch_pipeline(
 class PronunciationAnalyzeApiTests(unittest.TestCase):
     def post(self, body=REQUEST_BODY, **pipeline_kwargs):
         patches = patch_pipeline(**pipeline_kwargs)
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             return make_client().post("/api/v1/pronunciation/analyze", json=body)
 
     def test_all_correct_words(self):
@@ -101,9 +118,8 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
         words = payload["data"]["words"]
         self.assertEqual([w["order"] for w in words], [1, 2, 3])
         self.assertEqual({w["status"] for w in words}, {"CORRECT"})
-        # 단어별 재생 기능 제거로 타임스탬프는 응답에서 빠졌다
-        self.assertNotIn("startMs", words[0])
-        self.assertNotIn("endMs", words[0])
+        self.assertEqual(words[0]["startMs"], 90)
+        self.assertEqual(words[0]["endMs"], 470)
         self.assertIsNone(words[0]["userDisplay"])
 
     def test_phoneme_and_stress_errors_are_merged(self):
@@ -163,6 +179,12 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
 
+    def test_alignment_failure_returns_503(self):
+        response = self.post(align_error=AlignmentError("no path"))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+
     def test_invalid_base64_returns_400_without_echoing_audio(self):
         body = {**REQUEST_BODY, "userAudio": "not-base64!!!"}
         response = self.post(body=body)
@@ -177,7 +199,8 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
 
-    def test_numeric_word_is_accepted(self):
+    def test_numeric_word_is_accepted_and_aligned_as_spelled_word(self):
+        captured = {}
         body = {
             **REQUEST_BODY,
             "sentenceText": "The flight takes off at 9.",
@@ -190,9 +213,28 @@ class PronunciationAnalyzeApiTests(unittest.TestCase):
                 {"order": 6, "word": "9"},
             ],
         }
-        response = self.post(body=body)
+        spans = [
+            WordSpan(word=w, start_ms=i * 100, end_ms=i * 100 + 90)
+            for i, w in enumerate(["The", "flight", "takes", "off", "at", "nine"])
+        ]
+
+        patches = patch_pipeline(spans=spans)
+
+        def capture_align(wav, words, *args):
+            captured["words"] = words
+            return spans
+
+        with patches[0], patches[1], patches[3], patches[4], patches[5], patch(
+            "app.pronunciation.application.analysis_service.align_words",
+            side_effect=capture_align,
+        ):
+            response = make_client().post(
+                "/api/v1/pronunciation/analyze", json=body
+            )
 
         self.assertEqual(response.status_code, 200)
+        # 정렬에는 발화 철자가 전달된다
+        self.assertEqual(captured["words"][-1], "nine")
         words = response.json()["data"]["words"]
         self.assertEqual(words[-1]["word"], "9")
         self.assertEqual(words[-1]["status"], "CORRECT")
@@ -243,7 +285,7 @@ GB_BODY = {
 class AccentContrastApiTests(unittest.TestCase):
     def post(self, body=GB_BODY, **pipeline_kwargs):
         patches = patch_pipeline(**pipeline_kwargs)
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             return make_client().post("/api/v1/pronunciation/analyze", json=body)
 
     def test_expected_accent_keeps_word_correct(self):
@@ -315,7 +357,7 @@ class UserAudioPrivacyTests(unittest.TestCase):
     def test_validation_error_does_not_echo_user_audio(self):
         body = {**REQUEST_BODY, "sentenceText": "   "}
         patches = patch_pipeline()
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             response = make_client().post(
                 "/api/v1/pronunciation/analyze", json=body
             )

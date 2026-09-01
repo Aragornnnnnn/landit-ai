@@ -7,6 +7,7 @@ from app.models.pronunciation import (
     PronunciationAnalyzeRequest,
     PronunciationAnalyzeResponse,
 )
+from app.pronunciation.alignment.forced_align import AlignmentError
 from app.pronunciation.application.analysis_service import (
     AnalysisBudgetExceededError,
     ReferenceAudioUnavailableError,
@@ -41,6 +42,7 @@ def analyze(
     except (
         ReferenceAudioUnavailableError,
         PronunciationJudgmentError,
+        AlignmentError,
         AnalysisBudgetExceededError,
     ) as exc:
         raise ApiException(503, ErrorCode.AI_GENERATION_FAILED) from exc

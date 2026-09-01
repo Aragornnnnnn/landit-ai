@@ -18,6 +18,7 @@ from app.models.pronunciation import (
     PronunciationAccentErrorType,
     PronunciationWordInput,
 )
+from app.pronunciation.alignment.forced_align import WordSpan
 from app.pronunciation.application.analysis_service import (
     ReferenceAudioUnavailableError,
     _download_reference,
@@ -47,8 +48,15 @@ REQUEST_BODY = {
     ],
 }
 
+SPANS = [
+    WordSpan(word="There's", start_ms=90, end_ms=470),
+    WordSpan(word="nothing", start_ms=480, end_ms=930),
+    WordSpan(word="like", start_ms=940, end_ms=1200),
+]
+
 DECODED = DecodedAudio(
     judgment_wav=b"SECRET-JUDGMENT-BYTES",
+    alignment_wav=b"SECRET-ALIGNMENT-BYTES",
     duration_seconds=2.0,
 )
 
@@ -92,6 +100,7 @@ def pipeline(
     with (
         patch(f"{service}.decode_user_audio", side_effect=fake_decode),
         patch(f"{service}._judge", side_effect=fake_judge),
+        patch(f"{service}.align_words", return_value=SPANS),
         patch(f"{service}.describe_error", side_effect=fake_describe),
         patch(f"{service}.create_openai_client", return_value=None),
     ):
@@ -277,6 +286,7 @@ class SentryLeakTests(unittest.TestCase):
         rendered = repr(DECODED)
 
         self.assertNotIn("SECRET-JUDGMENT-BYTES", rendered)
+        self.assertNotIn("SECRET-ALIGNMENT-BYTES", rendered)
         self.assertIn("duration_seconds", rendered)
 
     def test_sentry_init_disables_local_variables_and_pii(self):
