@@ -7,6 +7,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from itertools import count
@@ -17,6 +18,12 @@ logger = logging.getLogger(__name__)
 MAX_AUDIO_DURATION_SECONDS = 30.0
 ALIGNMENT_SAMPLE_RATE = 16_000
 _FFMPEG_TIMEOUT_SECONDS = 10.0
+# ffmpeg/ffprobe subprocess 동시 실행 상한. 프로세스 하나가 수십 MB를 쓰므로
+# 상한이 없으면 동시 요청 수만큼 떠서 메모리 한도를 뚫는다 — 부하 실험 실측:
+# 1024m 한도에서 동시 30요청 시 ffmpeg 동시 실행이 OOM kill의 원인이었다 (LAN-418).
+# 대기 시간은 전체 예산(deadline)에 포함되어 초과 시 기존 타임아웃 경로로 실패한다
+_MAX_CONCURRENT_FFMPEG = 4
+_ffmpeg_semaphore = threading.Semaphore(_MAX_CONCURRENT_FFMPEG)
 # duration 폴백 디코드 상한. 크롬 MediaRecorder의 webm은 스트리밍 컨테이너라
 # duration 메타데이터가 없는 경우가 흔한데(ffprobe가 N/A 반환 — 실측 확인),
 # opus는 압축률이 높아 크기 제한(10MB) 안에서도 수십 분짜리 오디오가 가능하다.
@@ -181,23 +188,25 @@ def _run_ffmpeg(args: list[str], deadline: float | None = None) -> None:
 def _run(
     command: list[str], deadline: float | None = None
 ) -> subprocess.CompletedProcess:
-    # 전체 분석 예산(deadline)이 있으면 subprocess 타임아웃을 남은 시간과 min으로 묶는다
-    timeout = _FFMPEG_TIMEOUT_SECONDS
-    if deadline is not None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise AudioDecodeError("audio processing timed out")
-        timeout = min(timeout, remaining)
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise AudioDecodeError("audio processing timed out") from error
+    # 동시 실행 상한 대기 후에 남은 예산을 계산한다 — 줄 서는 시간도 예산에서 차감
+    with _ffmpeg_semaphore:
+        # 전체 분석 예산(deadline)이 있으면 subprocess 타임아웃을 남은 시간과 min으로 묶는다
+        timeout = _FFMPEG_TIMEOUT_SECONDS
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AudioDecodeError("audio processing timed out")
+            timeout = min(timeout, remaining)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise AudioDecodeError("audio processing timed out") from error
     if result.returncode != 0:
         raise AudioDecodeError(f"{command[0]} failed: {result.stderr.strip()[:200]}")
     return result

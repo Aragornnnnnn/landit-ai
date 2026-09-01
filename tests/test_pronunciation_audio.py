@@ -138,5 +138,49 @@ class DecodeUserAudioTests(unittest.TestCase):
             decode_user_audio(b"not audio at all", "webm")
 
 
+class FfmpegConcurrencyCapTests(unittest.TestCase):
+    """ffmpeg subprocess는 동시 실행이 상한(4)으로 묶인다 — ffmpeg 없이 항상 실행.
+
+    상한이 없으면 동시 요청 수만큼 프로세스가 떠서 메모리 한도를 뚫는다
+    (1024m 한도 부하 실험에서 동시 30요청 OOM 실측 — LAN-418 후속).
+    """
+
+    def test_concurrent_runs_are_capped(self):
+        import threading
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from app.pronunciation import audio
+
+        state = {"active": 0, "max_active": 0}
+        state_lock = threading.Lock()
+
+        def fake_run(command, **kwargs):
+            with state_lock:
+                state["active"] += 1
+                state["max_active"] = max(state["max_active"], state["active"])
+            time.sleep(0.05)
+            with state_lock:
+                state["active"] -= 1
+            return CompletedProcess(command, 0, stdout="", stderr="")
+
+        with (
+            patch.object(audio.subprocess, "run", side_effect=fake_run),
+            ThreadPoolExecutor(max_workers=12) as executor,
+        ):
+            futures = [
+                executor.submit(audio._run, ["ffmpeg", "-version"])
+                for _ in range(12)
+            ]
+            for future in futures:
+                future.result()
+
+        self.assertLessEqual(state["max_active"], audio._MAX_CONCURRENT_FFMPEG)
+        # 상한까지는 실제로 병렬로 돈다 (전부 직렬이면 상한 설정이 무의미)
+        self.assertGreater(state["max_active"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
