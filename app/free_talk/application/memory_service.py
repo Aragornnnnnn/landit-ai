@@ -259,7 +259,9 @@ def _candidate_system_prompt() -> str:
 def _resolution_system_prompt() -> str:
     return (
         "Resolve each memory candidate against the comparable ACTIVE memories. Return "
-        "only a JSON object with exactly one resolution for every candidateIndex. "
+        "only a JSON object with a resolutions array containing exactly one object for "
+        "every candidateIndex. Each resolution object must contain exactly candidateIndex, "
+        "operation, and supersededMemoryIds. "
         "Use ADD for an independent fact, SUPERSEDE only when an existing memory is "
         "replaced, and IGNORE for duplicates, transient statements, or weak evidence. "
         "Only SUPERSEDE may contain supersededMemoryIds, and use only IDs present in "
