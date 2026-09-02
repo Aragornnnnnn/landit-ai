@@ -29,7 +29,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v1"
+EXTRACTOR_VERSION = "memory-candidate-v2"
 
 
 def generate_memory_candidates(
@@ -246,13 +246,31 @@ def _candidate_system_prompt() -> str:
         "Extract zero to five durable memories from the USER messages in the completed "
         "FreeTalk conversation. Return only a JSON object with a candidates array. "
         "Each candidate must contain candidateIndex, memoryType (PROFILE, EVENT, or "
-        "EPISODE), a concise content sentence in baseLocale, contentLocale, sourceMessageIds, "
-        "confidence, validFrom, and validTo. candidateIndex must start at zero and be "
-        "contiguous. Use only USER message IDs "
-        "as sources. Do not infer diagnoses, personality, relationships, or intent. "
+        "EPISODE), a concise content sentence in baseLocale, contentLocale, "
+        "sourceMessageIds, confidence, validFrom, and validTo. candidateIndex must start "
+        "at zero and be contiguous. For contentLocale, copy the request baseLocale exactly "
+        "without converting the code. Use only USER message IDs as sources. "
+        "Classify by durable meaning rather than the surface wording. PROFILE is a stable "
+        "user fact, preference, relationship, possession, recurring habit, or stable fact "
+        "about a named entity in the user's life; it is shared across characters. EVENT is "
+        "a concrete past or future occurrence with time relevance; it is scoped to the "
+        "current character. EPISODE is a shared experience or interaction between the user "
+        "and the current character; it is scoped to that character. Do not classify a fact "
+        "as EPISODE merely because the user mentioned it in this conversation. When an event "
+        "establishes a more useful current stable fact, prefer the PROFILE meaning, such as "
+        "'I adopted a dog named Bori' becoming '사용자는 보리라는 개를 키운다.' "
+        "Preserve relevant named entities and participants, especially who a recurring habit "
+        "involves. Never keep relative time expressions such as 'today', 'yesterday', "
+        "'tomorrow', 'last weekend', or 'next Friday' in durable content. Resolve them to a "
+        "calendar date using occurredAt and timezone only when unambiguous; otherwise omit "
+        "the relative phrase without inventing a date. For PROFILE or an unknown start time, "
+        "use the source utterance time as "
+        "validFrom. For a future EVENT, keep the scheduled date in content and use the "
+        "utterance time as validFrom. For a past EVENT with a known time, use the event time "
+        "as validFrom. Set validTo only when the end is supported by the conversation. "
+        "Do not infer diagnoses, personality, relationships, or intent. "
         "Exclude secrets, credentials, financial identifiers, greetings, acknowledgements, "
-        "one-off requests, and language-learning examples. For a future plan, keep the "
-        "scheduled date in content and use the utterance time as validFrom."
+        "one-off requests, and language-learning examples."
     )
 
 

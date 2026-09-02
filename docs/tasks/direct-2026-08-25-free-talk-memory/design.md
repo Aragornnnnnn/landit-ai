@@ -59,7 +59,7 @@ V1에서는 매 사용자 턴마다 별도 memory planner를 호출하거나 AI�
 
 ```json
 {
-  "extractorVersion": "memory-candidate-v1",
+  "extractorVersion": "memory-candidate-v2",
   "candidates": [
     {
       "candidateIndex": 0,
@@ -81,9 +81,12 @@ V1에서는 매 사용자 턴마다 별도 memory planner를 호출하거나 AI�
 배열은 계약 설명을 위한 축약 표현이며 실제 응답에는 1536개가 들어간다.
 
 LLM prompt는 USER 발화에서 장기적으로 유용한 `PROFILE`, `EVENT`, `EPISODE`만
-추출하도록 한다. 인사, 단순 동의, 일회성 요청, 학습 예문, 비밀·자격 증명·금융
-식별자와 근거 없는 진단·성격·관계·의도 추론은 제외한다. 후보 문장은 base locale로
-작성하고 미래 계획의 날짜와 발화 시각을 보존한다.
+추출하도록 한다. 안정적인 사용자 사실과 반복 습관은 `PROFILE`, 시간 의미가 있는
+사건은 `EVENT`, 사용자와 현재 캐릭터가 함께 겪은 상호작용은 `EPISODE`로 분류한다.
+후보에는 관련된 고유명사와 참여자를 보존하고 상대 시간은 발화 시각과 timezone으로
+해석하되, 명확하지 않으면 날짜를 추측하지 않는다. 인사, 단순 동의, 일회성 요청,
+학습 예문, 비밀·자격 증명·금융 식별자와 근거 없는 진단·성격·관계·의도 추론은
+제외한다.
 
 ### 3.2 상태 판정
 

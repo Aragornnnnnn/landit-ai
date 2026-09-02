@@ -1971,7 +1971,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v1",
+            "memory-candidate-v2",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -1979,6 +1979,16 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai.embeddings.calls[0]["model"],
             "openai/text-embedding-3-small",
         )
+
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn("PROFILE is a stable user fact", system_prompt)
+        self.assertIn("EVENT is a concrete past or future occurrence", system_prompt)
+        self.assertIn("EPISODE is a shared experience", system_prompt)
+        self.assertIn("Do not classify a fact as EPISODE merely", system_prompt)
+        self.assertIn("Never keep relative time expressions", system_prompt)
+        self.assertIn("'today', 'yesterday', 'tomorrow'", system_prompt)
+        self.assertIn("Preserve relevant named entities and participants", system_prompt)
+        self.assertIn("copy the request baseLocale exactly", system_prompt)
 
     def test_memory_candidates_rejects_ai_message_as_source(self):
         fake_openai = FakeOpenAI(
@@ -2036,7 +2046,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v1",
+                "extractorVersion": "memory-candidate-v2",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
