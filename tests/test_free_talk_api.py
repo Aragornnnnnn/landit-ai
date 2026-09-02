@@ -2184,6 +2184,13 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai.completions.calls[0]["response_format"],
             {"type": "json_object"},
         )
+        system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
+        self.assertIn(
+            "candidateIndex, operation, and supersededMemoryIds",
+            system_prompt,
+        )
+        self.assertIn("resolutions array", system_prompt)
+        self.assertIn("exactly one object for every candidateIndex", system_prompt)
 
     def test_memory_resolution_rejects_missing_candidate_resolution(self):
         fake_openai = FakeOpenAI(contents=[json.dumps({"resolutions": []})])
