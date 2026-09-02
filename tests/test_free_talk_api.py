@@ -1971,7 +1971,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v3",
+            "memory-candidate-v4",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -2003,6 +2003,13 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("Landit에서 백엔드 엔지니어로 일한다", system_prompt)
         self.assertIn("매주 수요일에 테니스를 친다", system_prompt)
         self.assertIn("job interview' is written as '면접'", system_prompt)
+        self.assertIn("one independently updatable fact", system_prompt)
+        self.assertIn("보리라는 골든 리트리버를 키운다", system_prompt)
+        self.assertIn("보리와 매주 일요일에 등산한다", system_prompt)
+        self.assertIn("Do not split a cause and its behavioral restatement", system_prompt)
+        self.assertIn("사용자는 고수를 싫어한다", system_prompt)
+        self.assertIn("사용자는 Acme에서 엔지니어로 일한다", system_prompt)
+        self.assertIn("Every EPISODE content must explicitly name", system_prompt)
 
     def test_memory_candidates_rejects_ai_message_as_source(self):
         fake_openai = FakeOpenAI(
@@ -2060,7 +2067,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v3",
+                "extractorVersion": "memory-candidate-v4",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
@@ -2475,6 +2482,10 @@ class FreeTalkApiTests(unittest.TestCase):
         )
         self.assertIn("resolutions array", system_prompt)
         self.assertIn("exactly one object for every candidateIndex", system_prompt)
+        self.assertIn("more specific version of the same real-world fact", system_prompt)
+        self.assertIn("supersede the broader memory", system_prompt)
+        self.assertIn("Compare the core predicate and recurrence first", system_prompt)
+        self.assertIn("Do not use ADD merely because", system_prompt)
 
     def test_memory_resolution_rejects_missing_candidate_resolution(self):
         fake_openai = FakeOpenAI(contents=[json.dumps({"resolutions": []})])

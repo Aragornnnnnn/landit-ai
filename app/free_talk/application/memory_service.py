@@ -32,7 +32,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v3"
+EXTRACTOR_VERSION = "memory-candidate-v4"
 _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN = re.compile(
     r"\b(?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
     r"|(?:다음|이번)(?:\s*주)?\s*(?:월|화|수|목|금|토|일)요일",
@@ -80,7 +80,11 @@ _CANDIDATE_PROMPT_PARTS = (
         "sourceMessageIds, confidence, validFrom, and validTo. candidateIndex must start "
         "at zero and be contiguous. For contentLocale, copy the request baseLocale exactly "
         "without converting the code. Write ordinary words entirely in baseLocale and keep "
-        "only proper nouns unchanged. Use only USER message IDs as sources."
+        "only proper nouns unchanged. Use only USER message IDs as sources. Each candidate "
+        "must contain one independently updatable fact. Split facts that could later change "
+        "or be invalidated separately, even when they appear in one USER message. Do not "
+        "split a cause and its behavioral restatement when both express the same durable "
+        "preference; keep the more general useful fact."
     ),
     (
         "Classify by durable meaning rather than the surface wording. PROFILE is a stable "
@@ -89,7 +93,9 @@ _CANDIDATE_PROMPT_PARTS = (
         "a concrete past or future occurrence with time relevance; it is scoped to the "
         "current character. EPISODE is a shared experience or interaction between the user "
         "and the current character; it is scoped to that character. Do not classify a fact "
-        "as EPISODE merely because the user mentioned it in this conversation. When an event "
+        "as EPISODE merely because the user mentioned it in this conversation. Every EPISODE "
+        "content must explicitly name the request characterId as a participant, including "
+        "when the source refers to that character only as 'we' or 'our'. When an event "
         "establishes a more useful current stable fact, prefer the PROFILE meaning, such as "
         "'I adopted a dog named Bori' becoming '사용자는 보리라는 개를 키운다.' Preserve "
         "relevant named entities and participants. Never drop an explicitly stated companion "
@@ -132,7 +138,14 @@ _CANDIDATE_PROMPT_PARTS = (
         "a backend engineer, and I play tennis every Wednesday' produces separate PROFILE "
         "contents '사용자는 Landit에서 백엔드 엔지니어로 일한다' and '사용자는 매주 "
         "수요일에 테니스를 친다'. (6) When baseLocale is KR, the ordinary term 'job "
-        "interview' is written as '면접', not left in English."
+        "interview' is written as '면접', not left in English. (7) When baseLocale is "
+        "KR, 'I have a golden retriever named Bori, and we go hiking together every Sunday' "
+        "produces separate PROFILE contents '사용자는 보리라는 골든 리트리버를 키운다' "
+        "and '사용자는 보리와 매주 일요일에 등산한다'. (8) When baseLocale is KR, 'I "
+        "hate cilantro, so I always ask restaurants to leave it out' produces only the "
+        "PROFILE content '사용자는 고수를 싫어한다'. (9) occurredAt=2026-09-02T17:00:00+09:00 "
+        "and 'Today I started a new job as an engineer at Acme' produces the PROFILE content "
+        "'사용자는 Acme에서 엔지니어로 일한다' with the utterance time as validFrom."
     ),
 )
 
@@ -408,8 +421,16 @@ def _resolution_system_prompt() -> str:
         "only a JSON object with a resolutions array containing exactly one object for "
         "every candidateIndex. Each resolution object must contain exactly candidateIndex, "
         "operation, and supersededMemoryIds. "
-        "Use ADD for an independent fact, SUPERSEDE only when an existing memory is "
-        "replaced, and IGNORE for duplicates, transient statements, or weak evidence. "
+        "Use ADD for an independent fact and IGNORE for an equivalent duplicate, transient "
+        "statement, or weak evidence. Use SUPERSEDE when the candidate is a more specific "
+        "version of the same real-world fact and keeping the broader memory would be "
+        "redundant; supersede the broader memory. Compare the core predicate and recurrence "
+        "first. When both describe the same recurring action, added participants, places, "
+        "or qualifiers make the candidate a refinement, not an independent fact. Do not use "
+        "ADD merely because the candidate adds those details. For example, 'the user hikes "
+        "every Sunday' is superseded by 'the user hikes with Bori every Sunday'. Facts that "
+        "can change independently remain ADD even when they mention the same entity; owning "
+        "Bori and hiking with Bori are separate facts. "
         "Only SUPERSEDE may contain supersededMemoryIds, and use only IDs present in "
         "the candidate's comparableMemories. Never supersede another candidate."
     )
