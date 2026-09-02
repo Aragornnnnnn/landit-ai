@@ -307,7 +307,7 @@ def valid_memory_candidates_payload(**overrides):
                 "messageId": 3002,
                 "turnNumber": 1,
                 "role": "USER",
-                "content": "I have an interview next Friday.",
+                "content": "I have an interview on August 28, 2026.",
                 "translatedContent": None,
                 "occurredAt": "2026-08-25T20:10:00+09:00",
             },
@@ -1971,7 +1971,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v2",
+            "memory-candidate-v3",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -1989,6 +1989,20 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("'today', 'yesterday', 'tomorrow'", system_prompt)
         self.assertIn("Preserve relevant named entities and participants", system_prompt)
         self.assertIn("copy the request baseLocale exactly", system_prompt)
+        self.assertIn("Never drop an explicitly stated companion", system_prompt)
+        self.assertIn("ordinary words entirely in baseLocale", system_prompt)
+        self.assertIn("full RFC 3339 timestamp with a timezone offset", system_prompt)
+        self.assertIn("never return a date-only value", system_prompt)
+        self.assertIn("omit that EVENT candidate", system_prompt)
+        self.assertIn("Quoted, hypothetical, role-play, translation", system_prompt)
+        self.assertIn("An explicit denial overrides", system_prompt)
+        self.assertIn("validFrom=2026-09-01T00:00:00+09:00", system_prompt)
+        self.assertIn("I have a dentist appointment next Friday", system_prompt)
+        self.assertIn("return zero candidates", system_prompt)
+        self.assertIn("validTo=2026-10-07T23:59:59+09:00", system_prompt)
+        self.assertIn("Landit에서 백엔드 엔지니어로 일한다", system_prompt)
+        self.assertIn("매주 수요일에 테니스를 친다", system_prompt)
+        self.assertIn("job interview' is written as '면접'", system_prompt)
 
     def test_memory_candidates_rejects_ai_message_as_source(self):
         fake_openai = FakeOpenAI(
@@ -2046,10 +2060,270 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v2",
+                "extractorVersion": "memory-candidate-v3",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_ambiguous_relative_weekday_event(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "I have a dentist appointment next Friday."
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        content="사용자는 2026년 9월 11일에 치과 예약이 있다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_one_off_request_episode(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "Could you say that again more slowly?"
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        memoryType="EPISODE",
+                        content="사용자는 Chloe에게 다시 천천히 말해 달라고 요청했다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_one_off_request_regardless_of_type(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "Could you say that again more slowly?"
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        memoryType="EVENT",
+                        content="사용자는 더 천천히 다시 말해 달라고 요청했다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_keeps_profile_inside_memory_request(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "Could you remember that I am vegetarian?"
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        memoryType="PROFILE",
+                        content="사용자는 채식주의자다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["data"]["candidates"]), 1)
+        self.assertEqual(len(fake_openai.embeddings.calls), 1)
+
+    def test_memory_candidates_drops_greeting_episode(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = "Hi! Nice to meet you."
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        memoryType="EPISODE",
+                        content="사용자는 Chloe에게 처음 인사했다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_ephemeral_current_state(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = "I'm sleepy right now."
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        memoryType="PROFILE",
+                        content="사용자는 지금 졸리다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_denied_language_example(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "For English practice, I say 'I have a dog named Bori', but it isn't true."
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        memoryType="PROFILE",
+                        content="사용자는 보리라는 개를 키운다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_content_with_relative_time(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "Yesterday I won first place in a local marathon."
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        content="사용자는 어제 지역 마라톤에서 1위를 했다.",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_drops_english_relative_weekday_content(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "My dentist appointment date changed."
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    valid_memory_candidate_completion(
+                        content="My dentist appointment is next Friday.",
+                        contentLocale="KR",
+                    ),
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_reindexes_candidates_after_filtering(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = (
+            "Yesterday was tiring, but I play tennis every Wednesday."
+        )
+        first_candidate = valid_memory_candidate_completion(
+            content="사용자는 어제 피곤했다.",
+        )["candidates"][0]
+        second_candidate = valid_memory_candidate_completion(
+            candidateIndex=1,
+            memoryType="PROFILE",
+            content="사용자는 매주 수요일에 테니스를 친다.",
+        )["candidates"][0]
+        fake_openai = FakeOpenAI(
+            contents=[json.dumps({"candidates": [first_candidate, second_candidate]})],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        candidates = response.json()["data"]["candidates"]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["candidateIndex"], 0)
+        self.assertEqual(
+            fake_openai.embeddings.calls[0]["input"],
+            ["사용자는 매주 수요일에 테니스를 친다."],
+        )
 
     def test_memory_candidates_rejects_locale_mismatch_without_embedding_call(self):
         fake_openai = FakeOpenAI(
