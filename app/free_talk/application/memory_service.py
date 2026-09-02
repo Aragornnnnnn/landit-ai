@@ -24,6 +24,7 @@ from app.models.free_talk import (
     MemoryCandidatesRequest,
     MemoryCandidatesResponse,
     MemoryConversationHistoryMessage,
+    MemoryOperation,
     MemoryType,
     MemoryResolution,
     MemoryResolutionRequest,
@@ -269,7 +270,7 @@ def _validated_resolution(
     try:
         response = MemoryResolutionResponse.model_validate(data)
         _validate_resolutions(response.resolutions, payload)
-        return response
+        return _ignore_information_losing_supersedes(response, payload)
     except ValidationError as exc:
         raise AiResponseInvalidError from exc
 
@@ -410,6 +411,63 @@ def _validate_resolutions(
     _validate_superseded_ids(resolutions, comparable_ids_by_candidate)
 
 
+def _ignore_information_losing_supersedes(
+    response: MemoryResolutionResponse,
+    payload: MemoryResolutionRequest,
+) -> MemoryResolutionResponse:
+    """기존 기억의 세부 정보를 제거하는 역방향 대체를 무시한다."""
+    candidates_by_index = {
+        candidate.candidateIndex: candidate for candidate in payload.candidates
+    }
+    guarded = []
+    for resolution in response.resolutions:
+        candidate = candidates_by_index[resolution.candidateIndex]
+        memories_by_id = {
+            memory.memoryId: memory for memory in candidate.comparableMemories
+        }
+        loses_information = any(
+            _is_strict_content_subset(
+                candidate.content,
+                memories_by_id[memory_id].content,
+            )
+            for memory_id in resolution.supersededMemoryIds
+        )
+        if resolution.operation == MemoryOperation.SUPERSEDE and loses_information:
+            guarded.append(
+                resolution.model_copy(
+                    update={
+                        "operation": MemoryOperation.IGNORE,
+                        "supersededMemoryIds": [],
+                    },
+                ),
+            )
+            continue
+        guarded.append(resolution)
+    return MemoryResolutionResponse(resolutions=guarded)
+
+
+def _is_strict_content_subset(candidate: str, existing: str) -> bool:
+    """후보가 기존 기억의 단어를 제거한 일반화인지 보수적으로 판정한다."""
+    candidate_tokens = _content_tokens(candidate)
+    existing_tokens = _content_tokens(existing)
+    return candidate_tokens < existing_tokens
+
+
+def _content_tokens(content: str) -> set[str]:
+    return {
+        _strip_korean_particle(token.lower())
+        for token in _CONTENT_TOKEN_PATTERN.findall(content)
+    }
+
+
+def _strip_korean_particle(token: str) -> str:
+    """한국어 조사 차이로 같은 핵심 단어가 달라지는 것을 방지한다."""
+    for suffix in _KOREAN_PARTICLE_SUFFIXES:
+        if token.endswith(suffix) and len(token) > len(suffix) + 1:
+            return token[: -len(suffix)]
+    return token
+
+
 def _validate_resolution_indexes(
     resolutions: list[MemoryResolution],
     payload: MemoryResolutionRequest,
@@ -474,8 +532,12 @@ def _resolution_system_prompt() -> str:
         "or qualifiers make the candidate a refinement, not an independent fact. Do not use "
         "ADD merely because the candidate adds those details. For example, 'the user hikes "
         "every Sunday' is superseded by 'the user hikes with Bori every Sunday'. Facts that "
-        "can change independently remain ADD even when they mention the same entity; owning "
-        "Bori and hiking with Bori are separate facts. "
+        "remove an existing participant, place, recurrence, or qualifier are broader and must "
+        "never supersede the more specific memory; use IGNORE for that broader duplicate. "
+        "For example, 'the user walks with Nori every Saturday' must not supersede 'the user "
+        "walks with Nori in Seoul Forest every Saturday'. "
+        "Facts that can change independently remain ADD even when they mention the same "
+        "entity; owning Bori and hiking with Bori are separate facts. "
         "Only SUPERSEDE may contain supersededMemoryIds, and use only IDs present in "
         "the candidate's comparableMemories. Never supersede another candidate."
     )

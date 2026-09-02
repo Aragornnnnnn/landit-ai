@@ -2613,6 +2613,84 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
+    def test_memory_resolution_ignores_candidate_that_removes_existing_detail(self):
+        payload = valid_memory_resolution_payload()
+        payload["candidates"][0]["memoryType"] = "PROFILE"
+        payload["candidates"][0]["content"] = (
+            "사용자는 Nori와 매주 토요일에 산책한다"
+        )
+        payload["candidates"][0]["comparableMemories"][0]["content"] = (
+            "사용자는 Nori와 매주 토요일에 서울숲에서 산책한다"
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["resolutions"][0],
+            {
+                "candidateIndex": 0,
+                "operation": "IGNORE",
+                "supersededMemoryIds": [],
+            },
+        )
+
+    def test_memory_resolution_ignores_reworded_candidate_that_removes_detail(self):
+        payload = valid_memory_resolution_payload()
+        payload["candidates"][0]["memoryType"] = "PROFILE"
+        payload["candidates"][0]["content"] = (
+            "사용자는 매주 토요일 Nori와 산책한다"
+        )
+        payload["candidates"][0]["comparableMemories"][0]["content"] = (
+            "사용자는 매주 토요일에 Nori와 서울숲에서 산책한다"
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["resolutions"][0]["operation"],
+            "IGNORE",
+        )
+
     def test_memory_resolution_rejects_unknown_superseded_memory(self):
         fake_openai = FakeOpenAI(
             contents=[
