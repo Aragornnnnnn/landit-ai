@@ -12,11 +12,17 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.common.inner_thought_contract import (
+    InnerThoughtContractError,
+    InnerThoughtResult,
+    fallback_inner_thought,
+    parse_inner_thought,
+    report_inner_thought_fallback,
+)
 from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.conversation import (
-    AnswerCoverage,
     ClosingMessageRequest,
     ClosingMessageResponse,
     CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE,
@@ -25,8 +31,6 @@ from app.models.conversation import (
     FeedbackStatus,
     FeedbackType,
     GoalCompletionStatus,
-    InnerThoughtCandidate,
-    InnerThoughtData,
     InnerThoughtRequest,
     InnerThoughtResponse,
     InnerThoughtType,
@@ -41,7 +45,6 @@ from app.models.conversation import (
     MessageFeedbackScoreEvidence,
     NextMessageRequest,
     NextMessageResponse,
-    RelationshipTone,
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
@@ -284,77 +287,57 @@ def generate_inner_thought(
     request: InnerThoughtRequest,
     settings: Settings | None = None,
 ) -> InnerThoughtResponse:
-    data = _request_recoverable_json_completion(
-        settings or Settings(),
-        system_prompt=_inner_thought_system_prompt(),
-        user_prompt=_inner_thought_user_prompt(request),
-        max_tokens=256,
-    )
-    inner_thought = _parse_inner_thought_candidate(data, request)
+    resolved_settings = settings or Settings()
+    try:
+        data = _request_json_completion(
+            resolved_settings,
+            system_prompt=_inner_thought_system_prompt(),
+            user_prompt=_inner_thought_user_prompt(request),
+            max_tokens=256,
+        )
+        inner_thought = parse_inner_thought(data)
+    except (AiResponseInvalidError, InnerThoughtContractError):
+        inner_thought = _repair_or_fallback_inner_thought(request, resolved_settings)
     return InnerThoughtResponse(
         sessionId=request.sessionId,
         messageId=request.submittedMessageId,
-        innerThought=inner_thought.innerThought,
-        innerThoughtType=inner_thought.innerThoughtType,
+        innerThought=inner_thought.inner_thought,
+        innerThoughtType=inner_thought.inner_thought_type,
     )
 
 
-def _parse_inner_thought_candidate(
-    data: dict[str, Any],
+def _repair_or_fallback_inner_thought(
     request: InnerThoughtRequest,
-) -> InnerThoughtData:
+    settings: Settings,
+) -> InnerThoughtResult:
     try:
-        candidate = InnerThoughtCandidate.model_validate(data)
-    except ValidationError as evidence_error:
-        return _parse_inner_thought_fallback(data, request, evidence_error)
-    return InnerThoughtData(
-        innerThought=candidate.innerThought,
-        innerThoughtType=_inner_thought_type_from_evidence(candidate),
-    )
-
-
-def _parse_inner_thought_fallback(
-    data: dict[str, Any],
-    request: InnerThoughtRequest,
-    evidence_error: ValidationError,
-) -> InnerThoughtData:
-    thought = _response_text(data, "innerThought", "상대의 말을 받아들이고 있다.")
+        data = _request_json_completion(
+            settings,
+            system_prompt=_inner_thought_repair_system_prompt(),
+            user_prompt=_inner_thought_user_prompt(request),
+            max_tokens=256,
+        )
+    except AiGenerationFailedError:
+        raise
+    except AiResponseInvalidError:
+        report_inner_thought_fallback(
+            workflow="scenario_inner_thought_contract_fallback",
+            session_id=request.sessionId,
+            message_id=request.submittedMessageId,
+            reason="response_invalid",
+        )
+        return fallback_inner_thought(None)
     try:
-        thought_type = InnerThoughtType(data.get("innerThoughtType"))
-    except (TypeError, ValueError):
-        thought_type = InnerThoughtType.NORMAL
-    invalid_fields = sorted(
-        {
-            str(error["loc"][0])
-            for error in evidence_error.errors()
-            if error["loc"]
-        },
-    )
-    logger.warning(
-        "AI 속마음 판정 근거가 잘못되어 기존 유형을 사용합니다. "
-        "workflow=inner_thought_evidence_fallback sessionId=%s messageId=%s fields=%s",
-        request.sessionId,
-        request.submittedMessageId,
-        ",".join(invalid_fields),
-    )
-    return InnerThoughtData(innerThought=thought, innerThoughtType=thought_type)
-
-
-def _inner_thought_type_from_evidence(
-    candidate: InnerThoughtCandidate,
-) -> InnerThoughtType:
-    if (
-        candidate.directedAttack
-        or candidate.relationshipTone == RelationshipTone.HOSTILE
-    ):
-        return InnerThoughtType.BAD
-    if candidate.answerCoverage == AnswerCoverage.UNRELATED:
-        return InnerThoughtType.BAD
-    if candidate.answerCoverage in {AnswerCoverage.PARTIAL, AnswerCoverage.DECLINED}:
-        return InnerThoughtType.NORMAL
-    if candidate.relationshipTone == RelationshipTone.BLUNT:
-        return InnerThoughtType.NORMAL
-    return InnerThoughtType.GOOD
+        return parse_inner_thought(data)
+    except InnerThoughtContractError as exc:
+        report_inner_thought_fallback(
+            workflow="scenario_inner_thought_contract_fallback",
+            session_id=request.sessionId,
+            message_id=request.submittedMessageId,
+            reason=exc.reason,
+            invalid_fields=exc.invalid_fields,
+        )
+        return fallback_inner_thought(data)
 
 
 def generate_closing_message(
@@ -1687,11 +1670,6 @@ def _inner_thought_system_prompt() -> str:
         _shared_safety_policy(),
         shared_inner_thought_policy(),
         (
-            "Scenario Type Mapping:\n"
-            "Set innerThoughtType consistently: directed attack, HOSTILE, or UNRELATED is BAD; "
-            "PARTIAL, DECLINED, or BLUNT is NORMAL; otherwise GOOD."
-        ),
-        (
             "Scenario Context Notes:\n"
             "Do not leave a clear, friendly roommate answer as a generic 'I understand, but it could be more natural' thought. React to the actual content. "
             "If the user says their parents decided something for them, the private reaction should reflect that family-decision context instead of only saying the user has a weak opinion. "
@@ -1703,19 +1681,19 @@ def _inner_thought_system_prompt() -> str:
         (
             "Examples:\n"
             "Good JSON for user 'I like pizza because it is spicy.': "
-            '{"answerCoverage":"COMPLETE","relationshipTone":"WARM","directedAttack":false,"innerThought":"매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네.","innerThoughtType":"GOOD"}\n'
+            '{"answerCoverage":"COMPLETE","relationshipTone":"WARM","directedAttack":false,"innerThought":"매운 피자를 좋아하는구나. 취향이 확실해서 좀 재밌네."}\n'
             "Good JSON for blunt user 'Anywhere is fine. I don't care.': "
-            '{"answerCoverage":"COMPLETE","relationshipTone":"HOSTILE","directedAttack":false,"innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아.","innerThoughtType":"BAD"}\n'
+            '{"answerCoverage":"COMPLETE","relationshipTone":"HOSTILE","directedAttack":false,"innerThought":"어, 왜 이렇게 차갑게 말하지? 나한테 조금 날이 서 있는 것 같아."}\n'
             "Good JSON for short user 'Saturday.': "
-            '{"answerCoverage":"COMPLETE","relationshipTone":"BLUNT","directedAttack":false,"innerThought":"토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네.","innerThoughtType":"NORMAL"}\n'
+            '{"answerCoverage":"COMPLETE","relationshipTone":"BLUNT","directedAttack":false,"innerThought":"토요일이 좋다는 건 알겠는데, 대답이 꽤 짧네."}\n'
             "Good JSON for user 'I don't know': "
-            '{"answerCoverage":"DECLINED","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"지금은 딱히 떠오르는 게 없나 보네. 조금 막연해서 아쉽다.","innerThoughtType":"NORMAL"}\n'
+            '{"answerCoverage":"DECLINED","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"지금은 딱히 떠오르는 게 없나 보네. 조금 막연해서 아쉽다."}\n'
             "Good JSON for user 'I recommend Suwon': "
-            '{"answerCoverage":"PARTIAL","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"수원을 추천하는구나. 이유도 들려주면 더 이해하기 쉬울 텐데.","innerThoughtType":"NORMAL"}\n'
+            '{"answerCoverage":"PARTIAL","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"수원을 추천하는구나. 이유도 들려주면 더 이해하기 쉬울 텐데."}\n'
             "Good JSON for repeated refusal 'nonono': "
-            '{"answerCoverage":"DECLINED","relationshipTone":"HOSTILE","directedAttack":false,"innerThought":"계속 아니라고만 하니까 대화를 피하는 것 같아 좀 답답하다.","innerThoughtType":"BAD"}\n'
+            '{"answerCoverage":"DECLINED","relationshipTone":"HOSTILE","directedAttack":false,"innerThought":"계속 아니라고만 하니까 대화를 피하는 것 같아 좀 답답하다."}\n'
             "Good JSON for directed insult 'My name is. Fuck you, man.': "
-            '{"answerCoverage":"UNRELATED","relationshipTone":"HOSTILE","directedAttack":true,"innerThought":"첫 만남부터 나한테 욕을 하다니, 당황스럽고 기분이 상한다.","innerThoughtType":"BAD"}\n'
+            '{"answerCoverage":"UNRELATED","relationshipTone":"HOSTILE","directedAttack":true,"innerThought":"첫 만남부터 나한테 욕을 하다니, 당황스럽고 기분이 상한다."}\n'
             "Bad innerThought style: '취미 얘기도 자연스럽게 이어가면 더 친해질 수 있겠다.'\n"
             "Bad innerThought style: '무슨 말인지는 알겠어. 조금만 더 자연스럽게 이어가야겠다.'"
         ),
@@ -1729,11 +1707,18 @@ def _inner_thought_system_prompt() -> str:
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"answerCoverage":"COMPLETE","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"...","innerThoughtType":"GOOD"}. '
+            '{"answerCoverage":"COMPLETE","relationshipTone":"NEUTRAL","directedAttack":false,"innerThought":"..."}. '
             "Use the classifications defined above and a JSON boolean. "
             "innerThought must be Korean. Never return text outside the JSON object."
         ),
     ])
+
+
+def _inner_thought_repair_system_prompt() -> str:
+    return (
+        _inner_thought_system_prompt()
+        + " Return a complete replacement JSON response that follows the schema exactly."
+    )
 
 
 def _inner_thought_user_prompt(request: InnerThoughtRequest) -> str:

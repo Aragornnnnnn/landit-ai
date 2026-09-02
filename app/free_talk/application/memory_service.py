@@ -1,5 +1,6 @@
 # 프리톡 장기기억 후보 추출과 상태 판정을 담당하는 유스케이스 모듈
 import json
+import re
 
 from pydantic import (
     BaseModel,
@@ -22,6 +23,8 @@ from app.models.free_talk import (
     MemoryCandidate,
     MemoryCandidatesRequest,
     MemoryCandidatesResponse,
+    MemoryConversationHistoryMessage,
+    MemoryType,
     MemoryResolution,
     MemoryResolutionRequest,
     MemoryResolutionResponse,
@@ -29,7 +32,109 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v1"
+EXTRACTOR_VERSION = "memory-candidate-v3"
+_AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN = re.compile(
+    r"\b(?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+    r"|(?:다음|이번)(?:\s*주)?\s*(?:월|화|수|목|금|토|일)요일",
+    re.IGNORECASE,
+)
+_RELATIVE_TIME_PATTERN = re.compile(
+    r"\b(?:today|yesterday|tomorrow|tonight|last\s+weekend|next\s+week)\b"
+    r"|(?:오늘|어제|내일|오늘\s*밤|지난\s*주말|다음\s*주|다음\s*(?:월|화|수|목|금|토|일)요일)",
+    re.IGNORECASE,
+)
+_ONE_OFF_REQUEST_PATTERN = re.compile(
+    r"^\s*(?:(?:could|can|would|will)\s+you\s+(?:say|repeat|speak)\b"
+    r"|please\s+(?:say|repeat|speak)\b)"
+    r"|^\s*(?:다시|천천히).*(?:말해|말씀해|반복해)",
+    re.IGNORECASE,
+)
+_GREETING_ONLY_PATTERN = re.compile(
+    r"^\s*(?:hi|hello|hey)(?:[!,.?\s]+(?:nice\s+to\s+meet\s+you)[!,.?\s]*)?$"
+    r"|^\s*(?:안녕|안녕하세요)(?:[!,.?\s]+(?:만나서\s+반가워요?)[!,.?\s]*)?$",
+    re.IGNORECASE,
+)
+_EPHEMERAL_STATE_PATTERN = re.compile(
+    r"^\s*(?:i(?:'m|\s+am)|i\s+feel)\s+(?:really\s+)?"
+    r"(?:sleepy|tired|hungry|bored|cold|hot|sad|happy|angry|anxious)\s+"
+    r"(?:right\s+now|at\s+the\s+moment)[.!?]*\s*$"
+    r"|^\s*(?:나|저)는?\s*지금\s*(?:졸려|피곤해|배고파|지루해|추워|더워)[.!?]*\s*$",
+    re.IGNORECASE,
+)
+_LANGUAGE_EXAMPLE_PATTERN = re.compile(
+    r"\b(?:for\s+(?:english\s+)?practice|example\s+sentence|role[ -]?play)\b"
+    r"|(?:영어\s*연습|예문|역할극)",
+    re.IGNORECASE,
+)
+_EXPLICIT_DENIAL_PATTERN = re.compile(
+    r"\b(?:isn't|is\s+not|not)\s+(?:actually\s+)?true\b"
+    r"|\bjust\s+an?\s+example\b|(?:사실이\s*아니|예시일\s*뿐)",
+    re.IGNORECASE,
+)
+_CANDIDATE_PROMPT_PARTS = (
+    (
+        "Extract zero to five durable memories from the USER messages in the completed "
+        "FreeTalk conversation. Return only a JSON object with a candidates array. "
+        "Each candidate must contain candidateIndex, memoryType (PROFILE, EVENT, or "
+        "EPISODE), a concise content sentence in baseLocale, contentLocale, "
+        "sourceMessageIds, confidence, validFrom, and validTo. candidateIndex must start "
+        "at zero and be contiguous. For contentLocale, copy the request baseLocale exactly "
+        "without converting the code. Write ordinary words entirely in baseLocale and keep "
+        "only proper nouns unchanged. Use only USER message IDs as sources."
+    ),
+    (
+        "Classify by durable meaning rather than the surface wording. PROFILE is a stable "
+        "user fact, preference, relationship, possession, recurring habit, or stable fact "
+        "about a named entity in the user's life; it is shared across characters. EVENT is "
+        "a concrete past or future occurrence with time relevance; it is scoped to the "
+        "current character. EPISODE is a shared experience or interaction between the user "
+        "and the current character; it is scoped to that character. Do not classify a fact "
+        "as EPISODE merely because the user mentioned it in this conversation. When an event "
+        "establishes a more useful current stable fact, prefer the PROFILE meaning, such as "
+        "'I adopted a dog named Bori' becoming '사용자는 보리라는 개를 키운다.' Preserve "
+        "relevant named entities and participants. Never drop an explicitly stated companion "
+        "or participant from a recurring habit, and do not generalize the habit by removing "
+        "who it involves."
+    ),
+    (
+        "Never keep relative time expressions such as 'today', 'yesterday', 'tomorrow', "
+        "'last weekend', or 'next Friday' in durable content. Resolve a relative expression "
+        "using occurredAt and timezone only when it maps to exactly one calendar date without "
+        "an assumption. Relative weekday phrases such as 'next Friday' are ambiguous; if the "
+        "date is essential, omit that EVENT candidate instead of guessing or retaining the "
+        "relative phrase. Before returning, scan every content sentence and remove any "
+        "remaining relative time expression. For PROFILE, use the source utterance time as "
+        "validFrom. For a future EVENT, keep the scheduled calendar date in content and use "
+        "the utterance time as validFrom. For a past EVENT, include the resolved calendar date "
+        "in content and use the event time as validFrom. If only the event date is known, use "
+        "00:00:00 in the request timezone. Every validFrom and validTo must be a full RFC 3339 "
+        "timestamp with a timezone offset; never return a date-only value. When an end date is "
+        "supported but its time is unknown, use 23:59:59 in the request timezone as validTo. "
+        "Otherwise set validTo to null."
+    ),
+    (
+        "Quoted, hypothetical, role-play, translation, or language-practice statements are "
+        "not user facts unless the user separately confirms them as true. An explicit denial "
+        "overrides a quoted or example claim; never extract the denied claim. Do not infer "
+        "diagnoses, personality, relationships, or intent. Exclude secrets, credentials, "
+        "financial identifiers, greetings, acknowledgements, one-off requests, and "
+        "language-learning examples."
+    ),
+    (
+        "Follow these boundary examples: (1) occurredAt=2026-09-02T17:00:00+09:00 and "
+        "'Yesterday I won a local marathon' produces an EVENT whose content includes "
+        "2026-09-01 and validFrom=2026-09-01T00:00:00+09:00. (2) 'I have a dentist "
+        "appointment next Friday' is ambiguous, so return zero candidates. (3) 'For English "
+        "practice, I say I have a dog, but it is not true' is neither a fact nor a durable "
+        "event, so return zero candidates. (4) 'I will visit Osaka from October 3 to October "
+        "7, 2026' uses the utterance time as validFrom and "
+        "validTo=2026-10-07T23:59:59+09:00. (5) When baseLocale is KR, 'I work at Landit as "
+        "a backend engineer, and I play tennis every Wednesday' produces separate PROFILE "
+        "contents '사용자는 Landit에서 백엔드 엔지니어로 일한다' and '사용자는 매주 "
+        "수요일에 테니스를 친다'. (6) When baseLocale is KR, the ordinary term 'job "
+        "interview' is written as '면접', not left in English."
+    ),
+)
 
 
 def generate_memory_candidates(
@@ -133,7 +238,59 @@ def _validated_candidate_drafts(
 
     _validate_contiguous_indexes(drafts)
     _validate_candidate_sources(drafts, payload)
-    return drafts
+    return _filtered_candidate_drafts(drafts, payload)
+
+
+def _filtered_candidate_drafts(
+    drafts: list[MemoryCandidate],
+    payload: MemoryCandidatesRequest,
+) -> list[MemoryCandidate]:
+    """명백한 오기억 후보를 제거하고 남은 후보 인덱스를 다시 정렬한다."""
+    messages_by_id = {
+        message.messageId: message for message in payload.conversationHistory
+    }
+    filtered = [
+        draft
+        for draft in drafts
+        if not _must_drop_candidate(draft, messages_by_id)
+    ]
+    return [
+        draft.model_copy(update={"candidateIndex": candidate_index})
+        for candidate_index, draft in enumerate(filtered)
+    ]
+
+
+def _must_drop_candidate(
+    draft: MemoryCandidate,
+    messages_by_id: dict[int, MemoryConversationHistoryMessage],
+) -> bool:
+    """후보 내용과 USER 원문에서 안전하게 판정 가능한 제외 조건만 적용한다."""
+    source_text = " ".join(
+        messages_by_id[source_id].content for source_id in draft.sourceMessageIds
+    )
+    if (
+        _RELATIVE_TIME_PATTERN.search(draft.content)
+        or _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN.search(draft.content)
+    ):
+        return True
+    if (
+        draft.memoryType == MemoryType.EVENT
+        and _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN.search(source_text)
+    ):
+        return True
+    if _ONE_OFF_REQUEST_PATTERN.search(source_text):
+        return True
+    if (
+        draft.memoryType == MemoryType.EPISODE
+        and _GREETING_ONLY_PATTERN.search(source_text)
+    ):
+        return True
+    if _EPHEMERAL_STATE_PATTERN.search(source_text):
+        return True
+    return bool(
+        _LANGUAGE_EXAMPLE_PATTERN.search(source_text)
+        and _EXPLICIT_DENIAL_PATTERN.search(source_text)
+    )
 
 
 class _MemoryCandidateDraftResponse(BaseModel):
@@ -242,24 +399,15 @@ def _json_prompt(payload: BaseModel) -> str:
 
 
 def _candidate_system_prompt() -> str:
-    return (
-        "Extract zero to five durable memories from the USER messages in the completed "
-        "FreeTalk conversation. Return only a JSON object with a candidates array. "
-        "Each candidate must contain candidateIndex, memoryType (PROFILE, EVENT, or "
-        "EPISODE), a concise content sentence in baseLocale, contentLocale, sourceMessageIds, "
-        "confidence, validFrom, and validTo. candidateIndex must start at zero and be "
-        "contiguous. Use only USER message IDs "
-        "as sources. Do not infer diagnoses, personality, relationships, or intent. "
-        "Exclude secrets, credentials, financial identifiers, greetings, acknowledgements, "
-        "one-off requests, and language-learning examples. For a future plan, keep the "
-        "scheduled date in content and use the utterance time as validFrom."
-    )
+    return " ".join(_CANDIDATE_PROMPT_PARTS)
 
 
 def _resolution_system_prompt() -> str:
     return (
         "Resolve each memory candidate against the comparable ACTIVE memories. Return "
-        "only a JSON object with exactly one resolution for every candidateIndex. "
+        "only a JSON object with a resolutions array containing exactly one object for "
+        "every candidateIndex. Each resolution object must contain exactly candidateIndex, "
+        "operation, and supersededMemoryIds. "
         "Use ADD for an independent fact, SUPERSEDE only when an existing memory is "
         "replaced, and IGNORE for duplicates, transient statements, or weak evidence. "
         "Only SUPERSEDE may contain supersededMemoryIds, and use only IDs present in "

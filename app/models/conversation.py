@@ -227,24 +227,6 @@ class InnerThoughtRequest(BaseModel):
         return self
 
 
-class InnerThoughtData(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    innerThought: str
-    innerThoughtType: InnerThoughtType
-
-    @field_validator("innerThought")
-    @classmethod
-    def inner_thought_must_not_be_blank(cls, value: str) -> str:
-        return _validate_not_blank(value)
-
-
-class InnerThoughtCandidate(InnerThoughtData):
-    answerCoverage: AnswerCoverage
-    relationshipTone: RelationshipTone
-    directedAttack: bool
-
-
 class InnerThoughtResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # 오류 단어 묘사(respelling·오류 구간·강세)를 별도 호출로 채운다.
     # 대조 판정 프롬프트에 직접 요구하면 오탐이 생겨 분리했다 (LAN-373 골든 셋 A/B).
     pronunciation_describe_errors: bool = True
+    # 정렬용 wav2vec2 int8 ONNX 모델 경로. 비우면 저장소 루트의 models/ 기본 경로
+    pronunciation_alignment_model_path: str | None = None
     message_feedback_model: str | None = None
     openrouter_review_model: str | None = None
     message_feedback_review_enabled: bool = True

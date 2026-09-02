@@ -12,3 +12,6 @@ htmlcov/
 
 # LAN-209 PoC 골든 셋 (개인 음성 — 커밋 제외)
 docs/tasks/LAN-209/audio/
+
+# 정렬 모델 아티팩트 (CDN에서 빌드 시 다운로드 — scripts/export_alignment_model.py로 재생성)
+models/
