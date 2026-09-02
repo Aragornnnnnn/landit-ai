@@ -27,9 +27,11 @@ ACCENT_NAMES = {
 # PoC 검증본 + LAN-389 판정 보정. 상류 서빙 변화(2026-08 말)로 STRESS 검출이
 # 죽어(hiking·yesterday 미검출) 2음절 이상 단어의 강세 위치 대조를 명시했고,
 # 그 과정에서 흔들린 축약모음 대치(available o↔schwa)는 SOUND 예시에 "full
-# vowel in place of a reduced one"을 더해 고정했다. 문구별 실측은
-# docs/tasks/LAN-389/record.md — 강세 문구가 조금만 달라져도 SOUND 검출이
-# 죽는 조합이 실측됐으므로 수정 시 반드시 골든 셋을 다시 돌릴 것.
+# vowel in place of a reduced one"을 더해 고정했다. 이어서 한국식 모음 삽입
+# (bus→"버스", 자음 뭉치 사이 ㅡ 삽입)이 SOUND 정의(대치 한정) 밖이라 전혀
+# 잡히지 않던 것을 삽입 규칙 추가로 고쳤다 — 재현율 케이스는 골든 s5~s7.
+# 문구별 실측은 docs/tasks/LAN-389/record.md — 강세 문구가 조금만 달라져도
+# SOUND 검출이 죽는 조합이 실측됐으므로 수정 시 반드시 골든 셋을 다시 돌릴 것.
 BASE_COMPARE_PROMPT = """You will hear two audio clips. Audio 1 is a native speaker
 of {accent_name} reading a sentence (reference). Audio 2 is a learner attempting
 the same sentence.
@@ -43,7 +45,10 @@ coloration. These are NEVER differences.
 Report a word ONLY when:
 - SOUND: a phoneme is clearly substituted with a different phoneme
   (e.g. "th" pronounced as "s", "r" pronounced as "l", or a full vowel in
-  place of a reduced one), or
+  place of a reduced one), or extra vowel sounds inserted so the word gains
+  syllables (e.g. "bus" said as two syllables "bu-seu", "bad" as "bae-deu"
+  — a final consonant released with an added vowel, or vowels inserted
+  inside consonant clusters), or
 - STRESS: within that word, the emphasized syllable is clearly different
   from the reference. For every word of two or more syllables, compare which
   syllable carries the main emphasis in each clip (e.g. "HI-king" vs "hi-KING").
@@ -71,7 +76,10 @@ coloration. These are NEVER differences.
 Report a word ONLY when:
 - SOUND: a phoneme is clearly substituted with a different phoneme
   (e.g. "th" pronounced as "s", "r" pronounced as "l", or a full vowel in
-  place of a reduced one), or
+  place of a reduced one), or extra vowel sounds inserted so the word gains
+  syllables (e.g. "bus" said as two syllables "bu-seu", "bad" as "bae-deu"
+  — a final consonant released with an added vowel, or vowels inserted
+  inside consonant clusters), or
 - STRESS: within that word, the emphasized syllable is clearly different
   from the reference. For every word of two or more syllables, compare which
   syllable carries the main emphasis in each clip (e.g. "HI-king" vs "hi-KING").

@@ -12,15 +12,32 @@ on:
 
 permissions:
   contents: read
+  id-token: write # AWS OIDC 역할 인수 (골든 오디오 다운로드)
 
 jobs:
   golden-eval:
     name: Evaluate golden set (5 runs, base prompt)
     runs-on: ubuntu-latest
+    environment: develop
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 골든 오디오는 개인 음성이라 저장소에 커밋하지 않는다 (.gitignore) —
+      # S3 비공개 경로(content/ 밖이라 CDN 미노출)에서 평가 직전에 받아온다.
+      # 로컬 재현: aws s3 sync s3://landit-content-982529430654/golden/pronunciation/audio docs/tasks/LAN-209/audio
+      - name: Download golden audio (voice recordings, not in repo)
+        run: >
+          aws s3 sync
+          s3://landit-content-982529430654/golden/pronunciation/audio
+          docs/tasks/LAN-209/audio
 
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -87,3 +87,43 @@ yesterday) 프로바이더 고정은 "보정 대상 서빙을 고정한다"는 �
 새니티 1회(`golden_20260831T052929Z_extended.json`): 10/12 — 강세 4종 검출
 유지, 실패는 available 미검출(위 잔여 약점)과 compensation 오탐 1회.
 운영 탐지는 검증본만 사용하므로 출시 게이트에는 영향 없다.
+
+## 2026-09-02 — 모음 삽입(음절 불리기) 규칙 추가 (V6)
+
+QA 실측 리포트: 한국식 모음 삽입(bus→"버스" 2음절, bad→"배드",
+honestly→"어.네.스.틀.리" 5음절)이 전혀 검출되지 않았다. 원인은 프롬프트의
+SOUND 정의가 "대치(substitution)"만 다뤄 삽입(epenthesis)이 분류표 밖이었던
+것. V5의 SOUND 예시에 삽입 규칙을 덧붙였다 (V6):
+
+> or extra vowel sounds inserted so the word gains syllables (e.g. "bus"
+> said as two syllables "bu-seu", ...)
+
+재현율 케이스로 실사용자 녹음 3건을 골든 셋 s5~s7(`*_epenthesis`)에 편입
+(참조는 macOS Samantha TTS 합성 — s1~s4의 자산 TTS와 출처가 다름을 유의).
+골든 오디오는 개인 음성이라 저장소에 커밋하지 않고(.gitignore 유지) S3
+비공개 경로에 보관한다 — CI는 golden-eval.yml이 평가 직전 내려받고, 로컬은:
+`aws s3 sync s3://landit-content-982529430654/golden/pronunciation/audio docs/tasks/LAN-209/audio`
+
+프로바이더 고정(ai-studio) 조건 실측, 각 5회:
+
+| 케이스 | V5 (기준) | V6 (+삽입 규칙) |
+| --- | --- | --- |
+| s6 bad→"배드" | 0/5 미탐 | **5/5** |
+| s5 bus, s7 honestly | 5/5 | 5/5 유지 |
+| 골든 STRESS 4종 | 유지 | 유지 (놓침 0) |
+| s4_phoneme(available) — V5 잔여 약점 | **0/5 (완전 사멸 확인)** | **5/5 복구** |
+| s4_correct | 5/5 | 4/5 — available:SOUND 오탐 1회 |
+
+판단: 유일한 부작용(s4_correct의 available 오탐)은 s4_phoneme의 진탐 5/5와
+같은 단어·같은 유형이라 문구로 분리 억제가 어렵고(억제 시 진탐 동반 사멸
+위험), "놓침이 오탐보다 나쁘다"는 제품 기준에 따라 수용한다. develop
+프롬프트(고정·보정 이전) 대비 실험에서도 동일한 삽입 효과가 재현됐다.
+
+확정본(V6) 골든 5회 (`golden_20260902T081421Z_base.json`, ai-studio 고정):
+
+- **정확일치 72/75 · 놓침 0 · 게이트 통과.** 지연 p50 3.3초.
+- 신규 s5~s7(epenthesis) 15/15, STRESS 4종 전부 유지, s4_phoneme(available)
+  잔여 약점 5/5 완전 복구 — 놓침이 전 케이스에서 0이 된 첫 측정.
+- 불일치 3건은 전부 s4_correct의 available:SOUND 오탐(3/5) — 위에서 수용한
+  트레이드. 오탐률이 표본에 따라 1/5~3/5로 흔들리므로 주기 측정에서 추이를
+  지켜보고, 상승 시 s4_correct 녹음 자체의 경계성(available 모음)을 재검수한다.

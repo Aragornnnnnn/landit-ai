@@ -39,6 +39,30 @@
         {"label": "s4_phoneme", "audio": "docs/tasks/LAN-209/audio/s4_phoneme.wav", "expected": [{"word": "available", "type": "SOUND"}]},
         {"label": "s4_stress", "audio": "docs/tasks/LAN-209/audio/s4_stress.wav", "expected": [{"word": "compensation", "type": "STRESS"}]}
       ]
+    },
+    {
+      "id": "s5",
+      "text": "I take the bus to work.",
+      "tts": "docs/tasks/LAN-209/audio/s5_tts.wav",
+      "samples": [
+        {"label": "s5_epenthesis", "audio": "docs/tasks/LAN-209/audio/s5_epenthesis.wav", "expected": [{"word": "bus", "type": "SOUND"}]}
+      ]
+    },
+    {
+      "id": "s6",
+      "text": "That's not a bad idea.",
+      "tts": "docs/tasks/LAN-209/audio/s6_tts.wav",
+      "samples": [
+        {"label": "s6_epenthesis", "audio": "docs/tasks/LAN-209/audio/s6_epenthesis.wav", "expected": [{"word": "bad", "type": "SOUND"}]}
+      ]
+    },
+    {
+      "id": "s7",
+      "text": "Honestly, I don't know.",
+      "tts": "docs/tasks/LAN-209/audio/s7_tts.wav",
+      "samples": [
+        {"label": "s7_epenthesis", "audio": "docs/tasks/LAN-209/audio/s7_epenthesis.wav", "expected": [{"word": "Honestly", "type": "SOUND"}]}
+      ]
     }
   ]
 }
