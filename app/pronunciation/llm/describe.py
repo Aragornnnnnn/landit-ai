@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 from app.core.config import Settings
-from app.pronunciation.llm.routing import llm_extra_body
+from app.pronunciation.llm.routing import llm_extra_body, served_by_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,13 @@ def describe_error(
         )
     except Exception:  # noqa: BLE001 — 묘사는 보조 정보이므로 실패해도 판정은 유지한다
         return None
+
+    # 폴백 프로바이더 서빙은 조용한 품질 저하다 (LAN-389) — 발동 사실을 관측한다
+    fallback_provider = served_by_fallback(settings, response)
+    if fallback_provider is not None:
+        logger.warning(
+            "error description served by fallback provider %s", fallback_provider
+        )
 
     raw = (response.choices[0].message.content or "").strip()
     return _parse(raw, is_stress)

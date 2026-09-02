@@ -61,5 +61,51 @@ class ServedByFallbackTests(unittest.TestCase):
         self.assertIsNone(served_by_fallback(settings, self._response("Google")))
 
 
+class AuxiliaryFallbackWarningTests(unittest.TestCase):
+    """보조 호출 경로(억양 확인·묘사)도 폴백 서빙을 warning으로 관측한다.
+
+    판정(compare)만 관측하면 보조 판정의 조용한 품질 저하를 놓친다 (코드래빗 지적).
+    """
+
+    def _client(self, content):
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            model_extra={"provider": "Google"},
+        )
+        completions = SimpleNamespace(create=lambda **kwargs: response)
+        return SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    def test_accent_check_logs_fallback_serving(self):
+        from app.pronunciation.llm import accent_check
+
+        contrast = accent_check.AccentContrast(
+            order=1, word="water", expected_option="a clear t", other_option="a flap"
+        )
+        with self.assertLogs(accent_check.logger.name, level="WARNING") as logs:
+            accent_check.check_accent(
+                self._client('{"answer": "A", "heard": "waw-tuh"}'),
+                make_settings(),
+                b"user-wav",
+                contrast,
+            )
+
+        self.assertIn("Google", logs.output[0])
+
+    def test_describe_logs_fallback_serving(self):
+        from app.pronunciation.llm import describe
+
+        with self.assertLogs(describe.logger.name, level="WARNING") as logs:
+            describe.describe_error(
+                self._client('{"userHeard": "hik·ing"}'),
+                make_settings(),
+                reference_wav=b"reference",
+                user_wav=b"user",
+                word="hiking",
+                error_type="SOUND",
+            )
+
+        self.assertIn("Google", logs.output[0])
+
+
 if __name__ == "__main__":
     unittest.main()

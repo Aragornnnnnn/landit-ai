@@ -14,12 +14,15 @@
 # 그래서 억양 판정은 일반 대조 판정과 분리해 단어 단위 양자택일로만 수행한다.
 import base64
 import json
+import logging
 from dataclasses import dataclass
 
 from openai import OpenAI
 
 from app.core.config import Settings
-from app.pronunciation.llm.routing import llm_extra_body
+from app.pronunciation.llm.routing import llm_extra_body, served_by_fallback
+
+logger = logging.getLogger(__name__)
 
 ACCENT_CHECK_PROMPT = """Listen to the audio and focus ONLY on how the speaker
 pronounces the word "{word}".
@@ -97,6 +100,13 @@ def check_accent(
         )
     except Exception as error:  # noqa: BLE001 — SDK 예외 전반을 호출 실패로 취급
         raise AccentCheckError(str(error)) from error
+
+    # 폴백 프로바이더 서빙은 조용한 품질 저하다 (LAN-389) — 발동 사실을 관측한다
+    fallback_provider = served_by_fallback(settings, response)
+    if fallback_provider is not None:
+        logger.warning(
+            "accent check served by fallback provider %s", fallback_provider
+        )
 
     raw = (response.choices[0].message.content or "").strip()
     return _parse_verdict(raw, contrast, expected_is_a)
