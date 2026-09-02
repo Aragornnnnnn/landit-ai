@@ -32,7 +32,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v4"
+EXTRACTOR_VERSION = "memory-candidate-v5"
 _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN = re.compile(
     r"\b(?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
     r"|(?:다음|이번)(?:\s*주)?\s*(?:월|화|수|목|금|토|일)요일",
@@ -70,6 +70,40 @@ _EXPLICIT_DENIAL_PATTERN = re.compile(
     r"\b(?:isn't|is\s+not|not)\s+(?:actually\s+)?true\b"
     r"|\bjust\s+an?\s+example\b|(?:사실이\s*아니|예시일\s*뿐)",
     re.IGNORECASE,
+)
+_QUESTION_ONLY_PATTERN = re.compile(r"[?？]\s*$")
+_EXPLICIT_MEMORY_REQUEST_PATTERN = re.compile(
+    r"^\s*(?:please\s+|(?:can|could|would|will|do)\s+you\s+(?:please\s+)?)"
+    r"(?:remember|keep\s+in\s+mind)\b"
+    r"|기억해\s*(?:줘|주세요|줄래|줄\s*수\s*있어|주실래)",
+    re.IGNORECASE,
+)
+_CONTENT_TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣]+")
+_KOREAN_PARTICLE_SUFFIXES = (
+    "에게서",
+    "와의",
+    "과의",
+    "으로",
+    "에서",
+    "에게",
+    "이랑",
+    "부터",
+    "까지",
+    "처럼",
+    "보다",
+    "랑",
+    "와",
+    "과",
+    "을",
+    "를",
+    "은",
+    "는",
+    "이",
+    "가",
+    "에",
+    "도",
+    "만",
+    "로",
 )
 _CANDIDATE_PROMPT_PARTS = (
     (
@@ -124,7 +158,9 @@ _CANDIDATE_PROMPT_PARTS = (
         "overrides a quoted or example claim; never extract the denied claim. Do not infer "
         "diagnoses, personality, relationships, or intent. Exclude secrets, credentials, "
         "financial identifiers, greetings, acknowledgements, one-off requests, and "
-        "language-learning examples."
+        "language-learning examples. Do not extract facts that appear only as assumptions "
+        "or presuppositions inside a question. A direct request to remember an explicitly "
+        "stated fact is allowed."
     ),
     (
         "Follow these boundary examples: (1) occurredAt=2026-09-02T17:00:00+09:00 and "
@@ -278,9 +314,8 @@ def _must_drop_candidate(
     messages_by_id: dict[int, MemoryConversationHistoryMessage],
 ) -> bool:
     """후보 내용과 USER 원문에서 안전하게 판정 가능한 제외 조건만 적용한다."""
-    source_text = " ".join(
-        messages_by_id[source_id].content for source_id in draft.sourceMessageIds
-    )
+    source_messages = [messages_by_id[source_id] for source_id in draft.sourceMessageIds]
+    source_text = " ".join(message.content for message in source_messages)
     if (
         _RELATIVE_TIME_PATTERN.search(draft.content)
         or _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN.search(draft.content)
@@ -293,6 +328,8 @@ def _must_drop_candidate(
         return True
     if _ONE_OFF_REQUEST_PATTERN.search(source_text):
         return True
+    if all(_is_question_without_explicit_fact(message.content) for message in source_messages):
+        return True
     if (
         draft.memoryType == MemoryType.EPISODE
         and _GREETING_ONLY_PATTERN.search(source_text)
@@ -303,6 +340,14 @@ def _must_drop_candidate(
     return bool(
         _LANGUAGE_EXAMPLE_PATTERN.search(source_text)
         and _EXPLICIT_DENIAL_PATTERN.search(source_text)
+    )
+
+
+def _is_question_without_explicit_fact(source_text: str) -> bool:
+    """명시적 기억 요청이 아닌 순수 질문형 발화인지 판정한다."""
+    return bool(
+        _QUESTION_ONLY_PATTERN.search(source_text)
+        and not _EXPLICIT_MEMORY_REQUEST_PATTERN.search(source_text)
     )
 
 
