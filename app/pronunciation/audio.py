@@ -188,8 +188,15 @@ def _run_ffmpeg(args: list[str], deadline: float | None = None) -> None:
 def _run(
     command: list[str], deadline: float | None = None
 ) -> subprocess.CompletedProcess:
-    # 동시 실행 상한 대기 후에 남은 예산을 계산한다 — 줄 서는 시간도 예산에서 차감
-    with _ffmpeg_semaphore:
+    # 동시 실행 상한 대기에도 예산을 적용한다 — 슬롯을 얻지 못한 채 deadline이
+    # 지나면 그 자리에서 실패해, 만료된 요청이 줄과 스레드를 계속 붙잡지 않는다
+    if deadline is None:
+        _ffmpeg_semaphore.acquire()
+    else:
+        wait_budget = deadline - time.monotonic()
+        if wait_budget <= 0 or not _ffmpeg_semaphore.acquire(timeout=wait_budget):
+            raise AudioDecodeError("audio processing timed out")
+    try:
         # 전체 분석 예산(deadline)이 있으면 subprocess 타임아웃을 남은 시간과 min으로 묶는다
         timeout = _FFMPEG_TIMEOUT_SECONDS
         if deadline is not None:
@@ -207,6 +214,8 @@ def _run(
             )
         except subprocess.TimeoutExpired as error:
             raise AudioDecodeError("audio processing timed out") from error
+    finally:
+        _ffmpeg_semaphore.release()
     if result.returncode != 0:
         raise AudioDecodeError(f"{command[0]} failed: {result.stderr.strip()[:200]}")
     return result

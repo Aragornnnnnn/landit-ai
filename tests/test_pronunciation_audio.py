@@ -181,6 +181,56 @@ class FfmpegConcurrencyCapTests(unittest.TestCase):
         # 상한까지는 실제로 병렬로 돈다 (전부 직렬이면 상한 설정이 무의미)
         self.assertGreater(state["max_active"], 1)
 
+    def test_wait_for_slot_fails_when_deadline_passes(self):
+        # 슬롯이 모두 차 있으면 deadline까지 만 기다리고 실패한다 —
+        # 만료된 요청이 줄에서 무한 대기하며 스레드를 붙잡으면 안 된다
+        import time
+
+        from app.pronunciation import audio
+
+        permits = [
+            audio._ffmpeg_semaphore.acquire()
+            for _ in range(audio._MAX_CONCURRENT_FFMPEG)
+        ]
+        self.addCleanup(
+            lambda: [audio._ffmpeg_semaphore.release() for _ in permits]
+        )
+
+        started = time.monotonic()
+        with self.assertRaises(audio.AudioDecodeError):
+            audio._run(["ffmpeg", "-version"], deadline=time.monotonic() + 0.2)
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_slot_is_released_after_run(self):
+        # 성공/실패와 무관하게 슬롯이 반환되어야 상한이 새지 않는다
+        from subprocess import CompletedProcess
+        from unittest.mock import patch
+
+        from app.pronunciation import audio
+
+        with patch.object(
+            audio.subprocess,
+            "run",
+            return_value=CompletedProcess(["ffmpeg"], 0, stdout="", stderr=""),
+        ):
+            audio._run(["ffmpeg", "-version"])
+        with patch.object(
+            audio.subprocess,
+            "run",
+            return_value=CompletedProcess(["ffmpeg"], 1, stdout="", stderr="boom"),
+        ), self.assertRaises(audio.AudioDecodeError):
+            audio._run(["ffmpeg", "-version"])
+
+        # 상한 개수만큼 즉시 획득 가능해야 전부 반환된 것이다
+        acquired = [
+            audio._ffmpeg_semaphore.acquire(blocking=False)
+            for _ in range(audio._MAX_CONCURRENT_FFMPEG)
+        ]
+        for ok in acquired:
+            if ok:
+                audio._ffmpeg_semaphore.release()
+        self.assertTrue(all(acquired))
+
 
 if __name__ == "__main__":
     unittest.main()
