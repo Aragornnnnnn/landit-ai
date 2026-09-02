@@ -385,7 +385,7 @@ class FreeTalkApiTests(unittest.TestCase):
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_opening_passes_memory_context_and_returns_used_memory_ids(self):
+    def test_opening_drops_used_memory_id_without_visible_memory_detail(self):
         fake_openai = FakeOpenAI(
             contents=[json.dumps(opening_completion(usedMemoryIds=[77]))],
         )
@@ -396,7 +396,7 @@ class FreeTalkApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
         user_prompt = fake_openai.completions.calls[0]["messages"][1]["content"]
         system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
         self.assertIn("memoryContext", user_prompt)
@@ -404,6 +404,45 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn('"validTo": "2026-09-30T18:00:00"', user_prompt)
         self.assertIn('"observedAt": "2026-08-28T10:30:00"', user_prompt)
         self.assertIn("untrusted reference data", system_prompt)
+        self.assertIn(
+            "only when the response explicitly includes a distinctive detail",
+            system_prompt,
+        )
+
+    def test_opening_returns_used_memory_id_with_visible_memory_detail(self):
+        completion = opening_completion(
+            aiMessage="How are you preparing for your interview next week?",
+            translatedMessage="다음 주 면접 준비는 어떻게 하고 있어?",
+            usedMemoryIds=[77],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload() | {"memoryContext": [valid_memory_context()]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
+    def test_opening_drops_used_memory_id_with_only_generic_token_overlap(self):
+        completion = opening_completion(
+            aiMessage="What do you usually do on Saturdays?",
+            translatedMessage="토요일에 보통 뭐 해?",
+            usedMemoryIds=[77],
+        )
+        memory = valid_memory_context(
+            content="사용자는 Nori와 매주 토요일에 산책한다.",
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/opening",
+            valid_opening_payload() | {"memoryContext": [memory]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
 
     def test_opening_normalizes_used_memory_id_outside_context(self):
         response = self._post(
@@ -663,7 +702,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIsNone(response.json()["data"]["emotion"])
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_turn_returns_only_used_memory_ids_from_context(self):
+    def test_turn_drops_used_memory_id_without_visible_memory_detail(self):
         fake_openai = FakeOpenAI(
             contents=[json.dumps(normal_turn_completion(usedMemoryIds=[77]))],
         )
@@ -671,6 +710,41 @@ class FreeTalkApiTests(unittest.TestCase):
             "/api/v1/free-talk/turn",
             valid_turn_payload() | {"memoryContext": [valid_memory_context()]},
             fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
+
+    def test_turn_returns_used_memory_id_with_visible_memory_detail(self):
+        completion = normal_turn_completion(
+            aiMessage="Your interview is next week. How are you preparing?",
+            translatedMessage="다음 주에 면접이 있구나. 어떻게 준비하고 있어?",
+            usedMemoryIds=[77],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": [valid_memory_context()]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
+    def test_turn_recognizes_korean_particle_and_verb_variants_as_memory_use(self):
+        completion = normal_turn_completion(
+            aiMessage="Seoul Forest is perfect for your weekend walk with Nori.",
+            translatedMessage="서울숲이 Nori와의 주말 산책에 딱 어울려.",
+            usedMemoryIds=[77],
+        )
+        memory = valid_memory_context(
+            content="사용자는 Nori와 매주 토요일에 서울숲에서 산책한다.",
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": [memory]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
         )
 
         self.assertEqual(response.status_code, 200)
