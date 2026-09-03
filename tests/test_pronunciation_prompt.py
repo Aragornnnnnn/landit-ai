@@ -100,7 +100,14 @@ class PromptRenderingTests(unittest.TestCase):
 
         call = client.completions.calls[0]
         self.assertEqual(call["temperature"], 0.0)
-        self.assertEqual(call["extra_body"], {"reasoning": {"effort": "low"}})
+        self.assertEqual(
+            call["extra_body"],
+            {
+                "reasoning": {"effort": "low"},
+                # LAN-389: Vertex 서빙에서 STRESS 검출이 죽어 프로바이더를 고정한다
+                "provider": {"order": ["google-ai-studio"], "allow_fallbacks": True},
+            },
+        )
         self.assertEqual(call["model"], "google/gemini-3.5-flash")
 
 

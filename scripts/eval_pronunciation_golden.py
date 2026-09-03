@@ -53,6 +53,11 @@ def main() -> None:
         help="확장 필드 없이 PoC 검증본 프롬프트로 평가한다 (폴백 스펙 확인용)",
     )
     parser.add_argument("--out-dir", type=Path, default=Path("docs/tasks/LAN-373"))
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="오류 검출이 샘플별 과반 미달이면 종료 코드 1 (주기 드리프트 감시용)",
+    )
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
@@ -117,6 +122,31 @@ def main() -> None:
                 )
 
     _report(results, extended, args.out_dir)
+    if args.gate and not _detection_gate_passes(results):
+        sys.exit(1)
+
+
+def _detection_gate_passes(results: list[dict]) -> bool:
+    """샘플별로 미검출(또는 측정 에러) run이 과반이면 실패로 본다.
+
+    강세·음소 검출은 스펙 기능이라 죽은 채로 둘 수 없다 (LAN-389: 프로바이더
+    라우팅 변화로 STRESS 검출이 통째로 소실된 드리프트 실측). 오탐은 run 간
+    변동이 크고 허용 기준이 기획 미정이라 게이트에서 제외하고 리포트로만 본다.
+    """
+    flags_by_label: dict[str, list[bool]] = {}
+    for row in results:
+        failed = "error" in row or bool(row.get("missed"))
+        flags_by_label.setdefault(row["label"], []).append(failed)
+    failing = {
+        label: f"{sum(flags)}/{len(flags)}"
+        for label, flags in flags_by_label.items()
+        if sum(flags) * 2 > len(flags)
+    }
+    if failing:
+        print(f"검출 게이트 실패 (미검출·에러 run 과반): {failing}")
+        return False
+    print("검출 게이트 통과")
+    return True
 
 
 def _report(results: list[dict], extended: bool, out_dir: Path) -> None:
