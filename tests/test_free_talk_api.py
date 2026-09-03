@@ -1648,25 +1648,42 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
-    def test_expression_recommendations_rejects_out_of_range_selection(self):
-        for expression_ids in ((), (1, 2, 3, 4)):
-            with self.subTest(count=len(expression_ids)):
-                response = self._post(
-                    "/api/v1/free-talk/expression-recommendations",
-                    valid_expression_recommendations_payload(
-                        existingExpressions=[
-                            existing_expression(expression_id)
-                            for expression_id in range(1, 5)
-                        ],
-                    ),
-                    FakeOpenAI(contents=[expression_selection(*expression_ids)]),
-                )
+    def test_expression_recommendations_falls_back_to_first_candidate_when_empty(self):
+        candidates = [existing_expression(expression_id) for expression_id in (2, 1)]
 
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(
-                    response.json()["error"]["code"],
-                    "AI_RESPONSE_INVALID",
-                )
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(existingExpressions=candidates),
+            FakeOpenAI(contents=[expression_selection()]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["recommendations"],
+            [
+                {
+                    "displayOrder": 1,
+                    "existingExpressionId": 2,
+                    "targetExpressionText": "There's nothing like 2",
+                    "baseExpressionMeaningText": "~만 한 게 없다 2",
+                    "usageSummary": "좋아하는 경험을 강조할 때 사용 2",
+                },
+            ],
+        )
+
+    def test_expression_recommendations_rejects_more_than_three_selections(self):
+        response = self._post(
+            "/api/v1/free-talk/expression-recommendations",
+            valid_expression_recommendations_payload(
+                existingExpressions=[
+                    existing_expression(expression_id) for expression_id in range(1, 5)
+                ],
+            ),
+            FakeOpenAI(contents=[expression_selection(1, 2, 3, 4)]),
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
     def test_expression_recommendations_rejects_response_without_expression_ids(self):
         response = self._post(
