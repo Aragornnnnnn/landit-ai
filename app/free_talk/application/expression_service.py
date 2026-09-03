@@ -1,5 +1,6 @@
 # 프리톡 대화에 맞는 기존 표현 추천을 처리하는 유스케이스 모듈
 import json
+import logging
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -15,10 +16,13 @@ from app.models.free_talk import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 class _RecommendationSelection(BaseModel):
     """LLM은 후보 중 무엇을 고를지만 답하고 표현 텍스트는 반환하지 않는다."""
 
-    expressionIds: list[int] = Field(min_length=1, max_length=3)
+    expressionIds: list[int] = Field(max_length=3)
 
 
 def recommend_expressions(
@@ -32,6 +36,17 @@ def recommend_expressions(
     )
     try:
         selection = _RecommendationSelection.model_validate(data)
+        if not selection.expressionIds:
+            if not payload.existingExpressions:
+                raise ValueError("recommendation fallback requires an existing expression")
+            logger.warning(
+                "프리톡 표현 추천이 비어 있어 첫 번째 후보를 사용합니다. "
+                "workflow=expression_recommendation_fallback candidateCount=%s",
+                len(payload.existingExpressions),
+            )
+            selection = _RecommendationSelection(
+                expressionIds=[payload.existingExpressions[0].expressionId],
+            )
         return _build_recommendations(selection, payload)
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
