@@ -731,6 +731,25 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
+    def test_turn_recovers_used_memory_id_when_model_omits_visible_detail(self):
+        completion = normal_turn_completion(
+            aiMessage="Zephyr does, right? Do they stay there the whole time?",
+            translatedMessage="Zephyr죠? 연습할 때 늘 옆에 있나 봐요.",
+            usedMemoryIds=[],
+        )
+        memory = valid_memory_context(
+            content="사용자는 연습할 때 Zephyr를 의자 옆에 눕게 한다.",
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": [memory]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
     def test_turn_recognizes_korean_particle_and_verb_variants_as_memory_use(self):
         completion = normal_turn_completion(
             aiMessage="Seoul Forest is perfect for your weekend walk with Nori.",

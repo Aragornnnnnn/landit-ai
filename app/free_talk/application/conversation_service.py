@@ -68,6 +68,7 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "처럼",
     "보다",
     "랑",
+    "죠",
     "와",
     "과",
     "을",
@@ -575,7 +576,7 @@ def _validated_used_memory_ids(
     memory_context: list[MemoryContext],
     translated_message: str | None,
 ) -> list[int]:
-    """제공된 문맥 중 실제 번역 응답에 근거가 드러난 기억만 반환한다."""
+    """모델 누락과 오탐을 보정해 실제 번역 응답에 근거가 드러난 기억만 반환한다."""
     if _has_invalid_memory_ids(used_memory_ids) or not _belongs_to_memory_context(
         used_memory_ids,
         memory_context,
@@ -585,13 +586,12 @@ def _validated_used_memory_ids(
         return []
 
     response_tokens = _distinctive_memory_tokens(translated_message)
-    contexts_by_id = {context.memoryId: context for context in memory_context}
     return [
-        memory_id
-        for memory_id in used_memory_ids
+        context.memoryId
+        for context in memory_context
         if _has_distinctive_memory_overlap(
             response_tokens,
-            _distinctive_memory_tokens(contexts_by_id[memory_id].content),
+            _distinctive_memory_tokens(context.content),
         )
     ]
 
