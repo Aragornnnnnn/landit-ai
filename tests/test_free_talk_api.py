@@ -750,6 +750,56 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
+    def test_turn_does_not_attribute_ambiguous_shared_memory_detail(self):
+        completion = normal_turn_completion(
+            translatedMessage="토요일 산책, 정말 좋다.",
+            usedMemoryIds=[],
+        )
+        memories = [
+            valid_memory_context(
+                memory_id=77,
+                content="사용자는 Nori와 매주 토요일에 서울숲에서 산책한다.",
+            ),
+            valid_memory_context(
+                memory_id=78,
+                content="사용자는 Bori와 매주 토요일에 남산에서 산책한다.",
+            ),
+        ]
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": memories},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
+
+    def test_turn_attributes_only_memory_with_visible_unique_detail(self):
+        completion = normal_turn_completion(
+            translatedMessage="Nori와 토요일 산책, 정말 좋다.",
+            usedMemoryIds=[],
+        )
+        memories = [
+            valid_memory_context(
+                memory_id=77,
+                content="사용자는 Nori와 매주 토요일에 서울숲에서 산책한다.",
+            ),
+            valid_memory_context(
+                memory_id=78,
+                content="사용자는 Bori와 매주 토요일에 남산에서 산책한다.",
+            ),
+        ]
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": memories},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
     def test_turn_recognizes_korean_particle_and_verb_variants_as_memory_use(self):
         completion = normal_turn_completion(
             aiMessage="Seoul Forest is perfect for your weekend walk with Nori.",

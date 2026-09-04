@@ -586,14 +586,43 @@ def _validated_used_memory_ids(
         return []
 
     response_tokens = _distinctive_memory_tokens(translated_message)
+    matching_contexts = []
+    for context in memory_context:
+        memory_tokens = _distinctive_memory_tokens(context.content)
+        if _has_distinctive_memory_overlap(response_tokens, memory_tokens):
+            matching_contexts.append((context, memory_tokens))
+    if len(matching_contexts) <= 1:
+        return [context.memoryId for context, _ in matching_contexts]
+
+    reported_ids = set(used_memory_ids)
     return [
         context.memoryId
-        for context in memory_context
-        if _has_distinctive_memory_overlap(
+        for context, memory_tokens in matching_contexts
+        if context.memoryId in reported_ids
+        or _has_unique_memory_overlap(
             response_tokens,
-            _distinctive_memory_tokens(context.content),
+            memory_tokens,
+            matching_contexts,
+            context.memoryId,
         )
     ]
+
+
+def _has_unique_memory_overlap(
+    response_tokens: set[str],
+    memory_tokens: set[str],
+    matching_contexts: list[tuple[MemoryContext, set[str]]],
+    memory_id: int,
+) -> bool:
+    """여러 기억이 응답과 겹칠 때 현재 기억만의 단어가 드러났는지 확인한다."""
+    other_tokens = set().union(
+        *(
+            tokens
+            for context, tokens in matching_contexts
+            if context.memoryId != memory_id
+        ),
+    )
+    return bool(response_tokens & (memory_tokens - other_tokens))
 
 
 def _turn_used_memory_ids(
