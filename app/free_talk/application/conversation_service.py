@@ -65,6 +65,7 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "이랑",
     "부터",
     "까지",
+    "마다",
     "처럼",
     "보다",
     "랑",
@@ -82,7 +83,7 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "만",
     "로",
 )
-_KOREAN_VERB_SUFFIXES = ("합니다", "한다", "했다", "해요", "하다")
+_KOREAN_VERB_SUFFIXES = ("한다고", "합니다", "한다", "했다", "해요", "하다")
 _SAFE_CLOSING_AI_MESSAGE = (
     "I really enjoyed hearing about that. Thanks for sharing!"
 )
@@ -684,7 +685,8 @@ def _strip_korean_particle(token: str) -> str:
     """한국어 조사와 기본 서술 어미 차이를 제거해 핵심 단어를 비교한다."""
     for suffix in _KOREAN_PARTICLE_SUFFIXES:
         if token.endswith(suffix) and len(token) > len(suffix):
-            return token[: -len(suffix)]
+            token = token[: -len(suffix)]
+            break
     for suffix in _KOREAN_VERB_SUFFIXES:
         if token.endswith(suffix) and len(token) > len(suffix):
             return token[: -len(suffix)]

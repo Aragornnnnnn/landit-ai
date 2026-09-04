@@ -819,6 +819,24 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
+    def test_turn_recognizes_korean_recurrence_and_quote_suffixes_as_memory_use(self):
+        completion = normal_turn_completion(
+            translatedMessage="목요일마다 첼로를 연습한다고 했지?",
+            usedMemoryIds=[],
+        )
+        memory = valid_memory_context(
+            content="사용자는 매주 목요일에 첼로를 연습한다.",
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            valid_turn_payload() | {"memoryContext": [memory]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
     def test_turn_normalizes_duplicate_used_memory_ids(self):
         response = self._post(
             "/api/v1/free-talk/turn",
