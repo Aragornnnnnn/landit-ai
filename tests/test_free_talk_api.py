@@ -750,6 +750,36 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
+    def test_turn_does_not_recover_memory_detail_already_in_latest_user_message(self):
+        completion = normal_turn_completion(
+            aiMessage="You enjoy walking Nori in Seoul Forest every Saturday, right?",
+            translatedMessage="Nori와 매주 토요일에 서울숲에서 산책하는구나!",
+            usedMemoryIds=[],
+        )
+        memory = valid_memory_context(
+            content="사용자는 Nori와 매주 토요일에 서울숲에서 산책한다.",
+        )
+        payload = valid_turn_payload(
+            conversationHistory=[
+                {
+                    "messageId": 3002,
+                    "turnNumber": 1,
+                    "role": "USER",
+                    "content": "I walk Nori in Seoul Forest every Saturday.",
+                    "translatedContent": None,
+                },
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/turn",
+            payload | {"memoryContext": [memory]},
+            FakeOpenAI(contents=[json.dumps(completion)]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
+
     def test_turn_does_not_attribute_ambiguous_shared_memory_detail(self):
         completion = normal_turn_completion(
             translatedMessage="토요일 산책, 정말 좋다.",
