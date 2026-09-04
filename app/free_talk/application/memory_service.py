@@ -53,7 +53,12 @@ _ONE_OFF_REQUEST_PATTERN = re.compile(
 _CONVERSATION_CONTROL_PATTERN = re.compile(
     r"\b(?:end|stop|finish|leave)\s+(?:(?:this|the|our)\s+)?"
     r"(?:conversation|session)\b"
-    r"|(?:대화|세션).*(?:끝내|종료|마무리|그만)",
+    r"|\b(?:let'?s|let\s+us)\s+(?:wrap\s+(?:(?:it|this)\s+)?up"
+    r"(?:\s+(?:here|now))?|stop\s+here)\s*[.!?]*\s*$"
+    r"|\b(?:that'?s|that\s+is)\s+all\s+for\s+(?:today|now)\s*[.!?]*\s*$"
+    r"|(?:대화|세션).*(?:끝내|종료|마무리|그만)"
+    r"|(?:이제\s*)?그만\s*(?:할게|하자|할래|해요|하겠습니다)\s*[.!?]*\s*$"
+    r"|(?:오늘은?\s*)?여기까지\s*(?:하자|할게|할래|해요|하겠습니다)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 _GREETING_ONLY_PATTERN = re.compile(
