@@ -4035,6 +4035,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Expected message IDs: [1001, 1003]", messages[1]["content"])
         self.assertIn("Cached message feedback counts: GOOD=1, NEEDS_IMPROVEMENT=1", messages[1]["content"])
         self.assertIn("summaryMessage", messages[0]["content"])
+        self.assertNotIn("Level Assessment Policy", messages[0]["content"])
+        self.assertNotIn("Assessment messages JSON", messages[1]["content"])
+        self.assertEqual(fake_openai.completions.kwargs["max_tokens"], 512)
 
     def test_session_feedback_returns_question_level_assessment_core(self):
         app = self._app()
@@ -4151,6 +4154,47 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["data"]["levelAssessment"])
+
+    def test_session_feedback_drops_core_when_assessment_message_differs_from_cache(self):
+        app = self._app()
+        self._cache_feedback(
+            app,
+            good_message_feedback(1001),
+            user_message="I like pizza because it is spicy.",
+        )
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        payload["assessmentMessages"] = [valid_assessment_messages()[0]]
+        payload["assessmentMessages"][0]["userMessage"] = "Fabricated fluent answer."
+        assessment = valid_level_assessment()
+        assessment["core"]["messages"] = [assessment["core"]["messages"][0]]
+        for domain in assessment["core"]["messages"][0]["domains"].values():
+            domain["evidenceExcerpt"] = "Fabricated fluent answer."
+
+        fake_openai = FakeOpenAI(
+            content=json.dumps(
+                {
+                    "sessionId": 100,
+                    "highlightMessage": "대화를 완료했어요.",
+                    "summaryMessage": "답변을 이어갔어요.",
+                    "levelAssessment": assessment,
+                },
+            ),
+        )
+        with patch(
+            "app.core.openai_client.OpenAI",
+            return_value=fake_openai,
+        ):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["levelAssessment"])
+        messages = fake_openai.completions.kwargs["messages"]
+        self.assertNotIn("Fabricated fluent answer.", messages[1]["content"])
+        self.assertNotIn("Assessment messages JSON", messages[1]["content"])
 
     def test_session_feedback_prompt_requests_five_domain_grounded_assessment(self):
         app = self._app()
