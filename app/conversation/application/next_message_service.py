@@ -48,6 +48,9 @@ from app.models.conversation import (
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
+    SessionLevelAssessment,
+    SessionLevelAssessmentCore,
+    SessionLevelAssessmentDetails,
     correction_expression_placeholder_labels,
     normalize_correction_expression_placeholders,
 )
@@ -1116,9 +1119,10 @@ def generate_session_feedback(
         settings or Settings(),
         system_prompt=_session_feedback_system_prompt(),
         user_prompt=_session_feedback_user_prompt(request, feedback_entries),
-        max_tokens=512,
+        max_tokens=2048,
     )
     summary = _recover_session_feedback_summary(data, request.sessionId)
+    level_assessment = _recover_session_level_assessment(data, request)
 
     native_score = _native_score_from_message_feedback_entries(feedback_entries)
     response = SessionFeedbackResponse(
@@ -1128,9 +1132,51 @@ def generate_session_feedback(
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
+        levelAssessment=level_assessment,
     )
     _delete_message_feedback_cache(request.sessionId)
     return response
+
+
+def _recover_session_level_assessment(
+    data: dict[str, Any],
+    request: SessionFeedbackRequest,
+) -> SessionLevelAssessment | None:
+    raw_assessment = data.get("levelAssessment")
+    if not isinstance(raw_assessment, dict) or not request.assessmentMessages:
+        return None
+    try:
+        core = SessionLevelAssessmentCore.model_validate(raw_assessment.get("core"))
+    except ValidationError:
+        return None
+    expected_messages = {
+        message.messageId: message for message in request.assessmentMessages
+    }
+    if [message.messageId for message in core.messages] != request.expectedMessageIds:
+        return None
+    for message in core.messages:
+        expected = expected_messages.get(message.messageId)
+        if expected is None:
+            return None
+        for domain in (
+            message.domains.situationPerformance,
+            message.domains.grammar,
+            message.domains.vocabulary,
+            message.domains.discourse,
+            message.domains.interactionPragmatics,
+        ):
+            if (
+                domain.evidenceExcerpt is not None
+                and domain.evidenceExcerpt not in expected.userMessage
+            ):
+                return None
+    try:
+        details = SessionLevelAssessmentDetails.model_validate(
+            raw_assessment.get("details"),
+        )
+    except ValidationError:
+        details = None
+    return SessionLevelAssessment(core=core, details=details)
 
 
 def _recover_session_feedback_summary(
@@ -1883,16 +1929,27 @@ def _session_feedback_system_prompt() -> str:
             "Do not introduce corrections or examples that are not present in cached message feedback."
         ),
         (
+            "Level Assessment Policy:\n"
+            "For every Assessment messages JSON item, return one core.messages entry in the same order. "
+            "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
+            "Judge taskPerformance against requiredElements. "
+            "Assess situationPerformance, grammar, vocabulary, discourse, and interactionPragmatics. "
+            "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
+            "Use NOT_OBSERVED or INSUFFICIENT_EVIDENCE with null level and null evidenceExcerpt when the text does not support a judgment. "
+            "details is optional Korean strength and improvement text; never omit or weaken core because details is unavailable."
+        ),
+        (
             "Self-check before final JSON:\n"
             "1. highlightMessage is Korean and badge-like. "
             "2. summaryMessage is Korean and sounds natural to a learner. "
             "3. Both fields are grounded in cached message feedback. "
-            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds. "
+            "5. levelAssessment.core is grounded in the exact assessment messages."
         ),
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"..."}. '
+            '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
             "Return one JSON object, not an array."
         ),
     ])
@@ -1934,6 +1991,11 @@ def _session_feedback_user_prompt(
         ensure_ascii=False,
         separators=(",", ":"),
     )
+    assessment_message_json = json.dumps(
+        [message.model_dump(mode="json") for message in request.assessmentMessages],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return (
         f"Session ID: {request.sessionId}\n"
         f"Scenario ID: {request.scenario.scenarioId}\n"
@@ -1946,7 +2008,8 @@ def _session_feedback_user_prompt(
         f"Cached message feedback counts: GOOD={good_count}, NEEDS_IMPROVEMENT={needs_count}\n\n"
         f"Cached message feedback JSON:\n{feedback_json}\n\n"
         f"Cached user message JSON:\n{user_message_json}\n\n"
-        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}"
+        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}\n\n"
+        f"Assessment messages JSON:\n{assessment_message_json}"
     )
 
 
