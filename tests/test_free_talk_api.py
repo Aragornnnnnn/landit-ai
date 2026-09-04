@@ -2734,6 +2734,44 @@ class FreeTalkApiTests(unittest.TestCase):
             "IGNORE",
         )
 
+    def test_memory_resolution_ignores_live_rewording_that_removes_place(self):
+        payload = valid_memory_resolution_payload()
+        payload["candidates"][0]["memoryType"] = "PROFILE"
+        payload["candidates"][0]["content"] = (
+            "사용자는 Zephyr와 매주 목요일에 첼로를 연습한다"
+        )
+        payload["candidates"][0]["comparableMemories"][0]["content"] = (
+            "사용자는 매주 목요일에 Haneul Arboretum에서 첼로를 연습하고 "
+            "Zephyr와 함께 간다."
+        )
+        fake_openai = FakeOpenAI(
+            contents=[
+                json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "candidateIndex": 0,
+                                "operation": "SUPERSEDE",
+                                "supersededMemoryIds": [77],
+                            },
+                        ],
+                    },
+                ),
+            ],
+        )
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["data"]["resolutions"][0]["operation"],
+            "IGNORE",
+        )
+
     def test_memory_resolution_rejects_unknown_superseded_memory(self):
         fake_openai = FakeOpenAI(
             contents=[

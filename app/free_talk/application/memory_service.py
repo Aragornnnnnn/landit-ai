@@ -112,6 +112,7 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "만",
     "로",
 )
+_KOREAN_VERB_SUFFIXES = ("합니다", "한다", "했다", "하고", "해요", "하다")
 _CANDIDATE_PROMPT_PARTS = (
     (
         "Extract zero to five durable memories from the USER messages in the completed "
@@ -472,6 +473,10 @@ def _strip_korean_particle(token: str) -> str:
     """한국어 조사 차이로 같은 핵심 단어가 달라지는 것을 방지한다."""
     for suffix in _KOREAN_PARTICLE_SUFFIXES:
         if token.endswith(suffix) and len(token) > len(suffix) + 1:
+            token = token[: -len(suffix)]
+            break
+    for suffix in _KOREAN_VERB_SUFFIXES:
+        if token.endswith(suffix) and len(token) > len(suffix):
             return token[: -len(suffix)]
     return token
 
