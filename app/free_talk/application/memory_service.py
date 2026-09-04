@@ -33,7 +33,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v5"
+EXTRACTOR_VERSION = "memory-candidate-v6"
 _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN = re.compile(
     r"\b(?:next|this|coming)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
     r"|(?:다음|이번)(?:\s*주)?\s*(?:월|화|수|목|금|토|일)요일",
@@ -48,6 +48,12 @@ _ONE_OFF_REQUEST_PATTERN = re.compile(
     r"^\s*(?:(?:could|can|would|will)\s+you\s+(?:say|repeat|speak)\b"
     r"|please\s+(?:say|repeat|speak)\b)"
     r"|^\s*(?:다시|천천히).*(?:말해|말씀해|반복해)",
+    re.IGNORECASE,
+)
+_CONVERSATION_CONTROL_PATTERN = re.compile(
+    r"\b(?:end|stop|finish|leave)\s+(?:(?:this|the|our)\s+)?"
+    r"(?:conversation|session)\b"
+    r"|(?:대화|세션).*(?:끝내|종료|마무리|그만)",
     re.IGNORECASE,
 )
 _GREETING_ONLY_PATTERN = re.compile(
@@ -158,10 +164,10 @@ _CANDIDATE_PROMPT_PARTS = (
         "not user facts unless the user separately confirms them as true. An explicit denial "
         "overrides a quoted or example claim; never extract the denied claim. Do not infer "
         "diagnoses, personality, relationships, or intent. Exclude secrets, credentials, "
-        "financial identifiers, greetings, acknowledgements, one-off requests, and "
-        "language-learning examples. Do not extract facts that appear only as assumptions "
-        "or presuppositions inside a question. A direct request to remember an explicitly "
-        "stated fact is allowed."
+        "financial identifiers, greetings, acknowledgements, one-off requests, conversation "
+        "control messages, and language-learning examples. Do not extract facts that appear "
+        "only as assumptions or presuppositions inside a question. A direct request to "
+        "remember an explicitly stated fact is allowed."
     ),
     (
         "Follow these boundary examples: (1) occurredAt=2026-09-02T17:00:00+09:00 and "
@@ -328,6 +334,8 @@ def _must_drop_candidate(
     ):
         return True
     if _ONE_OFF_REQUEST_PATTERN.search(source_text):
+        return True
+    if _CONVERSATION_CONTROL_PATTERN.search(source_text):
         return True
     if all(_is_question_without_explicit_fact(message.content) for message in source_messages):
         return True

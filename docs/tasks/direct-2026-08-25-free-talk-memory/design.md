@@ -59,7 +59,7 @@ V1에서는 매 사용자 턴마다 별도 memory planner를 호출하거나 AI�
 
 ```json
 {
-  "extractorVersion": "memory-candidate-v5",
+  "extractorVersion": "memory-candidate-v6",
   "candidates": [
     {
       "candidateIndex": 0,
