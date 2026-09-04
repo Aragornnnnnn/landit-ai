@@ -107,6 +107,7 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "이랑",
     "부터",
     "까지",
+    "마다",
     "처럼",
     "보다",
     "랑",
@@ -474,10 +475,11 @@ def _is_strict_content_subset(candidate: str, existing: str) -> bool:
 
 
 def _content_tokens(content: str) -> set[str]:
-    return {
+    tokens = {
         _strip_korean_particle(token.lower())
         for token in _CONTENT_TOKEN_PATTERN.findall(content)
     }
+    return tokens - {""}
 
 
 def _strip_korean_particle(token: str) -> str:
@@ -487,6 +489,8 @@ def _strip_korean_particle(token: str) -> str:
             token = token[: -len(suffix)]
             break
     for suffix in _KOREAN_VERB_SUFFIXES:
+        if token == suffix:
+            return ""
         if token.endswith(suffix) and len(token) > len(suffix):
             return token[: -len(suffix)]
     return token
