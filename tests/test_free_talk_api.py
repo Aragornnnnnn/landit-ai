@@ -2406,8 +2406,17 @@ class FreeTalkApiTests(unittest.TestCase):
             "Let's wrap up here.",
             "That's all for today.",
             "I need to go now, let us stop here.",
+            "I need to go now.",
+            "I have to leave.",
+            "I should get going now.",
+            "That was fun, talk to you later!",
+            "Bye for now.",
             "이제 그만할게.",
             "오늘은 여기까지 하자.",
+            "나 이제 가봐야 해.",
+            "이만 갈게.",
+            "다음에 이야기하자.",
+            "잘 가.",
         )
 
         for source in sources:
@@ -2427,6 +2436,43 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["data"]["candidates"], [])
                 self.assertEqual(len(fake_openai.embeddings.calls), 0)
+
+    def test_memory_candidates_keeps_titles_that_match_goodbye_phrases(self):
+        cases = (
+            (
+                "I run a podcast called Bye for Now.",
+                "사용자는 Bye for Now라는 팟캐스트를 운영한다.",
+            ),
+            (
+                "내가 좋아하는 노래는 잘 가.",
+                "사용자가 좋아하는 노래는 잘 가이다.",
+            ),
+        )
+
+        for source, content in cases:
+            with self.subTest(source=source):
+                payload = valid_memory_candidates_payload()
+                payload["conversationHistory"][1]["content"] = source
+                fake_openai = FakeOpenAI(
+                    contents=[
+                        json.dumps(
+                            valid_memory_candidate_completion(
+                                memoryType="PROFILE",
+                                content=content,
+                            ),
+                        ),
+                    ],
+                )
+
+                response = self._post(
+                    "/api/v1/free-talk/memory-candidates",
+                    payload,
+                    fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(response.json()["data"]["candidates"]), 1)
+                self.assertEqual(len(fake_openai.embeddings.calls), 1)
 
     def test_memory_candidates_drops_greeting_episode(self):
         payload = valid_memory_candidates_payload()

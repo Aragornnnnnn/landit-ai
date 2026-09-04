@@ -56,9 +56,15 @@ _CONVERSATION_CONTROL_PATTERN = re.compile(
     r"|\b(?:let'?s|let\s+us)\s+(?:wrap\s+(?:(?:it|this)\s+)?up"
     r"(?:\s+(?:here|now))?|stop\s+here)\s*[.!?]*\s*$"
     r"|\b(?:that'?s|that\s+is)\s+all\s+for\s+(?:today|now)\s*[.!?]*\s*$"
+    r"|\b(?:i\s+)?(?:need|have|got)\s+to\s+(?:go|leave)(?:\s+now)?\s*[.!?]*\s*$"
+    r"|\bi\s+should\s+get\s+going(?:\s+now)?\s*[.!?]*\s*$"
+    r"|(?:^|,\s*)(?:talk\s+to\s+you\s+later|bye\s+for\s+now)\s*[.!?]*\s*$"
     r"|(?:대화|세션).*(?:끝내|종료|마무리|그만)"
     r"|(?:이제\s*)?그만\s*(?:할게|하자|할래|해요|하겠습니다)\s*[.!?]*\s*$"
-    r"|(?:오늘은?\s*)?여기까지\s*(?:하자|할게|할래|해요|하겠습니다)\s*[.!?]*\s*$",
+    r"|(?:오늘은?\s*)?여기까지\s*(?:하자|할게|할래|해요|하겠습니다)\s*[.!?]*\s*$"
+    r"|(?:(?:나|저)는?\s*)?(?:이제\s+)?가봐야\s*해\s*[.!?]*\s*$"
+    r"|이만\s+갈게\s*[.!?]*\s*$"
+    r"|(?:^|,\s*)(?:다음에\s+이야기하자|잘\s+가)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 _GREETING_ONLY_PATTERN = re.compile(
