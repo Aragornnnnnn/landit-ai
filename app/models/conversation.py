@@ -145,7 +145,7 @@ class SessionAssessmentMessage(BaseModel):
 class SessionAssessmentDomain(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    level: int | None = Field(default=None, ge=1, le=5)
+    level: int | None = Field(default=None, strict=True, ge=1, le=5)
     evidenceStatus: AssessmentEvidenceStatus
     evidenceExcerpt: str | None = None
 
@@ -173,7 +173,7 @@ class SessionAssessmentDomains(BaseModel):
 class SessionMessageLevelAssessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    messageId: int = Field(gt=0)
+    messageId: int = Field(strict=True, gt=0)
     taskPerformance: AssessmentTaskPerformance
     domains: SessionAssessmentDomains
 

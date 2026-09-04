@@ -3747,6 +3747,37 @@ class SessionFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
+    def test_level_assessment_core_rejects_boolean_integer_fields(self):
+        with self.assertRaises(ValidationError):
+            conversation_models.SessionAssessmentDomain.model_validate(
+                {
+                    "level": True,
+                    "evidenceStatus": "OBSERVED",
+                    "evidenceExcerpt": "answer",
+                },
+            )
+        with self.assertRaises(ValidationError):
+            conversation_models.SessionMessageLevelAssessment.model_validate(
+                {
+                    "messageId": True,
+                    "taskPerformance": "ACHIEVED",
+                    "domains": {
+                        name: {
+                            "level": 1,
+                            "evidenceStatus": "OBSERVED",
+                            "evidenceExcerpt": "answer",
+                        }
+                        for name in (
+                            "situationPerformance",
+                            "grammar",
+                            "vocabulary",
+                            "discourse",
+                            "interactionPragmatics",
+                        )
+                    },
+                },
+            )
+
     def _app(self):
         return create_app(
             make_settings(
