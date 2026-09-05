@@ -20,6 +20,9 @@ from app.common.inner_thought_contract import (
     report_inner_thought_fallback,
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
+from app.conversation.application.session_assessment_rubric import (
+    SESSION_LEVEL_ASSESSMENT_RUBRIC,
+)
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.conversation import (
@@ -48,6 +51,9 @@ from app.models.conversation import (
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
+    SessionLevelAssessment,
+    SessionLevelAssessmentCore,
+    SessionLevelAssessmentDetails,
     correction_expression_placeholder_labels,
     normalize_correction_expression_placeholders,
 )
@@ -1112,13 +1118,26 @@ def generate_session_feedback(
         request.expectedMessageIds,
     )
     message_feedbacks = [entry.feedback for entry in feedback_entries]
+    include_level_assessment = _assessment_messages_match_cache(
+        request,
+        feedback_entries,
+    )
     data = _request_recoverable_json_completion(
         settings or Settings(),
-        system_prompt=_session_feedback_system_prompt(),
-        user_prompt=_session_feedback_user_prompt(request, feedback_entries),
-        max_tokens=512,
+        system_prompt=_session_feedback_system_prompt(include_level_assessment),
+        user_prompt=_session_feedback_user_prompt(
+            request,
+            feedback_entries,
+            include_level_assessment,
+        ),
+        max_tokens=2048 if include_level_assessment else 512,
     )
     summary = _recover_session_feedback_summary(data, request.sessionId)
+    level_assessment = _recover_session_level_assessment(
+        data,
+        request,
+        feedback_entries,
+    )
 
     native_score = _native_score_from_message_feedback_entries(feedback_entries)
     response = SessionFeedbackResponse(
@@ -1128,9 +1147,69 @@ def generate_session_feedback(
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
+        levelAssessment=level_assessment,
     )
     _delete_message_feedback_cache(request.sessionId)
     return response
+
+
+def _assessment_messages_match_cache(
+    request: SessionFeedbackRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> bool:
+    if not request.assessmentMessages:
+        return False
+    cached_user_messages = {
+        entry.feedback.messageId: entry.user_message for entry in feedback_entries
+    }
+    return all(
+        cached_user_messages.get(message.messageId) == message.userMessage
+        for message in request.assessmentMessages
+    )
+
+
+def _recover_session_level_assessment(
+    data: dict[str, Any],
+    request: SessionFeedbackRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+) -> SessionLevelAssessment | None:
+    raw_assessment = data.get("levelAssessment")
+    if not isinstance(raw_assessment, dict) or not request.assessmentMessages:
+        return None
+    try:
+        core = SessionLevelAssessmentCore.model_validate(raw_assessment.get("core"))
+    except ValidationError:
+        return None
+    expected_messages = {
+        message.messageId: message for message in request.assessmentMessages
+    }
+    if not _assessment_messages_match_cache(request, feedback_entries):
+        return None
+    if [message.messageId for message in core.messages] != request.expectedMessageIds:
+        return None
+    for message in core.messages:
+        expected = expected_messages.get(message.messageId)
+        if expected is None:
+            return None
+        for domain in (
+            message.domains.situationPerformance,
+            message.domains.grammar,
+            message.domains.vocabulary,
+            message.domains.discourse,
+            message.domains.interactionPragmatics,
+        ):
+            if (
+                domain.evidenceExcerpt is not None
+                and domain.evidenceExcerpt not in expected.userMessage
+            ):
+                return None
+    try:
+        details = SessionLevelAssessmentDetails.model_validate(
+            raw_assessment.get("details"),
+        )
+    except ValidationError:
+        details = None
+    return SessionLevelAssessment(core=core, details=details)
 
 
 def _recover_session_feedback_summary(
@@ -1848,8 +1927,8 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
     )
 
 
-def _session_feedback_system_prompt() -> str:
-    return "\n\n".join([
+def _session_feedback_system_prompt(include_level_assessment: bool = True) -> str:
+    return "\n\n".join(section for section in [
         (
             "Role:\n"
             "You generate the final session-level highlight badge and summary for a Korean learner's English role-play session."
@@ -1883,24 +1962,45 @@ def _session_feedback_system_prompt() -> str:
             "Do not introduce corrections or examples that are not present in cached message feedback."
         ),
         (
+            "Level Assessment Policy:\n"
+            "For every Assessment messages JSON item, return one core.messages entry in the same order. "
+            "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
+            "Judge taskPerformance against requiredElements. "
+            "Assess situationPerformance, grammar, vocabulary, discourse, and interactionPragmatics. "
+            "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
+            "Use null level and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
+            f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
+            "details is optional Korean strength and improvement text; never omit or weaken core because details is unavailable."
+        ) if include_level_assessment else "",
+        (
             "Self-check before final JSON:\n"
             "1. highlightMessage is Korean and badge-like. "
             "2. summaryMessage is Korean and sounds natural to a learner. "
             "3. Both fields are grounded in cached message feedback. "
             "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+            + (
+                " 5. levelAssessment.core is grounded in the exact assessment messages."
+                if include_level_assessment
+                else ""
+            )
         ),
         (
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
-            '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"..."}. '
-            "Return one JSON object, not an array."
+            + (
+                '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
+                if include_level_assessment
+                else '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"..."}. '
+            )
+            + "Return one JSON object, not an array."
         ),
-    ])
+    ] if section)
 
 
 def _session_feedback_user_prompt(
     request: SessionFeedbackRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry],
+    include_level_assessment: bool,
 ) -> str:
     message_feedbacks = [entry.feedback for entry in feedback_entries]
     good_count = sum(
@@ -1934,7 +2034,7 @@ def _session_feedback_user_prompt(
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return (
+    prompt = (
         f"Session ID: {request.sessionId}\n"
         f"Scenario ID: {request.scenario.scenarioId}\n"
         f"Scenario title: {request.scenario.title}\n"
@@ -1948,6 +2048,14 @@ def _session_feedback_user_prompt(
         f"Cached user message JSON:\n{user_message_json}\n\n"
         f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}"
     )
+    if not include_level_assessment:
+        return prompt
+    assessment_message_json = json.dumps(
+        [message.model_dump(mode="json") for message in request.assessmentMessages],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"{prompt}\n\nAssessment messages JSON:\n{assessment_message_json}"
 
 
 def _quantitative_highlight_candidates(message_feedbacks: list[MessageFeedbackData]) -> list[str]:
