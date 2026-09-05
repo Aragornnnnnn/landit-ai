@@ -125,7 +125,7 @@ class AssessmentTaskPerformance(StrEnum):
 class SessionAssessmentMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    messageId: int = Field(gt=0)
+    messageId: int = Field(strict=True, gt=0)
     evaluationContext: str
     userMessage: str
     responseDemand: AssessmentResponseDemand

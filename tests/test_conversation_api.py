@@ -3801,6 +3801,15 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 },
             )
 
+    def test_level_assessment_request_rejects_boolean_message_id(self):
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1]
+        payload["assessmentMessages"] = [valid_assessment_messages()[0]]
+        payload["assessmentMessages"][0]["messageId"] = True
+
+        with self.assertRaises(ValidationError):
+            conversation_models.SessionFeedbackRequest.model_validate(payload)
+
     def _app(self):
         return create_app(
             make_settings(
