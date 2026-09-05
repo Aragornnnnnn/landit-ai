@@ -1,0 +1,202 @@
+# 발음 분석 API의 요청과 응답 모델을 정의하는 모듈
+import base64
+import binascii
+import logging
+import re
+from enum import StrEnum
+from urllib.parse import urlparse
+
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
+
+# base64 인코딩 기준 최대 크기 (원본 약 10MB)
+_MAX_USER_AUDIO_BASE64_LENGTH = 14_000_000
+
+
+def _validate_not_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("must not be blank")
+    return value
+
+
+def _word_tokens(text: str) -> list[str]:
+    # PoC 채점과 동일한 단어 정규화에 숫자를 더한다. 숫자 단어("9")는 판정 없이
+    # 통과 처리하지만 words 목록과 정렬에는 포함돼야 한다.
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+class PronunciationAudioFormat(StrEnum):
+    M4A = "m4a"
+    WAV = "wav"
+    MP3 = "mp3"
+    # 웹(크롬·안드로이드 웹뷰) MediaRecorder 산출 형식 (보통 opus 코덱)
+    WEBM = "webm"
+
+
+class PronunciationAccentLocale(StrEnum):
+    EN_US = "EN_US"
+    EN_GB = "EN_GB"
+    EN_AU = "EN_AU"
+
+
+class PronunciationWordStatus(StrEnum):
+    CORRECT = "CORRECT"
+    PHONEME_ERROR = "PHONEME_ERROR"
+    STRESS_ERROR = "STRESS_ERROR"
+
+
+class PronunciationAccentErrorType(StrEnum):
+    """억양 대조가 어긋났을 때 어떤 오류로 볼지. 대부분 음소 차이다."""
+
+    PHONEME = "PHONEME"
+    STRESS = "STRESS"
+
+
+class PronunciationAccentContrast(BaseModel):
+    """학습 억양이 기대하는 발음과 그와 대비되는 발음.
+
+    문장이 고정 콘텐츠이므로 BE가 accentLocale 기준으로 풀어서 보낸다.
+    예) EN_GB 학습자의 "water" → expected="a clear t (WAW-tuh)",
+        other="a d-like flap (WAH-der)"
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected: str
+    other: str
+    errorType: PronunciationAccentErrorType = PronunciationAccentErrorType.PHONEME
+
+    @field_validator("errorType", mode="before")
+    @classmethod
+    def null_error_type_means_default(cls, value):
+        # BE는 없는 키를 null로 직렬화하며 "null=생략과 동일"을 약속했다
+        return PronunciationAccentErrorType.PHONEME if value is None else value
+
+    @field_validator("expected", "other")
+    @classmethod
+    def options_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class PronunciationWordInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order: int = Field(gt=0)
+    word: str
+    accentContrast: PronunciationAccentContrast | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def contrast_without_options_is_absent(cls, data):
+        # 선택지(expected/other)가 null이면 대조로서 의미가 없으므로 요청을 거부하는
+        # 대신 대조 생략과 동일하게 처리한다 (BE의 null=생략 직렬화 정책과 일관).
+        # 조용히 버리면 자산 데이터 품질 문제를 놓치므로 경고를 남긴다 — 요청에는
+        # expressionId가 없어 order만 싣는다 (오디오 파생 텍스트 금지).
+        if isinstance(data, dict):
+            contrast = data.get("accentContrast")
+            if isinstance(contrast, dict) and (
+                contrast.get("expected") is None or contrast.get("other") is None
+            ):
+                logger.warning(
+                    "accentContrast dropped (null options) for word order=%s",
+                    data.get("order"),
+                )
+                data = {**data, "accentContrast": None}
+        return data
+
+    @field_validator("word")
+    @classmethod
+    def word_must_not_be_blank(cls, value: str) -> str:
+        value = _validate_not_blank(value)
+        # 숫자 단어는 정렬 시 철자로 변환하는데 0~99만 지원한다
+        if value.strip().isdigit() and int(value.strip()) > 99:
+            raise ValueError("numeric words above 99 are not supported")
+        return value
+
+
+class PronunciationAnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 유저 음성 원본은 로그·Sentry에 노출되면 안 되므로 repr에서 제외한다
+    userAudio: str = Field(repr=False, max_length=_MAX_USER_AUDIO_BASE64_LENGTH)
+    userAudioFormat: PronunciationAudioFormat
+    sentenceText: str
+    referenceAudioUrl: str
+    accentLocale: PronunciationAccentLocale
+    words: list[PronunciationWordInput] = Field(min_length=1)
+
+    @field_validator("sentenceText")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("referenceAudioUrl")
+    @classmethod
+    def reference_url_must_be_plain_web_url(cls, value: str) -> str:
+        # SSRF 1차 방어(정적): http(s) URL 형태와 크리덴셜 금지만 여기서 검증한다.
+        # 허용 origin 목록은 설정값이라 라우트에서 검사한다 (analysis_service 헬퍼).
+        value = _validate_not_blank(value).strip()
+        parsed = urlparse(value)
+        if parsed.scheme not in ("https", "http") or not parsed.hostname:
+            raise ValueError("must be an http(s) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("must not embed credentials")
+        return value
+
+    @field_validator("userAudio")
+    @classmethod
+    def user_audio_must_be_base64(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        try:
+            base64.b64decode(stripped, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("must be valid base64") from error
+        return stripped
+
+    @model_validator(mode="after")
+    def word_orders_must_be_unique(self) -> Self:
+        orders = [word.order for word in self.words]
+        if len(orders) != len(set(orders)):
+            raise ValueError("word orders must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def words_must_match_sentence(self) -> Self:
+        # BE의 sentenceText(representative_sentence 스냅샷)와 words_payload가
+        # 어긋난 요청을 조용히 처리하지 않도록 토큰 일치를 검증한다.
+        # 하이픈 합성어("check-in")처럼 한 단어가 여러 토큰이 될 수 있으므로
+        # 첫 토큰만이 아니라 전체 토큰 시퀀스를 이어붙여 대조한다.
+        sentence_tokens = _word_tokens(self.sentenceText)
+        payload_tokens: list[str] = []
+        for word in sorted(self.words, key=lambda word: word.order):
+            tokens = _word_tokens(word.word)
+            if not tokens:
+                raise ValueError("words do not match sentenceText")
+            payload_tokens.extend(tokens)
+        if sentence_tokens != payload_tokens:
+            raise ValueError("words do not match sentenceText")
+        return self
+
+    def decoded_user_audio(self) -> bytes:
+        return base64.b64decode(self.userAudio, validate=True)
+
+
+class PronunciationWordResult(BaseModel):
+    order: int
+    word: str
+    status: PronunciationWordStatus
+    startMs: int
+    endMs: int
+    userDisplay: str | None = None
+    errorTargetSpan: str | None = None
+    errorUserSpan: str | None = None
+    userStressIndex: int | None = None
+
+
+class PronunciationAnalyzeResponse(BaseModel):
+    words: list[PronunciationWordResult]

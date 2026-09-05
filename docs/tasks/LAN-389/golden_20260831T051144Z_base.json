@@ -1,0 +1,1065 @@
+{
+  "extended": false,
+  "results": [
+    {
+      "label": "s1_correct",
+      "run": 1,
+      "latency": 5.4,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "run": 2,
+      "latency": 3.8,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "run": 3,
+      "latency": 4.0,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "run": 4,
+      "latency": 5.0,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_correct",
+      "run": 5,
+      "latency": 3.8,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "run": 1,
+      "latency": 2.2,
+      "fields": [
+        {
+          "word": "nothing",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "run": 2,
+      "latency": 2.0,
+      "fields": [
+        {
+          "word": "nothing",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "run": 3,
+      "latency": 2.1,
+      "fields": [
+        {
+          "word": "nothing",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "run": 4,
+      "latency": 2.2,
+      "fields": [
+        {
+          "word": "nothing",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "run": 5,
+      "latency": 2.1,
+      "fields": [
+        {
+          "word": "nothing",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_stress",
+      "run": 1,
+      "latency": 2.8,
+      "fields": [],
+      "detected": [],
+      "missed": [
+        "hiking:STRESS"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s1_stress",
+      "run": 2,
+      "latency": 3.0,
+      "fields": [],
+      "detected": [],
+      "missed": [
+        "hiking:STRESS"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s1_stress",
+      "run": 3,
+      "latency": 2.6,
+      "fields": [],
+      "detected": [],
+      "missed": [
+        "hiking:STRESS"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s1_stress",
+      "run": 4,
+      "latency": 2.9,
+      "fields": [],
+      "detected": [],
+      "missed": [
+        "hiking:STRESS"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s1_stress",
+      "run": 5,
+      "latency": 2.7,
+      "fields": [],
+      "detected": [],
+      "missed": [
+        "hiking:STRESS"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_correct",
+      "run": 1,
+      "latency": 3.2,
+      "fields": [
+        {
+          "word": "diner",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "diner:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "diner:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_correct",
+      "run": 2,
+      "latency": 3.3,
+      "fields": [
+        {
+          "word": "diner",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "diner:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "diner:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_correct",
+      "run": 3,
+      "latency": 2.8,
+      "fields": [
+        {
+          "word": "diner",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "diner:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "diner:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_correct",
+      "run": 4,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "diner",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "diner:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "diner:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_correct",
+      "run": 5,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "diner",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "diner:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "diner:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_phoneme",
+      "run": 1,
+      "latency": 2.9,
+      "fields": [
+        {
+          "word": "real",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_phoneme",
+      "run": 2,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "real",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_phoneme",
+      "run": 3,
+      "latency": 2.4,
+      "fields": [
+        {
+          "word": "real",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_phoneme",
+      "run": 4,
+      "latency": 3.0,
+      "fields": [
+        {
+          "word": "real",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_phoneme",
+      "run": 5,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "real",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "run": 1,
+      "latency": 2.8,
+      "fields": [
+        {
+          "word": "American",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "run": 2,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "American",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "run": 3,
+      "latency": 3.2,
+      "fields": [
+        {
+          "word": "American",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "run": 4,
+      "latency": 3.2,
+      "fields": [
+        {
+          "word": "American",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "run": 5,
+      "latency": 2.6,
+      "fields": [
+        {
+          "word": "American",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "run": 1,
+      "latency": 2.6,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "run": 2,
+      "latency": 2.7,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "run": 3,
+      "latency": 2.9,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "run": 4,
+      "latency": 2.6,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "run": 5,
+      "latency": 2.4,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "run": 1,
+      "latency": 3.6,
+      "fields": [
+        {
+          "word": "feeling",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "run": 2,
+      "latency": 3.8,
+      "fields": [
+        {
+          "word": "feeling",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "run": 3,
+      "latency": 3.3,
+      "fields": [
+        {
+          "word": "feeling",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "run": 4,
+      "latency": 3.1,
+      "fields": [
+        {
+          "word": "feeling",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "run": 5,
+      "latency": 2.9,
+      "fields": [
+        {
+          "word": "feeling",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "run": 1,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "yesterday",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "run": 2,
+      "latency": 2.7,
+      "fields": [
+        {
+          "word": "yesterday",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "run": 3,
+      "latency": 2.4,
+      "fields": [
+        {
+          "word": "yesterday",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "run": 4,
+      "latency": 2.8,
+      "fields": [
+        {
+          "word": "yesterday",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "run": 5,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "yesterday",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "yesterday:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "run": 1,
+      "latency": 3.5,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "run": 2,
+      "latency": 3.2,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "run": 3,
+      "latency": 2.5,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "run": 4,
+      "latency": 2.6,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_correct",
+      "run": 5,
+      "latency": 2.4,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "run": 1,
+      "latency": 3.2,
+      "fields": [
+        {
+          "word": "available",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "run": 2,
+      "latency": 3.1,
+      "fields": [
+        {
+          "word": "available",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "run": 3,
+      "latency": 2.9,
+      "fields": [
+        {
+          "word": "available",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "run": 4,
+      "latency": 3.1,
+      "fields": [
+        {
+          "word": "available",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "run": 5,
+      "latency": 3.5,
+      "fields": [
+        {
+          "word": "available",
+          "type": "SOUND",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "run": 1,
+      "latency": 3.1,
+      "fields": [
+        {
+          "word": "compensation",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "run": 2,
+      "latency": 2.5,
+      "fields": [
+        {
+          "word": "compensation",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "run": 3,
+      "latency": 2.8,
+      "fields": [
+        {
+          "word": "compensation",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "run": 4,
+      "latency": 2.7,
+      "fields": [
+        {
+          "word": "compensation",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "run": 5,
+      "latency": 2.6,
+      "fields": [
+        {
+          "word": "compensation",
+          "type": "STRESS",
+          "userHeard": null,
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    }
+  ]
+}
