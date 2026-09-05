@@ -20,6 +20,9 @@ from app.common.inner_thought_contract import (
     report_inner_thought_fallback,
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
+from app.conversation.application.session_assessment_rubric import (
+    SESSION_LEVEL_ASSESSMENT_RUBRIC,
+)
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.conversation import (
@@ -1965,7 +1968,8 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Judge taskPerformance against requiredElements. "
             "Assess situationPerformance, grammar, vocabulary, discourse, and interactionPragmatics. "
             "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
-            "Use NOT_OBSERVED or INSUFFICIENT_EVIDENCE with null level and null evidenceExcerpt when the text does not support a judgment. "
+            "Use null level and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
+            f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
             "details is optional Korean strength and improvement text; never omit or weaken core because details is unavailable."
         ) if include_level_assessment else "",
         (

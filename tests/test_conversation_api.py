@@ -3747,6 +3747,29 @@ class SessionFeedbackApiTests(unittest.TestCase):
     def setUp(self):
         clear_message_feedback_cache()
 
+    def test_session_feedback_openapi_keeps_assessment_core_contract(self):
+        schemas = create_app(make_settings()).openapi()["components"]["schemas"]
+
+        self.assertEqual(
+            set(schemas["SessionAssessmentDomains"]["properties"]),
+            {
+                "situationPerformance",
+                "grammar",
+                "vocabulary",
+                "discourse",
+                "interactionPragmatics",
+            },
+        )
+        level_schema = schemas["SessionAssessmentDomain"]["properties"]["level"]
+        self.assertEqual(
+            level_schema["anyOf"][0]["maximum"],
+            5,
+        )
+        self.assertEqual(
+            level_schema["anyOf"][0]["minimum"],
+            1,
+        )
+
     def test_level_assessment_core_rejects_boolean_integer_fields(self):
         with self.assertRaises(ValidationError):
             conversation_models.SessionAssessmentDomain.model_validate(
@@ -4227,9 +4250,30 @@ class SessionFeedbackApiTests(unittest.TestCase):
         messages = fake_openai.completions.kwargs["messages"]
         self.assertIn("situationPerformance", messages[0]["content"])
         self.assertIn("interactionPragmatics", messages[0]["content"])
+        self.assertIn("Level Assessment Rubric", messages[0]["content"])
+        self.assertIn(
+            "An error-free simple answer does not prove high capability",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Use NOT_OBSERVED only when this message offered no opportunity",
+            messages[0]["content"],
+        )
+        self.assertIn(
+            "Use INSUFFICIENT_EVIDENCE only when relevant evidence is missing",
+            messages[0]["content"],
+        )
         self.assertIn('"responseDemand":"HIGH"', messages[1]["content"])
         self.assertIn('"requiredElements":["favorite food","reason"]', messages[1]["content"])
         self.assertGreaterEqual(fake_openai.completions.kwargs["max_tokens"], 2048)
+
+    def test_legacy_session_feedback_prompt_omits_assessment_rubric(self):
+        prompt = next_message_service._session_feedback_system_prompt(False)
+
+        self.assertNotIn("Level Assessment Policy", prompt)
+        self.assertNotIn("Level Assessment Rubric", prompt)
+        self.assertNotIn("An error-free simple answer does not prove high capability", prompt)
+        self.assertNotIn("levelAssessment", prompt)
 
     def test_session_feedback_prompt_avoids_overpraising_when_all_messages_need_improvement(self):
         prompt = next_message_service._session_feedback_system_prompt()
