@@ -202,6 +202,7 @@ class MemoryCandidateForResolution(BaseModel):
     content: str = Field(max_length=500)
     memoryType: MemoryType
     sourceMessageIds: list[int] = Field(min_length=1)
+    sourceMessages: list[MemoryConversationHistoryMessage] = Field(default_factory=list)
     observedAt: datetime
     comparableMemories: list["ComparableMemory"] = Field(max_length=3)
 

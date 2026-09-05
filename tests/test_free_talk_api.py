@@ -340,6 +340,16 @@ def valid_memory_resolution_payload(**overrides):
                 "content": "사용자는 면접에 합격했다.",
                 "memoryType": "EVENT",
                 "sourceMessageIds": [3002],
+                "sourceMessages": [
+                    {
+                        "messageId": 3002,
+                        "turnNumber": 1,
+                        "role": "USER",
+                        "content": "I passed the interview.",
+                        "translatedContent": None,
+                        "occurredAt": "2026-08-29T19:20:00+09:00",
+                    },
+                ],
                 "observedAt": "2026-08-29T19:20:00+09:00",
                 "comparableMemories": [
                     {
@@ -408,6 +418,10 @@ class FreeTalkApiTests(unittest.TestCase):
             "only when the response explicitly includes a distinctive detail",
             system_prompt,
         )
+        self.assertIn("current instant", system_prompt)
+        self.assertIn("validTo before the current instant", system_prompt)
+        self.assertIn("historical", system_prompt)
+        self.assertIn("request timezone", system_prompt)
 
     def test_opening_returns_used_memory_id_with_visible_memory_detail(self):
         completion = opening_completion(
@@ -866,6 +880,55 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+
+    def test_memory_resolution_requires_grounded_factual_correction_for_subset(self):
+        cases = [
+            ("I still practice the cello, but no longer every Thursday.", True),
+            ("이제 목요일마다 하는 건 아니라 첼로를 연습할 때마다 달라.", True),
+            ("I practice the cello.", False),
+            ("Actually, I practice the cello.", False),
+            ("For English practice: I no longer practice the cello every Thursday.", False),
+            ("If I no longer practice the cello every Thursday, what should I do?", False),
+        ]
+        for source, allowed in cases:
+            with self.subTest(source=source):
+                payload = valid_memory_resolution_payload()
+                candidate = payload["candidates"][0]
+                candidate.update(memoryType="PROFILE", content="사용자는 첼로를 연습한다.")
+                candidate["comparableMemories"][0]["content"] = "사용자는 매주 목요일에 첼로를 연습한다."
+                candidate["sourceMessages"][0]["content"] = source
+                resolution = {
+                    "candidateIndex": 0, "operation": "SUPERSEDE", "supersededMemoryIds": [77],
+                    "supersedeEvidence": {
+                        "sourceMessageId": 3002, "quote": source, "reason": "EXPLICIT_CORRECTION",
+                    },
+                }
+                response = self._post(
+                    "/api/v1/free-talk/memory-resolution", payload,
+                    FakeOpenAI(contents=[json.dumps({"resolutions": [resolution]})]),
+                )
+                self.assertEqual(response.status_code, 200)
+                result = response.json()["data"]["resolutions"][0]
+                self.assertEqual(result["operation"], "SUPERSEDE" if allowed else "IGNORE")
+                self.assertNotIn("supersedeEvidence", result)
+
+    def test_memory_resolution_rejects_fabricated_or_missing_correction_evidence(self):
+        for evidence in (None, {"sourceMessageId": 3002, "quote": "no longer true",
+                                "reason": "EXPLICIT_CORRECTION"}):
+            with self.subTest(evidence=evidence):
+                payload = valid_memory_resolution_payload()
+                candidate = payload["candidates"][0]
+                candidate["content"] = "사용자는 첼로를 연습한다."
+                candidate["comparableMemories"][0]["content"] = "사용자는 매주 목요일에 첼로를 연습한다."
+                response = self._post(
+                    "/api/v1/free-talk/memory-resolution", payload,
+                    FakeOpenAI(contents=[json.dumps({"resolutions": [{
+                        "candidateIndex": 0, "operation": "SUPERSEDE", "supersededMemoryIds": [77],
+                        "supersedeEvidence": evidence,
+                    }]})]),
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["data"]["resolutions"][0]["operation"], "IGNORE")
 
     def test_turn_normalizes_duplicate_used_memory_ids(self):
         response = self._post(
@@ -2845,6 +2908,21 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_rejects_unlinked_source_before_llm_call(self):
+        payload = valid_memory_resolution_payload()
+        payload["candidates"][0]["sourceMessages"][0]["messageId"] = 9999
+        fake_openai = FakeOpenAI(contents=[json.dumps({"resolutions": []})])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution",
+            payload,
+            fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake_openai.completions.calls), 0)
 
     def test_memory_resolution_ignores_candidate_that_removes_existing_detail(self):
         payload = valid_memory_resolution_payload()
