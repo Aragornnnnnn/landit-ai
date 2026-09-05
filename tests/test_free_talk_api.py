@@ -745,7 +745,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
-    def test_turn_recovers_used_memory_id_when_model_omits_visible_detail(self):
+    def test_turn_keeps_empty_used_memory_ids_when_model_omits_visible_detail(self):
         completion = normal_turn_completion(
             aiMessage="Zephyr does, right? Do they stay there the whole time?",
             translatedMessage="Zephyr죠? 연습할 때 늘 옆에 있나 봐요.",
@@ -762,7 +762,7 @@ class FreeTalkApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
 
     def test_turn_does_not_recover_memory_detail_already_in_latest_user_message(self):
         completion = normal_turn_completion(
@@ -819,7 +819,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
 
-    def test_turn_attributes_only_memory_with_visible_unique_detail(self):
+    def test_turn_keeps_empty_used_memory_ids_for_current_message_overlap(self):
         completion = normal_turn_completion(
             translatedMessage="Nori와 토요일 산책, 정말 좋다.",
             usedMemoryIds=[],
@@ -842,7 +842,7 @@ class FreeTalkApiTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
 
     def test_turn_recognizes_korean_particle_and_verb_variants_as_memory_use(self):
         completion = normal_turn_completion(
@@ -863,8 +863,9 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
 
-    def test_turn_recognizes_korean_recurrence_and_quote_suffixes_as_memory_use(self):
+    def test_turn_keeps_empty_used_memory_ids_for_translation_overlap(self):
         completion = normal_turn_completion(
+            aiMessage="You practice the cello every Thursday. How is it going?",
             translatedMessage="목요일마다 첼로를 연습한다고 했지?",
             usedMemoryIds=[],
         )
@@ -874,12 +875,15 @@ class FreeTalkApiTests(unittest.TestCase):
 
         response = self._post(
             "/api/v1/free-talk/turn",
-            valid_turn_payload() | {"memoryContext": [memory]},
+            valid_turn_payload(conversationHistory=[{
+                "messageId": 3002, "turnNumber": 1, "role": "USER",
+                "content": "I practice the cello every Thursday.", "translatedContent": None,
+            }]) | {"memoryContext": [memory]},
             FakeOpenAI(contents=[json.dumps(completion)]),
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["usedMemoryIds"], [77])
+        self.assertEqual(response.json()["data"]["usedMemoryIds"], [])
 
     def test_memory_resolution_requires_grounded_factual_correction_for_subset(self):
         cases = [

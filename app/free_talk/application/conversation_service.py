@@ -19,7 +19,6 @@ from app.free_talk.llm.json_completion import (
     AiResponseInvalidError,
     request_json_completion,
 )
-from app.models.conversation import ConversationHistoryMessage
 from app.models.free_talk import (
     FreeTalkCharacter,
     FreeTalkClosingReason,
@@ -577,63 +576,25 @@ def _validated_used_memory_ids(
     used_memory_ids: list[int],
     memory_context: list[MemoryContext],
     translated_message: str | None,
-    *,
-    excluded_recovery_ids: set[int] | None = None,
 ) -> list[int]:
-    """모델 누락과 오탐을 보정해 실제 번역 응답에 근거가 드러난 기억만 반환한다."""
-    excluded_recovery_ids = excluded_recovery_ids or set()
+    """모델 보고 ID를 번역 응답에 드러난 구체 정보와 함께 보수적으로 검증한다."""
     if _has_invalid_memory_ids(used_memory_ids) or not _belongs_to_memory_context(
         used_memory_ids,
         memory_context,
     ):
         return []
-    if not translated_message:
+    if not used_memory_ids or not translated_message:
         return []
-
-    reported_ids = set(used_memory_ids)
     response_tokens = _distinctive_memory_tokens(translated_message)
-    matching_contexts = []
-    for context in memory_context:
-        is_excluded_recovery = (
-            context.memoryId in excluded_recovery_ids
-            and context.memoryId not in reported_ids
-        )
-        if is_excluded_recovery:
-            continue
-        memory_tokens = _distinctive_memory_tokens(context.content)
-        if _has_distinctive_memory_overlap(response_tokens, memory_tokens):
-            matching_contexts.append((context, memory_tokens))
-    if len(matching_contexts) <= 1:
-        return [context.memoryId for context, _ in matching_contexts]
-
+    contexts_by_id = {context.memoryId: context for context in memory_context}
     return [
-        context.memoryId
-        for context, memory_tokens in matching_contexts
-        if context.memoryId in reported_ids
-        or _has_unique_memory_overlap(
+        memory_id
+        for memory_id in used_memory_ids
+        if _has_distinctive_memory_overlap(
             response_tokens,
-            memory_tokens,
-            matching_contexts,
-            context.memoryId,
+            _distinctive_memory_tokens(contexts_by_id[memory_id].content),
         )
     ]
-
-
-def _has_unique_memory_overlap(
-    response_tokens: set[str],
-    memory_tokens: set[str],
-    matching_contexts: list[tuple[MemoryContext, set[str]]],
-    memory_id: int,
-) -> bool:
-    """여러 기억이 응답과 겹칠 때 현재 기억만의 단어가 드러났는지 확인한다."""
-    other_tokens = set().union(
-        *(
-            tokens
-            for context, tokens in matching_contexts
-            if context.memoryId != memory_id
-        ),
-    )
-    return bool(response_tokens & (memory_tokens - other_tokens))
 
 
 def _turn_used_memory_ids(
@@ -642,60 +603,14 @@ def _turn_used_memory_ids(
     exit_detected: bool,
 ) -> list[int]:
     """종료 의도 응답은 기억을 사용할 수 없고 일반 턴만 유효 ID를 전달한다."""
-    latest_user_message = payload.conversationHistory[-1]
-    excluded_recovery_ids = {
-        context.memoryId
-        for context in payload.memoryContext
-        if _memory_detail_already_in_latest_user_message(
-            candidate,
-            latest_user_message,
-            context,
-        )
-    }
     used_memory_ids = _validated_used_memory_ids(
         candidate.usedMemoryIds,
         payload.memoryContext,
         candidate.translatedMessage,
-        excluded_recovery_ids=excluded_recovery_ids,
     )
     if exit_detected and used_memory_ids:
         raise ValueError("exit intent response must not use memory")
     return used_memory_ids
-
-
-def _memory_detail_already_in_latest_user_message(
-    candidate: _TurnCandidate,
-    latest_user_message: ConversationHistoryMessage,
-    memory_context: MemoryContext,
-) -> bool:
-    """현재 사용자 발화에 이미 포함된 기억 정보인지 확인한다."""
-    memory_tokens = _distinctive_memory_tokens(memory_context.content)
-    if latest_user_message.translatedContent:
-        translated_user_tokens = _distinctive_memory_tokens(
-            latest_user_message.translatedContent,
-        )
-        if _has_distinctive_memory_overlap(translated_user_tokens, memory_tokens):
-            return True
-
-    if not _messages_share_distinctive_detail(
-        candidate.aiMessage,
-        latest_user_message.content,
-    ):
-        return False
-    source_user_tokens = _distinctive_memory_tokens(latest_user_message.content)
-    return bool(source_user_tokens & memory_tokens)
-
-
-def _messages_share_distinctive_detail(
-    response_message: str | None,
-    user_message: str | None,
-) -> bool:
-    """AI 응답이 최신 사용자 발화의 구체 정보를 반복하는지 확인한다."""
-    if not response_message or not user_message:
-        return False
-    response_tokens = _distinctive_memory_tokens(response_message)
-    user_tokens = _distinctive_memory_tokens(user_message)
-    return _has_distinctive_memory_overlap(response_tokens, user_tokens)
 
 
 def _has_invalid_memory_ids(used_memory_ids: list[int]) -> bool:
