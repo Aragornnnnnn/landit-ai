@@ -6,7 +6,7 @@ Use each scale for the named domain, not as an overall proficiency label.
 Situation performance (situationPerformance):
 1 = only isolated related words; cannot complete the task.
 2 = basic intent is conveyed, but important information or help is missing.
-3 = the core task is completed with a reason or relevant detail.
+3 = the core task is completed, including requested reasons or details when applicable.
 4 = multiple requirements are handled and the answer adapts to conditions.
 5 = complex alternatives are handled through negotiation or persuasion.
 

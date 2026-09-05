@@ -4252,6 +4252,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("interactionPragmatics", messages[0]["content"])
         self.assertIn("Level Assessment Rubric", messages[0]["content"])
         self.assertIn(
+            "the core task is completed, including requested reasons or details when applicable",
+            messages[0]["content"],
+        )
+        self.assertIn(
             "An error-free simple answer does not prove high capability",
             messages[0]["content"],
         )
