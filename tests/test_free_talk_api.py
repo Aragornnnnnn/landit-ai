@@ -2,6 +2,7 @@
 import json
 import unittest
 import warnings
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -933,6 +934,32 @@ class FreeTalkApiTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["data"]["resolutions"][0]["operation"], "IGNORE")
+
+    def test_memory_time_policy_preserves_history_across_local_date_boundaries(self):
+        for zone, expected in (("Asia/Seoul", "2026-09-06T00:00:00+09:00"),
+                               ("America/Los_Angeles", "2026-09-05T08:00:00-07:00")):
+            with self.subTest(zone=zone), patch(
+                "app.free_talk.application.conversation_service.datetime",
+            ) as clock:
+                clock.now.return_value = datetime(2026, 9, 5, 15, tzinfo=UTC)
+                memory = valid_memory_context(content="사용자는 2026-09-04에 면접이 예정되어 있었다.")
+                memory.update(validFrom="2026-09-01T10:00:00+09:00", validTo=None)
+                for path, payload, completion in (
+                    ("opening", valid_opening_payload(), opening_completion()),
+                    ("turn", valid_turn_payload(), normal_turn_completion()),
+                ):
+                    fake = FakeOpenAI(contents=[json.dumps(completion)])
+                    response = self._post(f"/api/v1/free-talk/{path}",
+                                          payload | {"timezone": zone, "memoryContext": [memory]}, fake)
+                    self.assertEqual(response.status_code, 200)
+                    messages = fake.completions.calls[0]["messages"]
+                    policy = messages[0]["content"]
+                    self.assertIn(expected, policy)
+                    for rule in ("future validFrom", "calendar dates in content", "inclusive",
+                                 "not evidence that the event happened", "historical memories"):
+                        self.assertIn(rule, policy)
+                    self.assertEqual(json.loads(messages[1]["content"])["memoryContext"][0]["content"],
+                                     memory["content"])
 
     def test_turn_normalizes_duplicate_used_memory_ids(self):
         response = self._post(
