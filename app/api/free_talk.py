@@ -1,4 +1,6 @@
 # 프리톡 대화 생성 HTTP API 라우터를 정의하는 모듈
+import logging
+
 from fastapi import APIRouter, Request
 
 from app.common.errors import ApiException, ErrorCode
@@ -47,6 +49,7 @@ from app.models.free_talk import (
 
 
 router = APIRouter(prefix="/api/v1/free-talk", tags=["free-talk"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/opening", response_model=ApiResponse[FreeTalkOpeningResponse])
@@ -179,6 +182,14 @@ def _generate(payload, request: Request, generator):
     try:
         return generator(payload, request.app.state.settings)
     except AiResponseInvalidError as exc:
+        logger.warning(
+            "프리톡 AI 응답 계약 검증에 실패했습니다. "
+            "event=contract_validation_failure endpoint=%s provider=%s model=%s reason=%s",
+            request.url.path,
+            request.app.state.settings.llm_provider,
+            request.app.state.settings.openrouter_model,
+            exc.reason,
+        )
         raise ApiException(502, ErrorCode.AI_RESPONSE_INVALID) from exc
     except AiGenerationFailedError as exc:
         raise ApiException(503, ErrorCode.AI_GENERATION_FAILED) from exc

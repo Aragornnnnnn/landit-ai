@@ -2,7 +2,7 @@
 import json
 import logging
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
 from app.free_talk.llm.json_completion import (
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 class _RecommendationSelection(BaseModel):
     """LLM은 후보 중 무엇을 고를지만 답하고 표현 텍스트는 반환하지 않는다."""
 
+    model_config = ConfigDict(extra="forbid")
+
     expressionIds: list[int] = Field(max_length=3)
 
 
@@ -33,6 +35,9 @@ def recommend_expressions(
         settings=settings,
         system_prompt=_recommendations_system_prompt(),
         user_prompt=_recommendations_user_prompt(payload),
+        response_model=_RecommendationSelection,
+        schema_name="free_talk_expression_recommendations",
+        workflow="free_talk_expression_recommendations",
     )
     try:
         selection = _RecommendationSelection.model_validate(data)

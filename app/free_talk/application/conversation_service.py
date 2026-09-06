@@ -5,9 +5,10 @@ import re
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.common.inner_thought_contract import (
+    InnerThoughtCandidate,
     InnerThoughtContractError,
     InnerThoughtResult,
     fallback_inner_thought,
@@ -33,6 +34,7 @@ from app.models.free_talk import (
     FreeTalkResponseMode,
     FreeTalkTurnRequest,
     FreeTalkTurnResponse,
+    Emotion,
     MemoryContext,
 )
 
@@ -135,6 +137,41 @@ class _ClosingCandidate(BaseModel):
     emotion: object | None = None
 
 
+class _OpeningStructuredOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    aiMessage: str
+    translatedMessage: str
+    emotion: Emotion | None
+    usedMemoryIds: list[int] = Field(max_length=3)
+
+
+class _TurnStructuredOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    userExitIntentDetected: bool | None
+    inferredTitle: str | None
+    aiMessage: str | None
+    translatedMessage: str | None
+    emotion: Emotion | None
+    usedMemoryIds: list[int] = Field(max_length=3)
+
+
+class _ClosingStructuredOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inferredTitle: str | None
+    aiMessage: str
+    translatedMessage: str
+    emotion: Emotion | None
+
+
+class _TitleCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inferredTitle: str | None
+
+
 def generate_opening(
     payload: FreeTalkOpeningRequest,
     settings: Settings,
@@ -154,6 +191,10 @@ def generate_opening(
         settings=settings,
         system_prompt=_opening_system_prompt(payload.characterId, payload.timezone),
         user_prompt=_opening_user_prompt(payload),
+        response_model=_OpeningStructuredOutput,
+        schema_name="free_talk_opening",
+        workflow="free_talk_opening",
+        retry_schema_violations=False,
     )
     try:
         candidate = _OpeningCandidate.model_validate(data)
@@ -209,6 +250,10 @@ def _request_turn_completion(
             payload.timezone,
         ),
         user_prompt=_turn_user_prompt(payload),
+        response_model=_TurnStructuredOutput,
+        schema_name="free_talk_turn",
+        workflow="free_talk_turn",
+        retry_schema_violations=False,
     )
     if (
         payload.responseMode == FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED
@@ -221,6 +266,10 @@ def _request_turn_completion(
                 payload.timezone,
             ),
             user_prompt=_turn_user_prompt(payload),
+            response_model=_TurnStructuredOutput,
+            schema_name="free_talk_turn_repair",
+            workflow="free_talk_turn_repair",
+            retry_schema_violations=False,
         )
     return data
 
@@ -291,6 +340,10 @@ def generate_closing(
             payload.titleGenerationRequired,
         ),
         user_prompt=_closing_user_prompt(payload),
+        response_model=_ClosingStructuredOutput,
+        schema_name="free_talk_closing",
+        workflow="free_talk_closing",
+        retry_schema_violations=False,
     )
     try:
         candidate = _ClosingCandidate.model_validate(data)
@@ -337,6 +390,10 @@ def generate_inner_thought(
             settings=settings,
             system_prompt=_inner_thought_system_prompt(payload.characterId),
             user_prompt=_inner_thought_user_prompt(payload),
+            response_model=InnerThoughtCandidate,
+            schema_name="free_talk_inner_thought",
+            workflow="free_talk_inner_thought",
+            max_attempts=1,
         )
         return _to_inner_thought_response(parse_inner_thought(data))
     except (AiResponseInvalidError, InnerThoughtContractError):
@@ -345,6 +402,10 @@ def generate_inner_thought(
                 settings=settings,
                 system_prompt=_inner_thought_repair_system_prompt(payload.characterId),
                 user_prompt=_inner_thought_user_prompt(payload),
+                response_model=InnerThoughtCandidate,
+                schema_name="free_talk_inner_thought_repair",
+                workflow="free_talk_inner_thought_repair",
+                max_attempts=1,
             )
             return _to_inner_thought_response(parse_inner_thought(data))
         except AiGenerationFailedError:
@@ -392,6 +453,10 @@ def _resolve_closing_title(
             settings=settings,
             system_prompt=_title_repair_system_prompt(),
             user_prompt=_closing_user_prompt(payload),
+            response_model=_TitleCandidate,
+            schema_name="free_talk_title_repair",
+            workflow="free_talk_title_repair",
+            retry_schema_violations=False,
         )
     except (AiGenerationFailedError, AiResponseInvalidError):
         return None

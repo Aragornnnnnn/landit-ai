@@ -1,6 +1,7 @@
 # 프리톡 장기기억 후보 추출과 상태 판정을 담당하는 유스케이스 모듈
 import json
 import re
+from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -327,6 +328,9 @@ def _extract_memory_candidate_drafts(
             system_prompt=_candidate_system_prompt(),
             user_prompt=_candidate_user_prompt(payload),
             reasoning_effort="medium",
+            response_model=_MemoryCandidateDraftResponse,
+            schema_name="free_talk_memory_candidates",
+            workflow="free_talk_memory_candidates",
         ),
         payload,
     )
@@ -375,6 +379,9 @@ def generate_memory_resolution(
             settings=settings,
             system_prompt=_resolution_system_prompt(),
             user_prompt=_json_prompt(payload),
+            response_model=_MemoryResolutionResponseWithEvidence,
+            schema_name="free_talk_memory_resolution",
+            workflow="free_talk_memory_resolution",
         ),
         payload,
     )
@@ -493,10 +500,28 @@ def _has_unsupported_character_reference(
     )
 
 
+class _MemoryCandidateDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidateIndex: int = Field(ge=0)
+    memoryType: MemoryType
+    content: str = Field(max_length=500)
+    contentLocale: str
+    sourceMessageIds: list[int] = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    validFrom: datetime | None
+    validTo: datetime | None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def content_must_be_trimmed(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
 class _MemoryCandidateDraftResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidates: list[dict[str, object]] = Field(max_length=_MAX_CANDIDATES)
+    candidates: list[_MemoryCandidateDraft] = Field(max_length=_MAX_CANDIDATES)
 
 
 def _candidate_drafts(
@@ -504,9 +529,8 @@ def _candidate_drafts(
 ) -> list[MemoryCandidate]:
     """임베딩은 AI 응답이 아닌 서버 생성값만 후보에 주입한다."""
     drafts = []
-    for raw_candidate in envelope.candidates:
-        if "embeddingModel" in raw_candidate or "embedding" in raw_candidate:
-            raise AiResponseInvalidError("candidate must not contain embedding")
+    for candidate in envelope.candidates:
+        raw_candidate = candidate.model_dump(mode="json")
         drafts.append(
             MemoryCandidate.model_validate(
                 {
