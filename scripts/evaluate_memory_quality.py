@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from app.core.config import Settings
 from app.free_talk.application.memory_service import (
     EXTRACTOR_VERSION,
     _candidate_system_prompt,
+    _candidate_user_prompt,
     _validated_candidate_drafts,
 )
 from app.free_talk.llm.json_completion import request_json_completion
@@ -21,10 +23,10 @@ from app.models.free_talk import MemoryCandidatesRequest
 def build_payload(case: dict) -> MemoryCandidatesRequest:
     return MemoryCandidatesRequest.model_validate({
         "sessionId": 1, "characterId": "chloe", "targetLocale": "EN",
-        "baseLocale": "KR", "timezone": "Asia/Seoul",
+        "baseLocale": "KR", "timezone": case.get("timezone", "Asia/Seoul"),
         "conversationHistory": [
             {"messageId": index, "turnNumber": index, "role": role,
-             "content": text, "occurredAt": "2026-09-07T10:00:00+09:00"}
+             "content": text, "occurredAt": case.get("occurredAt", "2026-09-07T10:00:00+09:00")}
             for index, (role, text) in enumerate(case["turns"], 1)
         ],
     })
@@ -37,10 +39,19 @@ def acceptance_errors(case: dict, candidates: list) -> list[str]:
     if any(candidate.memoryType.value not in case["types"] for candidate in candidates):
         errors.append("memory_type")
     content = " ".join(candidate.content for candidate in candidates).casefold()
+    content = re.sub(
+        r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일",
+        lambda match: "-".join(f"{int(part):02d}" for part in match.groups()), content,
+    )
     if any(word.casefold() not in content for word in case.get("required", [])):
         errors.append("missing_detail")
     if any(word.casefold() in content for word in case.get("forbidden", [])):
         errors.append("unsupported_detail")
+    if "validFrom" in case and any(
+        candidate.validFrom != datetime.fromisoformat(case["validFrom"])
+        for candidate in candidates
+    ):
+        errors.append("event_time")
     return errors
 
 
@@ -49,7 +60,7 @@ def evaluate(case: dict, settings: Settings, prompt: str) -> dict:
     try:
         raw = request_json_completion(
             settings=settings, system_prompt=prompt,
-            user_prompt=payload.model_dump_json(),
+            user_prompt=_candidate_user_prompt(payload),
         )
         candidates = _validated_candidate_drafts(raw, payload)
         return {"case": case["id"], "errors": acceptance_errors(case, candidates),
