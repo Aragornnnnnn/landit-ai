@@ -1162,6 +1162,7 @@ def generate_session_level_assessment(
     """캐시와 독립적으로 세션의 텍스트 수준 평가를 생성한다."""
     resolved_settings = settings or Settings()
     user_prompt = _session_level_assessment_user_prompt(request)
+    deadline = time.monotonic() + 100.0
     data: dict[str, Any] = {}
     selected_response_format: dict[str, Any] | None = (
         _session_level_assessment_response_format()
@@ -1173,6 +1174,7 @@ def generate_session_level_assessment(
             user_prompt=user_prompt,
             max_tokens=2048,
             response_format=_session_level_assessment_response_format(),
+            deadline=deadline,
         )
     except AiResponseInvalidError as exc:
         selected_response_format = exc.response_format
@@ -1194,6 +1196,7 @@ def generate_session_level_assessment(
             None,
             user_prompt,
             selected_response_format,
+            deadline=deadline,
         )
     return SessionLevelAssessmentResponse(
         sessionId=request.sessionId,
@@ -1245,6 +1248,7 @@ def _retry_session_level_assessment_core(
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     user_prompt: str,
     response_format: dict[str, Any] | None | object = _USE_STRICT_RESPONSE_FORMAT,
+    deadline: float | None = None,
 ) -> SessionLevelAssessment | None:
     selected_response_format = (
         _session_level_assessment_core_response_format()
@@ -1263,6 +1267,7 @@ def _retry_session_level_assessment_core(
             user_prompt=user_prompt,
             max_tokens=1536,
             response_format=selected_response_format,
+            deadline=deadline,
         )
     except AiResponseInvalidError:
         logger.warning(
@@ -1535,10 +1540,18 @@ def _request_json_completion(
     max_tokens: int,
     model: str | None = None,
     response_format: dict[str, Any] | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     resolved_model = model or _required_openrouter_model(settings)
     try:
-        client = create_openai_client(settings)
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            raise AiGenerationFailedError("assessment_deadline_exceeded")
+        client = (
+            create_openai_client(settings)
+            if remaining is None
+            else create_openai_client(settings, timeout=remaining)
+        )
         completion_arguments: dict[str, Any] = {
             "model": resolved_model,
             "messages": [
@@ -1553,6 +1566,8 @@ def _request_json_completion(
         completion = client.chat.completions.create(
             **completion_arguments,
         )
+        if deadline is not None and time.monotonic() >= deadline:
+            raise AiGenerationFailedError("assessment_deadline_exceeded")
     except AiGenerationFailedError:
         raise
     except Exception as exc:
@@ -1587,6 +1602,7 @@ def _request_json_completion_with_format_fallback(
     user_prompt: str,
     max_tokens: int,
     response_format: dict[str, Any],
+    deadline: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """지원되지 않는 구조화 출력 모드만 순서대로 낮춰 요청한다."""
     response_formats: list[dict[str, Any] | None]
@@ -1605,6 +1621,7 @@ def _request_json_completion_with_format_fallback(
                     user_prompt=user_prompt,
                     max_tokens=max_tokens,
                     response_format=current_format,
+                    deadline=deadline,
                 ),
                 current_format,
             )
@@ -1624,6 +1641,11 @@ def _is_response_format_unsupported(exception: AiGenerationFailedError) -> bool:
     status_code = getattr(cause, "status_code", None)
     message = str(cause).lower()
     if status_code not in {400, 404, 422}:
+        return False
+    schema_error_terms = (
+        "invalid schema", "invalid json schema", "keyword", "schema validation",
+    )
+    if any(term in message for term in schema_error_terms):
         return False
     format_terms = ("response_format", "json_schema", "json_object", "structured output")
     unsupported_terms = ("not supported", "unsupported", "does not support")

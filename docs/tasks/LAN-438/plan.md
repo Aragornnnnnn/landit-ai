@@ -62,5 +62,7 @@ AI rubric 구현과 BE 계산·저장 구현은 파일이 겹치지 않는 독�
 - AI에는 캐시 독립 `POST /api/v1/conversation/session-level-assessment`와 기존 루브릭·Core/Details 검증을 추가했다. BE는 기존 `applicationTaskExecutor`로 평가를 비동기 실행하고 `GET /api/v1/sessions/{sessionId}/level-assessment`에서 상태를 조회한다.
 - 출력 모드 전환은 명시적 미지원일 때만 `strict json_schema → json_object → 프롬프트 JSON`으로 진행한다. 어느 경로도 Pydantic·ID·근거 원문 검증을 생략하지 않는다. Core 무효의 1회 복구와 최종 BE fallback은 별개다.
 - Core 재요청은 마지막으로 선택된 출력 모드를 이어받고, Details 오류는 유효한 Core를 보존한다. BE fallback은 수준·streak를 변경하지 않는다.
+- 리뷰 보완: 수준 평가의 모든 호출은 100초 deadline을 공유하며 남은 시간을 SDK timeout으로 전달하고 자동 재시도는 0으로 제한한다. 호출 전후 기한을 검사한다. 잘못된 스키마와 미지원 키워드 오류는 출력 모드 전환에서 제외한다.
+- 추가 회귀 포함 AI 테스트는 483개 실행, 7개 skipped로 통과했다. 실제 외부 LLM 재측정은 실행하지 않았다.
 - 검증: AI `479 tests, 7 skipped` 통과, BE `./gradlew check --no-parallel` 통과. 운영 DB·배포·실제 FE/결제 E2E는 실행하지 않았다.
 - 루브릭·평가 가중치·임계값·제품 모델 변경, 다른 API의 공통 JSON 기능 중복 구현, 운영 DB·배포는 이 계획에 포함하지 않는다.
