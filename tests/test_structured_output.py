@@ -1,16 +1,21 @@
 # Structured Outputs 스키마 생성과 재시도 및 fallback 정책을 검증하는 unittest 모듈
 import json
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from pydantic import BaseModel, ConfigDict
 
+from app.conversation.application import next_message_service
 from app.core.config import Settings
 from app.core.structured_output import json_schema_response_format
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
     request_json_completion,
+)
+from app.pronunciation.llm.structured_completion import (
+    request_structured_pronunciation_completion,
 )
 
 
@@ -120,6 +125,91 @@ class StructuredOutputTests(unittest.TestCase):
             fake.completions.calls[1]["response_format"],
             {"type": "json_object"},
         )
+
+    def test_json_object_unsupported_falls_back_to_prompt_json(self):
+        fake = _FakeOpenAI([
+            _ProviderUnsupportedError("response_format json_schema unsupported"),
+            _ProviderUnsupportedError("response_format json_object unsupported"),
+            json.dumps({"name": "legacy"}),
+        ])
+
+        with patch("app.free_talk.llm.json_completion.create_openai_client", return_value=fake):
+            result = request_json_completion(
+                settings=self.settings,
+                system_prompt="system",
+                user_prompt="user",
+                response_model=_ExampleOutput,
+                schema_name="example_output",
+                workflow="test_workflow",
+            )
+
+        self.assertEqual(result, {"name": "legacy"})
+        self.assertNotIn("response_format", fake.completions.calls[2])
+
+    def test_scenario_unsupported_provider_uses_json_object_before_prompt(self):
+        fake = _FakeOpenAI([
+            _ProviderUnsupportedError("response_format json_schema unsupported"),
+            json.dumps({"name": "legacy"}),
+        ])
+
+        with patch.object(next_message_service, "create_openai_client", return_value=fake):
+            result = next_message_service._request_json_completion(
+                self.settings,
+                system_prompt="system",
+                user_prompt="user",
+                max_tokens=10,
+                response_model=_ExampleOutput,
+                schema_name="scenario_example",
+                workflow="scenario_example",
+            )
+
+        self.assertEqual(result, {"name": "legacy"})
+        self.assertEqual(
+            fake.completions.calls[1]["response_format"],
+            {"type": "json_object"},
+        )
+
+    def test_pronunciation_fallback_reuses_json_object_format(self):
+        fake = _FakeOpenAI([
+            _ProviderUnsupportedError("response_format json_schema unsupported"),
+            json.dumps({"name": "legacy"}),
+        ])
+
+        result = request_structured_pronunciation_completion(
+            fake,
+            self.settings,
+            request={"model": "test-model", "messages": []},
+            response_model=_ExampleOutput,
+            schema_name="pronunciation_example",
+            workflow="pronunciation_example",
+            deadline=time.monotonic() + 1,
+        )
+
+        self.assertEqual(result.output_format, "json_object")
+        self.assertEqual(
+            fake.completions.calls[1]["response_format"],
+            {"type": "json_object"},
+        )
+
+    def test_pronunciation_falls_back_to_prompt_when_json_object_is_unsupported(self):
+        fake = _FakeOpenAI([
+            _ProviderUnsupportedError("response_format json_schema unsupported"),
+            _ProviderUnsupportedError("response_format json_object unsupported"),
+            json.dumps({"name": "legacy"}),
+        ])
+
+        result = request_structured_pronunciation_completion(
+            fake,
+            self.settings,
+            request={"model": "test-model", "messages": []},
+            response_model=_ExampleOutput,
+            schema_name="pronunciation_example",
+            workflow="pronunciation_example",
+            deadline=time.monotonic() + 1,
+        )
+
+        self.assertEqual(result.output_format, "prompt")
+        self.assertNotIn("response_format", fake.completions.calls[2])
 
     def test_schema_violation_is_retried_once(self):
         expected = {

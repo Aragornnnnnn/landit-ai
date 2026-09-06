@@ -1299,8 +1299,9 @@ def _request_json_completion(
                 if not structured_outputs_unsupported(exc):
                     raise
                 logger.warning(
-                    "Structured Outputs를 지원하지 않아 기존 JSON 요청으로 전환합니다. "
+                    "Structured Outputs를 지원하지 않아 json_object로 전환합니다. "
                     "event=structured_output_fallback workflow=%s provider=%s model=%s "
+                    "fromFormat=json_schema toFormat=json_object "
                     "attempt=%s maxAttempts=%s",
                     workflow,
                     settings.llm_provider,
@@ -1308,8 +1309,25 @@ def _request_json_completion(
                     attempt,
                     max_attempts,
                 )
-                request.pop("response_format", None)
-                completion = client.chat.completions.create(**request)
+                request["response_format"] = {"type": "json_object"}
+                try:
+                    completion = client.chat.completions.create(**request)
+                except Exception as fallback_exc:
+                    if not structured_outputs_unsupported(fallback_exc):
+                        raise
+                    logger.warning(
+                        "json_object를 지원하지 않아 기존 프롬프트 방식으로 전환합니다. "
+                        "event=structured_output_fallback workflow=%s provider=%s "
+                        "model=%s fromFormat=json_object toFormat=prompt "
+                        "attempt=%s maxAttempts=%s",
+                        workflow,
+                        settings.llm_provider,
+                        resolved_model,
+                        attempt,
+                        max_attempts,
+                    )
+                    request.pop("response_format", None)
+                    completion = client.chat.completions.create(**request)
                 return _parse_json_object(_extract_message_content(completion))
             try:
                 data = _parse_strict_json_object(_extract_message_content(completion))

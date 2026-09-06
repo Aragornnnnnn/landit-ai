@@ -503,9 +503,14 @@ class DescribeHardeningTests(unittest.TestCase):
         return result, client
 
     def test_stress_index_within_syllables_is_kept(self):
-        result, _ = self.describe('{"userHeard": "hik·ing", "stressIndex": 1}')
+        result, client = self.describe(
+            '{"userHeard": "hik·ing", "stressIndex": 1}'
+        )
 
         self.assertEqual(result.stress_index, 1)
+        response_format = client.completions.calls[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
 
     def test_stress_index_beyond_syllables_falls_back_to_none(self):
         result, _ = self.describe('{"userHeard": "hik·ing", "stressIndex": 99}')

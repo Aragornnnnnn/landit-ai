@@ -64,6 +64,9 @@ class AccentCheckTests(unittest.TestCase):
         self.assertTrue(verdict.matches_expected)
         self.assertEqual(verdict.word, "water")
         self.assertEqual(verdict.user_heard, "waw-tuh")
+        response_format = client.completions.calls[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
 
     def test_other_pronunciation_fails(self):
         client = FakeClient(content='{"answer": "B", "heard": "wah-der"}')

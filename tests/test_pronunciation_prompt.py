@@ -109,6 +109,9 @@ class PromptRenderingTests(unittest.TestCase):
             },
         )
         self.assertEqual(call["model"], "google/gemini-3.5-flash")
+        response_format = call["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
 
 
 class ResponseParsingTests(unittest.TestCase):

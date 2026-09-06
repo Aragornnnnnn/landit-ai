@@ -82,6 +82,7 @@ def request_json_completion(
                 logger.warning(
                     "Structured Outputs를 지원하지 않아 json_object로 전환합니다. "
                     "event=structured_output_fallback workflow=%s provider=%s model=%s "
+                    "fromFormat=json_schema toFormat=json_object "
                     "attempt=%s maxAttempts=%s",
                     workflow,
                     settings.llm_provider,
@@ -90,7 +91,24 @@ def request_json_completion(
                     max_attempts,
                 )
                 request["response_format"] = {"type": "json_object"}
-                completion = client.chat.completions.create(**request)
+                try:
+                    completion = client.chat.completions.create(**request)
+                except Exception as fallback_exc:
+                    if not structured_outputs_unsupported(fallback_exc):
+                        raise
+                    logger.warning(
+                        "json_object를 지원하지 않아 기존 프롬프트 방식으로 전환합니다. "
+                        "event=structured_output_fallback workflow=%s provider=%s "
+                        "model=%s fromFormat=json_object toFormat=prompt "
+                        "attempt=%s maxAttempts=%s",
+                        workflow,
+                        settings.llm_provider,
+                        model,
+                        attempt,
+                        max_attempts,
+                    )
+                    request.pop("response_format", None)
+                    completion = client.chat.completions.create(**request)
                 return _parse_json_object(_extract_content(completion))
             try:
                 data = _parse_json_object(_extract_content(completion))
