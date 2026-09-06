@@ -173,3 +173,21 @@ AI 직접 호출에서는 오류가 반환된다. 실제 BE는 이 오류 코드
 - 요약 수치: [blind-baseline-summary.json](blind-baseline-summary.json).
 - 실행 manifest: [blind-baseline-manifest.json](blind-baseline-manifest.json).
 - 기준표와 세션별 raw JSONL: `/private/tmp/lan438-blind-baseline-20260906/`에만 보관하며 커밋하지 않는다.
+
+## 후속 형식 안정화 스모크
+
+baseline 결과를 보존한 채 JSON 생성 경계만 수정하고, 2026-09-06에 같은 개발 표본 10개를 다시 실행했다.
+
+| 항목 | baseline | 형식 안정화 후 |
+| --- | ---: | ---: |
+| 유효 Core | 1/10 | 10/10 |
+| 최종 평가 형식 실패 | 9/10 | 0/10 |
+| Core 재요청 | 미지원 | 0/10 |
+| 충분한 근거 | 1/10 | 10/10 |
+
+- 실제 호출은 세션당 턴 피드백 4회와 최종 평가 1회였다.
+- 10개 세션 총 50회 호출 비용은 `$0.2931`, 그중 최종 평가 10회는 `$0.0565`였다.
+- 세션 지연은 p50 약 17.7초, p95 약 22.3초였다.
+- 모든 최종 평가 종료 사유는 `stop`이었다.
+- 이 결과는 동일 개발 표본의 형식 안정화 스모크다. 신규 holdout 정확도, 반복성, 운영 E2E를 증명하지 않는다.
+- raw 결과는 `/private/tmp/lan438-structured-primary10-20260906/`에만 보관하며 커밋하지 않는다.

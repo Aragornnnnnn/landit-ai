@@ -41,3 +41,14 @@ AI rubric 구현과 BE 계산·저장 구현은 파일이 겹치지 않는 독�
 - 결과와 판단은 [blind-baseline.md](blind-baseline.md)를 기준으로 한다.
 - 제품 평가 60회 중 유효 Core는 15회였고, 45회는 최종 평가 invalid JSON으로 실패했다.
 - 평가 프롬프트·가중치·임계값은 baseline 동안 변경하지 않았다.
+
+## JSON 형식 안정화
+
+- 최종 평가 요청에 `strict JSON Schema` 구조화 출력을 적용했다.
+- 전체 응답이 파싱되지 않거나 Core 검증에 실패하면 같은 입력과 루브릭으로 Core만 1회 재요청한다.
+- 재요청도 실패하면 AI 응답은 `levelAssessment=null`로 복구한다. BE의 기존 fallback이 `FALLBACK`·`NOT_APPLIED`로 저장하고 결제 흐름의 응답을 유지한다.
+- 메시지 ID, 5개 영역, 근거 원문 포함 여부를 검사하는 기존 서버 검증은 유지했다. Details 실패는 유효한 Core를 버리지 않는다.
+- OpenRouter의 `require_parameters` 라우팅 옵션은 사용하지 않는다. `openai/gpt-5.4-mini`에 해당 옵션과 strict schema를 함께 보냈을 때 사용 가능한 endpoint가 없어 404가 발생했고, 옵션 없이 strict schema를 보낸 실제 호출은 성공했다.
+- 평가 프롬프트·가중치·임계값은 변경하지 않았다.
+- 동일 개발 표본 10개 후속 스모크에서 유효 Core 10/10, 재요청 0회였다. 기존 baseline의 같은 표본은 1/10이었다.
+- 전체 unittest 477개가 성공했고 7개가 건너뛰었다.
