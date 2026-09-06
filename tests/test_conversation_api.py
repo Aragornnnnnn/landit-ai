@@ -4092,9 +4092,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
 
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
         with patch(
             "app.core.openai_client.OpenAI",
-            return_value=FakeOpenAI(content=json.dumps(ai_response)),
+            return_value=fake_openai,
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-feedback",
@@ -4113,6 +4114,92 @@ class SessionFeedbackApiTests(unittest.TestCase):
             4,
         )
         self.assertEqual(assessment["details"]["strength"], "이유를 덧붙여 답변했어요.")
+        response_format = fake_openai.completions.calls[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertEqual(
+            response_format["json_schema"]["name"],
+            "session_feedback_with_level_assessment",
+        )
+        self.assertTrue(response_format["json_schema"]["strict"])
+        schema = response_format["json_schema"]["schema"]
+        self.assertEqual(set(schema["required"]), set(schema["properties"]))
+        domain_schema = schema["$defs"]["SessionAssessmentDomain"]
+        self.assertEqual(
+            set(domain_schema["required"]),
+            set(domain_schema["properties"]),
+        )
+        self.assertNotIn("extra_body", fake_openai.completions.calls[0])
+
+    def test_session_feedback_retries_only_level_core_after_invalid_json(self):
+        app = self._app()
+        self._cache_feedback(
+            app,
+            good_message_feedback(1001),
+            user_message="I like pizza because it is spicy.",
+        )
+        self._cache_feedback(
+            app,
+            good_message_feedback(1003),
+            user_message="I ate pasta yesterday.",
+        )
+        payload = valid_session_feedback_payload()
+        payload["assessmentMessages"] = valid_assessment_messages()
+        retry_assessment = valid_level_assessment()
+        retry_assessment.pop("details")
+        fake_openai = FakeOpenAI(
+            contents=[
+                '{"sessionId":100,"highlightMessage":"좋아요"',
+                json.dumps({"levelAssessment": retry_assessment}),
+            ],
+        )
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()["data"]
+        self.assertEqual(
+            body["highlightMessage"],
+            "이번 대화에서 영어로 자신의 생각을 표현했어요.",
+        )
+        self.assertIsNotNone(body["levelAssessment"]["core"])
+        self.assertIsNone(body["levelAssessment"]["details"])
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        retry_format = fake_openai.completions.calls[1]["response_format"]
+        self.assertEqual(
+            retry_format["json_schema"]["name"],
+            "session_level_assessment_core",
+        )
+        self.assertNotIn(
+            "highlightMessage",
+            retry_format["json_schema"]["schema"]["properties"],
+        )
+
+    def test_session_feedback_returns_without_level_when_core_retry_is_invalid(self):
+        app = self._app()
+        self._cache_feedback(
+            app,
+            good_message_feedback(1001),
+            user_message="I like pizza because it is spicy.",
+        )
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        payload["assessmentMessages"] = [valid_assessment_messages()[0]]
+        fake_openai = FakeOpenAI(contents=["not-json", "still-not-json"])
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["data"]["levelAssessment"])
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertIsNone(get_cached_message_feedback(100, 1001))
 
     def test_session_feedback_drops_invalid_details_without_losing_core(self):
         app = self._app()
@@ -4278,7 +4365,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertIn('"responseDemand":"HIGH"', messages[1]["content"])
         self.assertIn('"requiredElements":["favorite food","reason"]', messages[1]["content"])
-        self.assertGreaterEqual(fake_openai.completions.kwargs["max_tokens"], 2048)
+        self.assertGreaterEqual(
+            fake_openai.completions.calls[0]["max_tokens"],
+            2048,
+        )
 
     def test_legacy_session_feedback_prompt_omits_assessment_rubric(self):
         prompt = next_message_service._session_feedback_system_prompt(False)

@@ -1122,22 +1122,31 @@ def generate_session_feedback(
         request,
         feedback_entries,
     )
-    data = _request_recoverable_json_completion(
-        settings or Settings(),
-        system_prompt=_session_feedback_system_prompt(include_level_assessment),
-        user_prompt=_session_feedback_user_prompt(
-            request,
-            feedback_entries,
-            include_level_assessment,
-        ),
-        max_tokens=2048 if include_level_assessment else 512,
-    )
-    summary = _recover_session_feedback_summary(data, request.sessionId)
-    level_assessment = _recover_session_level_assessment(
-        data,
+    resolved_settings = settings or Settings()
+    system_prompt = _session_feedback_system_prompt(include_level_assessment)
+    user_prompt = _session_feedback_user_prompt(
         request,
         feedback_entries,
+        include_level_assessment,
     )
+    if include_level_assessment:
+        data, level_assessment = _request_session_feedback_with_level_assessment(
+            resolved_settings,
+            request,
+            feedback_entries,
+            system_prompt,
+            user_prompt,
+        )
+    else:
+        data = _request_recoverable_json_completion(
+            resolved_settings,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=512,
+            response_format=_session_feedback_response_format(False),
+        )
+        level_assessment = None
+    summary = _recover_session_feedback_summary(data, request.sessionId)
 
     native_score = _native_score_from_message_feedback_entries(feedback_entries)
     response = SessionFeedbackResponse(
@@ -1151,6 +1160,72 @@ def generate_session_feedback(
     )
     _delete_message_feedback_cache(request.sessionId)
     return response
+
+
+def _request_session_feedback_with_level_assessment(
+    settings: Settings,
+    request: SessionFeedbackRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[dict[str, Any], SessionLevelAssessment | None]:
+    try:
+        data = _request_json_completion(
+            settings,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=2048,
+            response_format=_session_feedback_response_format(True),
+        )
+    except AiResponseInvalidError:
+        logger.warning(
+            "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
+            "workflow=session_level_assessment_core_retry sessionId=%s",
+            request.sessionId,
+        )
+        data = {}
+
+    level_assessment = _recover_session_level_assessment(
+        data,
+        request,
+        feedback_entries,
+    )
+    if level_assessment is not None:
+        return data, level_assessment
+    return data, _retry_session_level_assessment_core(
+        settings,
+        request,
+        feedback_entries,
+        user_prompt,
+    )
+
+
+def _retry_session_level_assessment_core(
+    settings: Settings,
+    request: SessionFeedbackRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry],
+    user_prompt: str,
+) -> SessionLevelAssessment | None:
+    try:
+        retry_data = _request_json_completion(
+            settings,
+            system_prompt=_session_level_assessment_retry_system_prompt(),
+            user_prompt=user_prompt,
+            max_tokens=1536,
+            response_format=_session_level_assessment_core_response_format(),
+        )
+    except AiResponseInvalidError:
+        logger.warning(
+            "AI 세션 수준 평가 Core 재요청 결과가 올바르지 않습니다. "
+            "workflow=session_level_assessment_core_failed sessionId=%s",
+            request.sessionId,
+        )
+        return None
+    return _recover_session_level_assessment(
+        retry_data,
+        request,
+        feedback_entries,
+    )
 
 
 def _assessment_messages_match_cache(
@@ -1288,24 +1363,119 @@ def _get_expected_message_feedback_entries(
         ]
 
 
+def _session_feedback_response_format(
+    include_level_assessment: bool,
+) -> dict[str, Any]:
+    properties: dict[str, Any] = {
+        "sessionId": {"type": "integer"},
+        "highlightMessage": {"type": "string"},
+        "summaryMessage": {"type": "string"},
+    }
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+    name = "session_feedback_summary"
+    if include_level_assessment:
+        assessment_schema = _strict_output_schema(
+            SessionLevelAssessment.model_json_schema(),
+        )
+        definitions = assessment_schema.pop("$defs", None)
+        properties["levelAssessment"] = assessment_schema
+        schema["required"] = list(properties)
+        if definitions is not None:
+            schema["$defs"] = definitions
+        name = "session_feedback_with_level_assessment"
+    return _json_schema_response_format(name, schema)
+
+
+def _session_level_assessment_core_response_format() -> dict[str, Any]:
+    core_schema = _strict_output_schema(
+        SessionLevelAssessmentCore.model_json_schema(),
+    )
+    definitions = core_schema.pop("$defs", None)
+    level_assessment_schema = {
+        "type": "object",
+        "properties": {"core": core_schema},
+        "required": ["core"],
+        "additionalProperties": False,
+    }
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"levelAssessment": level_assessment_schema},
+        "required": ["levelAssessment"],
+        "additionalProperties": False,
+    }
+    if definitions is not None:
+        schema["$defs"] = definitions
+    return _json_schema_response_format("session_level_assessment_core", schema)
+
+
+def _strict_output_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_strict_output_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    unsupported_constraints = {
+        "default",
+        "exclusiveMinimum",
+        "maximum",
+        "minimum",
+        "minItems",
+        "title",
+    }
+    schema = {
+        key: _strict_output_schema(item)
+        for key, item in value.items()
+        if key not in unsupported_constraints
+    }
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        schema["required"] = list(properties)
+        schema["additionalProperties"] = False
+    return schema
+
+
+def _json_schema_response_format(
+    name: str,
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": name,
+            "strict": True,
+            "schema": schema,
+        },
+    }
+
+
 def _request_json_completion(
     settings: Settings,
     system_prompt: str,
     user_prompt: str,
     max_tokens: int,
     model: str | None = None,
+    response_format: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_model = model or _required_openrouter_model(settings)
     try:
         client = create_openai_client(settings)
-        completion = client.chat.completions.create(
-            model=resolved_model,
-            messages=[
+        completion_arguments: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0,
-            max_tokens=max_tokens,
+            "temperature": 0,
+            "max_tokens": max_tokens,
+        }
+        if response_format is not None:
+            completion_arguments["response_format"] = response_format
+        completion = client.chat.completions.create(
+            **completion_arguments,
         )
     except AiGenerationFailedError:
         raise
@@ -1320,6 +1490,7 @@ def _request_recoverable_json_completion(
     system_prompt: str,
     user_prompt: str,
     max_tokens: int,
+    response_format: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
         return _request_json_completion(
@@ -1327,6 +1498,7 @@ def _request_recoverable_json_completion(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=max_tokens,
+            response_format=response_format,
         )
     except AiResponseInvalidError as exc:
         raise AiGenerationFailedError from exc
@@ -1995,6 +2167,20 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             + "Return one JSON object, not an array."
         ),
     ] if section)
+
+
+def _session_level_assessment_retry_system_prompt() -> str:
+    return (
+        "You assess a Korean learner's English text conversation. "
+        "Return only levelAssessment.core for the assessment messages. "
+        "Judge taskPerformance against requiredElements. "
+        "Assess situationPerformance, grammar, vocabulary, discourse, and "
+        "interactionPragmatics. Each domain must use level 1 through 5 only when "
+        "evidenceStatus is OBSERVED and must quote an exact substring of userMessage "
+        "in evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED "
+        "or INSUFFICIENT_EVIDENCE. Apply the same rubric as the initial assessment.\n"
+        f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}"
+    )
 
 
 def _session_feedback_user_prompt(
