@@ -201,6 +201,9 @@ def file_sha256(path: Path) -> str:
 
 
 def write_manifest(args: argparse.Namespace) -> None:
+    manifest_path = args.output_dir / "manifest.json"
+    if manifest_path.exists():
+        return
     repository = Path(__file__).resolve().parents[1]
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -228,7 +231,7 @@ def write_manifest(args: argparse.Namespace) -> None:
         "referenceModel": args.reference_model,
         "assessmentVersion": "text-level-v1.1",
     }
-    (args.output_dir / "manifest.json").write_text(
+    manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -309,6 +312,9 @@ def parse_reference(raw: str, case: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_reference(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
+    output = args.output_dir / "reference.jsonl"
+    if output.exists():
+        raise FileExistsError(f"reference output already exists: {output}")
     key = api_key(args.aws_profile, args.ssm_key)
     client = OpenAI(
         api_key=key,
@@ -316,7 +322,6 @@ def run_reference(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None
         timeout=60.0,
         max_retries=0,
     )
-    output = args.output_dir / "reference.jsonl"
     for case in cases[: args.limit]:
         started = time.perf_counter()
         raw = ""
@@ -473,6 +478,9 @@ def product_runs(cases: list[dict[str, Any]], repeat_runs: int) -> list[tuple[di
 
 
 def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
+    output = args.output_dir / "product.jsonl"
+    if output.exists():
+        raise FileExistsError(f"product output already exists: {output}")
     key = api_key(args.aws_profile, args.ssm_key)
     settings = Settings(
         llm_provider="openrouter",
@@ -487,7 +495,6 @@ def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
     next_message_service.create_openai_client = lambda resolved: recorder.wrap(
         create_openai_client(resolved)
     )
-    output = args.output_dir / "product.jsonl"
     try:
         for index, (case, run) in enumerate(
             product_runs(cases, args.repeat_runs)[: args.limit], start=1
