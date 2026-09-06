@@ -55,10 +55,12 @@ AI rubric 구현과 BE 계산·저장 구현은 파일이 겹치지 않는 독�
 - 정상 대화 첫 실행은 29/30, 봉인 검증은 20/20이 유효했다. 반복 표본 10개는 모두 3회 평가됐고 수준 범위는 최대 1이었다.
 - 블라인드 실행기는 호출 성공과 유효 Core를 분리 집계하며, Core 누락을 fallback 실패 지표에 포함한다.
 
-## 다음 작업: 비동기 평가·JSON 출력 호환
+## 비동기 평가·JSON 출력 호환 구현 결과
 
-- 2026-09-07 사용자 요청에 따라 **계획만 작성했으며 아직 구현하지 않았다.**
+- 2026-09-07 승인된 계획을 구현했다. 기존 세션 피드백 응답은 유지하고 수준 평가를 별도 API로 분리했다.
 - 단일 실행 계획은 BE `docs/tasks/LAN-438/plan.md`의 「비동기 수준 평가·JSON 호환 처리 수정 계획」이다. 로컬 작업 경로는 `/Users/sangmin8817/Soma/landit-be/.worktrees/LAN-438`이며 기본 BE checkout과 구분한다.
-- AI 담당 범위는 캐시 독립 수준 평가 API, 기존 루브릭·Core/Details 검증 재사용, 별도 JSON_schema 이슈의 공통 출력 모드 전환 연결이다. BE 비동기·폴링·트랜잭션 계약과 인수 테스트는 위 계획을 따른다.
+- AI에는 캐시 독립 `POST /api/v1/conversation/session-level-assessment`와 기존 루브릭·Core/Details 검증을 추가했다. BE는 기존 `applicationTaskExecutor`로 평가를 비동기 실행하고 `GET /api/v1/sessions/{sessionId}/level-assessment`에서 상태를 조회한다.
 - 출력 모드 전환은 명시적 미지원일 때만 `strict json_schema → json_object → 프롬프트 JSON`으로 진행한다. 어느 경로도 Pydantic·ID·근거 원문 검증을 생략하지 않는다. Core 무효의 1회 복구와 최종 BE fallback은 별개다.
+- Core 재요청은 마지막으로 선택된 출력 모드를 이어받고, Details 오류는 유효한 Core를 보존한다. BE fallback은 수준·streak를 변경하지 않는다.
+- 검증: AI `479 tests, 7 skipped` 통과, BE `./gradlew check --no-parallel` 통과. 운영 DB·배포·실제 FE/결제 E2E는 실행하지 않았다.
 - 루브릭·평가 가중치·임계값·제품 모델 변경, 다른 API의 공통 JSON 기능 중복 구현, 운영 DB·배포는 이 계획에 포함하지 않는다.
