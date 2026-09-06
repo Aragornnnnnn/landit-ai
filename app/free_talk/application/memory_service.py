@@ -13,6 +13,7 @@ from pydantic import (
 )
 
 from app.core.config import Settings
+from app.free_talk.application.memory_candidate_review import review_memory_candidates
 from app.free_talk.llm.embeddings import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
@@ -37,7 +38,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v7"
+EXTRACTOR_VERSION = "memory-candidate-v8"
 _CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
 _DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
     r"\b(?:you\s+and\s+I|I\s+and\s+you|with\s+you|"
@@ -168,7 +169,7 @@ _CANDIDATE_PROMPT_PARTS = (
         "current character. EPISODE is a shared experience or interaction between the user "
         "and the current character; it is scoped to that character. Do not classify a fact "
         "as EPISODE merely because the user mentioned it in this conversation. Every EPISODE "
-        "content may name the request characterId only after a USER explicitly confirms "
+        "content must name the request characterId only after a USER explicitly confirms "
         "that character's participation in a shared interaction within this chat. The "
         "request characterId identifies the listener, not a participant in the user's "
         "offline life. Never add the character to a visit, trip, gift, or meeting with "
@@ -314,20 +315,32 @@ def generate_memory_candidates(
         AiResponseInvalidError: AI 또는 임베딩 응답이 계약을 위반할 때.
         AiGenerationFailedError: AI/임베딩 호출 또는 모델 설정이 실패할 때.
     """
-    drafts = _validated_candidate_drafts(
-        request_json_completion(
-            settings=settings,
-            system_prompt=_candidate_system_prompt(),
-            user_prompt=_candidate_user_prompt(payload),
-        ),
-        payload,
-    )
+    drafts = _extract_memory_candidate_drafts(payload, settings)
     if not drafts:
         return MemoryCandidatesResponse(
             extractorVersion=EXTRACTOR_VERSION,
             candidates=[],
         )
     return _candidates_with_embeddings(drafts, settings)
+
+
+def _extract_memory_candidate_drafts(
+    payload: MemoryCandidatesRequest, settings: Settings,
+) -> list[MemoryCandidate]:
+    """추출과 원문 대조를 마친 후보를 반환하며 임베딩 I/O는 호출자가 담당한다."""
+    drafts = _validated_candidate_drafts(
+        request_json_completion(
+            settings=settings,
+            system_prompt=_candidate_system_prompt(),
+            user_prompt=_candidate_user_prompt(payload),
+            reasoning_effort="medium",
+        ),
+        payload,
+    )
+    drafts = _filtered_candidate_drafts(
+        review_memory_candidates(drafts, _candidate_user_prompt(payload), settings), payload,
+    )
+    return drafts
 
 
 def _candidates_with_embeddings(

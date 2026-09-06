@@ -378,7 +378,12 @@ class FreeTalkApiTests(unittest.TestCase):
         return create_app(make_settings(**settings))
 
     def _post(self, path, payload, fake_openai):
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+        # 원문 대조의 네트워크 계약은 test_memory_candidate_review에서 별도로 검사한다.
+        with (
+            patch("app.core.openai_client.OpenAI", return_value=fake_openai),
+            patch("app.free_talk.application.memory_service.review_memory_candidates",
+                  side_effect=lambda drafts, *_: drafts),
+        ):
             return make_client(self._app()).post(path, json=payload)
 
     def test_opening_returns_generated_message(self):
@@ -2273,7 +2278,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v7",
+            "memory-candidate-v8",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -2446,7 +2451,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v7",
+                "extractorVersion": "memory-candidate-v8",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
