@@ -1185,6 +1185,7 @@ def generate_session_level_assessment(
         data,
         request,
         None,
+        require_session_id=True,
     )
     if level_assessment is None:
         level_assessment = _retry_session_level_assessment_core(
@@ -1274,6 +1275,7 @@ def _retry_session_level_assessment_core(
         retry_data,
         request,
         feedback_entries,
+        require_session_id=False,
     )
 
 
@@ -1296,7 +1298,10 @@ def _recover_session_level_assessment(
     data: dict[str, Any],
     request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
+    require_session_id: bool = True,
 ) -> SessionLevelAssessment | None:
+    if require_session_id and data.get("sessionId") != request.sessionId:
+        return None
     raw_assessment = data.get("levelAssessment")
     if not isinstance(raw_assessment, dict) or not request.assessmentMessages:
         return None
@@ -1620,12 +1625,10 @@ def _is_response_format_unsupported(exception: AiGenerationFailedError) -> bool:
     message = str(cause).lower()
     if status_code not in {400, 404, 422}:
         return False
-    return (
-        "response_format" in message
-        or "json_schema" in message
-        or "structured output" in message
-        or "not supported" in message
-        or "unsupported" in message
+    format_terms = ("response_format", "json_schema", "json_object", "structured output")
+    unsupported_terms = ("not supported", "unsupported", "does not support")
+    return any(term in message for term in format_terms) and any(
+        term in message for term in unsupported_terms
     )
 
 
