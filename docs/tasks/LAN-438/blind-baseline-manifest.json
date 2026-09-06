@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-06T07:08:54.620755+00:00",
+  "aiRevision": "60482a5026fcd1dcf2e63cae475619c34a6ab0cf",
+  "beRevision": "af1e778b5e5914f8c4e9efcc90b4bdff1f56a04b",
+  "datasetSha256": "6c7fdfa26c733dd7aadd2cc93640da82488b558776ea25d4317fb9903a79a219",
+  "rubricSha256": "fe4f11924953278bc0947dc1a132645887ee4ab6478c5b5ef00fef5973c890ae",
+  "sessionFeedbackPromptSha256": "517193cd7e47b67288f4ebfec25551a9afa3a71c37f0f1b4a8a2cae8233f590e",
+  "questionSha256": "38bcc5c475e6fc739aa3b7b92cb6f54e029c304cbb68a2a827d305d43abc73b4",
+  "productModel": "openai/gpt-5.4-mini",
+  "messageFeedbackModel": "openai/gpt-5.4",
+  "messageFeedbackReviewEnabled": false,
+  "referenceModel": "google/gemini-3.5-flash",
+  "assessmentVersion": "text-level-v1.1"
+}

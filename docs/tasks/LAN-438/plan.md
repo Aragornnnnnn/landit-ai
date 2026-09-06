@@ -34,3 +34,10 @@ AI rubric 구현과 BE 계산·저장 구현은 파일이 겹치지 않는 독�
 ## 한계
 
 자동 테스트는 계산·저장·오류 격리를 검증한다. 실제 LLM의 수준 정확도와 평가자 일치도, 운영 PostgreSQL 적용, FE 표시·결제 E2E를 증명하지 않는다. 별도 네트워크 LLM 호출과 배포는 수행하지 않는다.
+
+## 로컬 블라인드 baseline
+
+- 2026-09-06 실제 develop 모델 설정으로 네트워크 baseline을 실행했다.
+- 결과와 판단은 [blind-baseline.md](blind-baseline.md)를 기준으로 한다.
+- 제품 평가 60회 중 유효 Core는 15회였고, 45회는 최종 평가 invalid JSON으로 실패했다.
+- 평가 프롬프트·가중치·임계값은 baseline 동안 변경하지 않았다.
