@@ -579,10 +579,19 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
     products = read_jsonl(args.output_dir / "product.jsonl")
     primary = [row for row in products if row["run"] == 1]
     product_failures = [row for row in products if row["status"] != "SUCCESS"]
+    missing_assessments = [
+        row
+        for row in products
+        if row["status"] == "SUCCESS" and row.get("levelAssessment") is None
+    ]
     comparable = []
     for row in primary:
         reference = references.get(row["caseId"])
-        if row["status"] != "SUCCESS" or not reference:
+        if (
+            row["status"] != "SUCCESS"
+            or row.get("levelAssessment") is None
+            or not reference
+        ):
             continue
         allowed = reference["reference"].get("allowedLevelRange")
         if reference["reference"].get("assessable") and allowed:
@@ -641,7 +650,11 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
         reference_missing = 0
         for row in primary:
             reference = references.get(row["caseId"])
-            if row["status"] != "SUCCESS" or not reference:
+            if (
+                row["status"] != "SUCCESS"
+                or row.get("levelAssessment") is None
+                or not reference
+            ):
                 continue
             product_messages = row["levelAssessment"]["core"]["messages"]
             reference_messages = reference["reference"]["messages"]
@@ -678,6 +691,8 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             except json.JSONDecodeError:
                 reason += ":INVALID_JSON"
         failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+    if missing_assessments:
+        failure_reasons["MISSING_LEVEL_ASSESSMENT"] = len(missing_assessments)
     summary = {
         "dataset": {
             "total": len(cases),
@@ -690,8 +705,16 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             "productSessions": len(products),
             "productSuccess": sum(row["status"] == "SUCCESS" for row in products),
             "productFailure": len(product_failures),
+            "validLevelAssessment": (
+                len(products) - len(product_failures) - len(missing_assessments)
+            ),
+            "missingLevelAssessment": len(missing_assessments),
             "primarySessions": len(primary),
             "primarySuccess": sum(row["status"] == "SUCCESS" for row in primary),
+            "primaryValidLevelAssessment": sum(
+                row["status"] == "SUCCESS" and row.get("levelAssessment") is not None
+                for row in primary
+            ),
             "referenceSuccess": len(references),
             "modelCalls": len(calls),
             "finishReasons": finish_reasons,
@@ -740,8 +763,8 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             row.get("bePolicy", {}).get("changeType") == "NOT_APPLIED"
             for row in products
         ),
-        "expectedBeFallbacks": len(product_failures),
-        "expectedBeNotApplied": len(product_failures),
+        "expectedBeFallbacks": len(product_failures) + len(missing_assessments),
+        "expectedBeNotApplied": len(product_failures) + len(missing_assessments),
     }
     (args.output_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
