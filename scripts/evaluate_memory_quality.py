@@ -6,6 +6,7 @@ import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -13,10 +14,9 @@ from app.core.config import Settings
 from app.free_talk.application.memory_service import (
     EXTRACTOR_VERSION,
     _candidate_system_prompt,
-    _candidate_user_prompt,
-    _validated_candidate_drafts,
+    _extract_memory_candidate_drafts,
 )
-from app.free_talk.llm.json_completion import request_json_completion
+from app.free_talk.application.memory_candidate_review import _REVIEW_PROMPT
 from app.models.free_talk import MemoryCandidatesRequest
 
 
@@ -47,23 +47,27 @@ def acceptance_errors(case: dict, candidates: list) -> list[str]:
         errors.append("missing_detail")
     if any(word.casefold() in content for word in case.get("forbidden", [])):
         errors.append("unsupported_detail")
+    events = [candidate for candidate in candidates if candidate.memoryType.value == "EVENT"]
     if "validFrom" in case and any(
         candidate.validFrom != datetime.fromisoformat(case["validFrom"])
-        for candidate in candidates
+        for candidate in events
     ):
         errors.append("event_time")
+    if "eventCount" in case and len(events) != case["eventCount"]:
+        errors.append("event_count")
+    if any(word not in " ".join(candidate.content for candidate in events)
+           for word in case.get("eventRequired", [])):
+        errors.append("event_detail")
     return errors
 
 
-def evaluate(case: dict, settings: Settings, prompt: str) -> dict:
+def evaluate(case: dict, settings: Settings) -> dict:
     payload = build_payload(case)
     try:
-        raw = request_json_completion(
-            settings=settings, system_prompt=prompt,
-            user_prompt=_candidate_user_prompt(payload),
-        )
-        candidates = _validated_candidate_drafts(raw, payload)
+        started = perf_counter()
+        candidates = _extract_memory_candidate_drafts(payload, settings)
         return {"case": case["id"], "errors": acceptance_errors(case, candidates),
+                "elapsedSeconds": round(perf_counter() - started, 3),
                 "candidates": [item.model_dump(mode="json", exclude={"embedding"})
                                for item in candidates]}
     except Exception as exc:
@@ -82,13 +86,14 @@ def main() -> int:
     settings = Settings(_env_file=None)
     prompt = _candidate_system_prompt()
     report = {"at": datetime.now(UTC).isoformat(), "model": settings.openrouter_model,
-              "extractorVersion": EXTRACTOR_VERSION,
+              "extractorVersion": EXTRACTOR_VERSION, "reasoningEffort": "medium",
               "promptSha256": hashlib.sha256(prompt.encode()).hexdigest(),
+              "reviewPromptSha256": hashlib.sha256(_REVIEW_PROMPT.encode()).hexdigest(),
               "casesSha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
               "results": []}
     for run in range(args.runs):
         for case in cases:
-            result = evaluate(case, settings, prompt) | {"run": run + 1}
+            result = evaluate(case, settings) | {"run": run + 1}
             report["results"].append(result)
             args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
             print(f"run={run + 1} case={case['id']} errors={result['errors']}", flush=True)

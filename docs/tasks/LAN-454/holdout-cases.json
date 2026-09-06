@@ -1,5 +1,5 @@
 [
-  {"id": "noisy_family_visit", "turns": [["AI", "Where are you going?"], ["USER", "I go to my younger brother home house now. We see movie later on September 7."]], "types": ["EVENT"], "min": 1, "max": 2, "forbidden": ["chloe", "클로이"]},
+  {"id": "noisy_family_visit", "turns": [["AI", "Where are you going?"], ["USER", "I go to my younger brother home house now. We see movie later on September 7."]], "types": ["EVENT", "PROFILE"], "min": 1, "max": 3, "forbidden": ["chloe", "클로이"], "eventRequired": ["남동생"]},
   {"id": "noisy_one_off_want", "turns": [["AI", "What would you like to do?"], ["USER", "I want go dance studio now. Maybe I not can go there."]], "types": ["EVENT"], "min": 0, "max": 1},
   {"id": "noisy_speculation", "turns": [["AI", "How are things?"], ["USER", "I feel like have the diabetes now. Not know really."]], "types": [], "min": 0, "max": 0},
   {"id": "noisy_past_waiting", "turns": [["USER", "I watched science show named Orbit. I waiting for it so long and yesterday it new episode release."]], "types": [], "min": 0, "max": 0, "forbidden": ["chloe", "클로이"]},
