@@ -1162,7 +1162,7 @@ def generate_session_level_assessment(
     """캐시와 독립적으로 세션의 텍스트 수준 평가를 생성한다."""
     resolved_settings = settings or Settings()
     user_prompt = _session_level_assessment_user_prompt(request)
-    deadline = time.monotonic() + 100.0
+    deadline = time.monotonic() + resolved_settings.session_level_assessment_budget_seconds
     data: dict[str, Any] = {}
     selected_response_format: dict[str, Any] | None = (
         _session_level_assessment_response_format()
@@ -2322,6 +2322,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
 def _session_level_assessment_retry_system_prompt() -> str:
     return (
         "You assess a Korean learner's English text conversation. "
+        f"{_shared_safety_policy()} "
         "Return only levelAssessment.core for the assessment messages. "
         "Judge taskPerformance against requiredElements. "
         "Assess situationPerformance, grammar, vocabulary, discourse, and "
@@ -2336,6 +2337,7 @@ def _session_level_assessment_retry_system_prompt() -> str:
 def _session_level_assessment_system_prompt() -> str:
     return (
         "You assess a Korean learner's English text conversation. "
+        f"{_shared_safety_policy()} "
         "Return one JSON object containing the exact sessionId and levelAssessment. "
         "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
         "Judge taskPerformance against requiredElements. Assess situationPerformance, grammar, "
