@@ -1,0 +1,18 @@
+[
+  {"id": "family_visit", "turns": [["AI", "What did you do on September 5?"], ["USER", "On September 5, 2026, I visited a museum with my younger sister."]], "types": ["EVENT", "PROFILE"], "min": 1, "max": 2, "required": ["여동생"], "forbidden": ["chloe", "클로이"], "eventCount": 1, "eventRequired": ["여동생"]},
+  {"id": "friend_reunion", "turns": [["AI", "Tell me about your day."], ["USER", "I met my former classmates on September 5, 2026. We hadn't met for four years."]], "types": ["EVENT"], "min": 1, "max": 1, "forbidden": ["chloe", "클로이"]},
+  {"id": "korean_family", "turns": [["USER", "2026년 9월 5일에 아버지와 식물원에 갔어."]], "types": ["EVENT", "PROFILE"], "min": 1, "max": 2, "required": ["아버지"], "forbidden": ["chloe", "클로이"], "eventCount": 1, "eventRequired": ["아버지"]},
+  {"id": "garbled_destination", "turns": [["AI", "Are you coming to visit me?"], ["USER", "There left left thirty it go."]], "types": [], "min": 0, "max": 0},
+  {"id": "one_off_purchase", "turns": [["USER", "I wanted to buy a backpack this afternoon, but I didn't find one I liked."]], "types": ["EVENT"], "min": 0, "max": 1},
+  {"id": "one_off_visitors", "turns": [["USER", "Two friends are visiting my apartment on September 7, 2026."]], "types": ["EVENT"], "min": 1, "max": 1},
+  {"id": "past_book", "turns": [["USER", "On September 5, 2026, I finished a book about astronomy."]], "types": ["EVENT"], "min": 1, "max": 1},
+  {"id": "uncertain_health", "turns": [["USER", "Maybe I have diabetes, but I don't know. I have not been diagnosed."]], "types": [], "min": 0, "max": 0},
+  {"id": "uncertain_mixed", "turns": [["USER", "I live with my younger brother. Maybe I have diabetes, but I haven't been diagnosed."]], "types": ["PROFILE"], "min": 1, "max": 1, "required": ["남동생"], "forbidden": ["당뇨", "diabet"]},
+  {"id": "tentative_trait", "turns": [["AI", "Maybe you are too cautious with decisions?"], ["USER", "Maybe. I'm not sure."]], "types": [], "min": 0, "max": 0},
+  {"id": "generic_agreement", "turns": [["AI", "You could try making notes before speaking. Have you tried it?"], ["USER", "I think that might help."]], "types": [], "min": 0, "max": 0},
+  {"id": "stable_habit", "turns": [["USER", "I swim with my brother every Saturday."]], "types": ["PROFILE"], "min": 1, "max": 1, "required": ["토요일"], "forbidden": ["chloe", "클로이"]},
+  {"id": "stable_change", "turns": [["USER", "I used to live with my parents, but now I live alone."]], "types": ["PROFILE"], "min": 1, "max": 1, "required": ["혼자"]},
+  {"id": "explicit_chat_episode", "turns": [["USER", "Chloe, you and I made a weekly study plan in this chat on September 5, 2026. I saved it."]], "types": ["EPISODE"], "min": 1, "max": 1, "required": ["chloe"]},
+  {"id": "implicit_chat_episode", "turns": [["AI", "We made a plan for your interview practice together here."], ["USER", "Yes, you and I created that interview practice plan here on September 5, 2026, and I saved it."]], "types": ["EPISODE"], "min": 1, "max": 1, "required": ["chloe"]},
+  {"id": "mixed_fact_and_intent", "turns": [["USER", "I play the flute every Monday. I feel like buying a scarf right now."]], "types": ["PROFILE"], "min": 1, "max": 1, "required": ["월요일"], "forbidden": ["스카프", "scarf"]}
+]
