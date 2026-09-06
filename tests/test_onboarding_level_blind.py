@@ -7,10 +7,56 @@ from argparse import Namespace
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from scripts.evaluate_onboarding_level_blind import score
+from scripts.evaluate_onboarding_level_blind import load_cases, score, write_manifest
 
 
 class OnboardingLevelBlindScoreTests(unittest.TestCase):
+    def test_fixture_contract_rejects_invalid_cases_before_calls(self):
+        fixture = Path(__file__).parent / "fixtures/lan_438_onboarding_blind_cases.json"
+        self.assertEqual(len(load_cases(fixture)), 40)
+        mutations = [
+            lambda cases: cases[0].pop("repeat"),
+            lambda cases: cases[0].update(repeat=1),
+            lambda cases: cases[0].update(split="unknown"),
+            lambda cases: cases[0].update(answers=[1, "", "", ""]),
+            lambda cases: cases[0].update(answers=[""]),
+            lambda cases: cases[0].update(caseId=cases[1]["caseId"]),
+            lambda cases: cases.pop(),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.json"
+            for mutate in mutations:
+                cases = json.loads(fixture.read_text())
+                mutate(cases)
+                path.write_text(json.dumps(cases))
+                with self.assertRaises(ValueError):
+                    load_cases(path)
+
+    def test_manifest_reuse_requires_matching_execution_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = Namespace(
+                output_dir=Path(directory),
+                cases=Path(__file__).parent / "fixtures/lan_438_onboarding_blind_cases.json",
+                product_model="product", message_feedback_model="feedback",
+                reference_model="reference",
+            )
+            write_manifest(args)
+            path = args.output_dir / "manifest.json"
+            original = path.read_text()
+            write_manifest(args)
+            self.assertEqual(path.read_text(), original)
+            for key in (
+                "datasetSha256", "rubricSha256", "sessionFeedbackPromptSha256",
+                "questionSha256", "productModel", "messageFeedbackModel",
+                "referenceModel", "assessmentVersion",
+            ):
+                manifest = json.loads(original)
+                manifest[key] = "changed"
+                path.write_text(json.dumps(manifest))
+                with self.assertRaisesRegex(ValueError, key):
+                    write_manifest(args)
+                self.assertEqual(json.loads(path.read_text()), manifest)
+
     def test_missing_level_assessment_is_counted_as_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             output_dir = Path(directory)

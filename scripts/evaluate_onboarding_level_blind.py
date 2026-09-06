@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from openai import OpenAI
-from pydantic import SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter
 
 from app.conversation.application import next_message_service
 from app.conversation.application.next_message_service import (
@@ -163,11 +163,22 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+class BlindCase(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    caseId: str = Field(min_length=1)
+    split: Literal["development", "holdout", "edge"]
+    repeat: bool
+    answers: list[str] = Field(min_length=4, max_length=4)
+
+
 def load_cases(path: Path) -> list[dict[str, Any]]:
-    cases = json.loads(path.read_text(encoding="utf-8"))
-    if len(cases) != 40 or any(len(case["answers"]) != 4 for case in cases):
+    cases = TypeAdapter(list[BlindCase]).validate_json(path.read_text(encoding="utf-8"))
+    if len(cases) != 40:
         raise ValueError("blind dataset must contain 40 four-answer conversations")
-    return cases
+    if len({case.caseId for case in cases}) != len(cases):
+        raise ValueError("blind dataset caseId must be unique")
+    return [case.model_dump() for case in cases]
 
 
 def api_key(profile: str, parameter: str) -> str:
@@ -202,8 +213,6 @@ def file_sha256(path: Path) -> str:
 
 def write_manifest(args: argparse.Namespace) -> None:
     manifest_path = args.output_dir / "manifest.json"
-    if manifest_path.exists():
-        return
     repository = Path(__file__).resolve().parents[1]
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -231,6 +240,16 @@ def write_manifest(args: argparse.Namespace) -> None:
         "referenceModel": args.reference_model,
         "assessmentVersion": "text-level-v1.1",
     }
+    if manifest_path.exists():
+        previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+        changed = [
+            key for key, value in manifest.items()
+            if key not in {"createdAt", "aiRevision", "beRevision"}
+            and previous.get(key) != value
+        ]
+        if changed:
+            raise ValueError("blind manifest settings changed: " + ", ".join(changed))
+        return
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -717,8 +736,11 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             ),
             "referenceSuccess": len(references),
             "modelCalls": len(calls),
+            "modelCallsScope": "product",
+            "referenceModelCalls": len(read_jsonl(args.output_dir / "reference.jsonl")),
             "finishReasons": finish_reasons,
             "tokens": tokens,
+            "tokensScope": "product",
             "productCostUsd": decimal(product_cost),
             "referenceCostUsd": decimal(reference_cost),
             "totalCostUsd": decimal(product_cost + reference_cost),
