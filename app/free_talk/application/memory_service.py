@@ -2,6 +2,7 @@
 import json
 import re
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -317,7 +318,7 @@ def generate_memory_candidates(
         request_json_completion(
             settings=settings,
             system_prompt=_candidate_system_prompt(),
-            user_prompt=_json_prompt(payload),
+            user_prompt=_candidate_user_prompt(payload),
         ),
         payload,
     )
@@ -702,6 +703,15 @@ def _validate_superseded_ids(
 
 def _json_prompt(payload: BaseModel) -> str:
     return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _candidate_user_prompt(payload: MemoryCandidatesRequest) -> str:
+    """모델이 UTC 날짜를 현지 날짜로 오해하지 않도록 발화 시각의 표기를 정규화한다."""
+    data = payload.model_dump(mode="json")
+    timezone = ZoneInfo(payload.timezone)
+    for message, source in zip(data["conversationHistory"], payload.conversationHistory):
+        message["occurredAt"] = source.occurredAt.astimezone(timezone).isoformat()
+    return json.dumps(data, ensure_ascii=False)
 
 
 def _candidate_system_prompt() -> str:

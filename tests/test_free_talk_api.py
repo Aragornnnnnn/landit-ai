@@ -2313,6 +2313,22 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("사용자는 Acme에서 엔지니어로 일한다", system_prompt)
         self.assertIn("only after a USER explicitly confirms", system_prompt)
 
+    def test_memory_candidates_prompt_uses_requested_local_date(self):
+        for timezone, expected in (
+            ("Asia/Seoul", "2026-09-07T00:05:00+09:00"),
+            ("America/Los_Angeles", "2026-09-06T08:05:00-07:00"),
+        ):
+            with self.subTest(timezone=timezone):
+                payload = valid_memory_candidates_payload(timezone=timezone)
+                payload["conversationHistory"][1]["occurredAt"] = "2026-09-06T15:05:00Z"
+                fake = FakeOpenAI(contents=[json.dumps({"candidates": []})])
+                response = self._post("/api/v1/free-talk/memory-candidates", payload, fake)
+                self.assertEqual(response.status_code, 200)
+                prompt = json.loads(fake.completions.calls[0]["messages"][1]["content"])
+                self.assertEqual(prompt["conversationHistory"][1]["occurredAt"], expected)
+                self.assertEqual(payload["conversationHistory"][1]["occurredAt"],
+                                 "2026-09-06T15:05:00Z")
+
     def test_memory_candidates_drops_unsupported_character_participation(self):
         cases = [
             ("chloe", "EPISODE", "Chloe"),
