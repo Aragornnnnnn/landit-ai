@@ -66,3 +66,11 @@ AI rubric 구현과 BE 계산·저장 구현은 파일이 겹치지 않는 독�
 - 추가 회귀 포함 AI 테스트는 483개 실행, 7개 skipped로 통과했다. 실제 외부 LLM 재측정은 실행하지 않았다.
 - 검증: AI `479 tests, 7 skipped` 통과, BE `./gradlew check --no-parallel` 통과. 운영 DB·배포·실제 FE/결제 E2E는 실행하지 않았다.
 - 루브릭·평가 가중치·임계값·제품 모델 변경, 다른 API의 공통 JSON 기능 중복 구현, 운영 DB·배포는 이 계획에 포함하지 않는다.
+
+## PR 리뷰 보완 (2026-09-07 KST)
+
+- 최초·Core 재요청 평가 프롬프트에 공유 안전 정책을 적용한다. 발화 속 지시문은 실행하지 않으며 루브릭은 유지한다.
+- 전체 호출 예산은 `SESSION_LEVEL_ASSESSMENT_BUDGET_SECONDS`(기본 100초)로 설정한다. BE timeout 및 PREPARING 만료보다 짧아야 하며 BE timeout을 줄이면 함께 조정한다.
+- 블라인드 fixture의 ID 고유성·split·repeat·답변 타입을 호출 전에 검증한다. 기존 manifest와 데이터·모델·루브릭·프롬프트·평가 버전이 다르면 실행을 중단한다.
+- baseline의 300회 호출·토큰은 제품 전용이고 기준 평가 40회는 별도로 명시한다.
+- 전체 unittest 488개 실행, 7개 건너뜀으로 통과했다. 안전 정책 보강 후 실제 LLM 평가는 재실행하지 않았다.
