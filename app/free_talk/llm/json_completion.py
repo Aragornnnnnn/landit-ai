@@ -2,7 +2,7 @@
 import json
 import logging
 from json import JSONDecodeError
-from typing import Any
+from typing import Any, Literal
 
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
@@ -36,10 +36,15 @@ def request_json_completion(
     settings: Settings,
     system_prompt: str,
     user_prompt: str,
+    reasoning_effort: Literal["medium"] | None = None,
 ) -> dict[str, object]:
     model = _required_model(settings)
     try:
         client = create_openai_client(settings)
+        options = {} if reasoning_effort is None else {
+            "extra_body": {"reasoning": {"effort": reasoning_effort, "exclude": True}},
+            "max_completion_tokens": 4096,
+        }
         completion = client.chat.completions.create(
             model=model,
             messages=[
@@ -48,6 +53,7 @@ def request_json_completion(
             ],
             response_format={"type": "json_object"},
             temperature=0,
+            **options,
         )
     except Exception as exc:
         logger.warning(

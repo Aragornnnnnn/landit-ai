@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-06T15:40:49.478102+00:00",
+  "model": "openai/gpt-5.4-mini",
+  "extractorVersion": "memory-candidate-v7",
+  "promptSha256": "5fa6b43a2f34cd1e7fa977c57dec63731859e7c5eff01f69a3a030fa8e598665",
+  "casesSha256": "cd6d0d71b8cc3f5e13a6a1b7b050403923a9905b30876fbe87b90b57a692a5dd",
+  "results": [
+    {"case": "undated_viewing_and_release", "errors": ["candidate_count", "memory_type"], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "사용자는 2026-09-06에 Orbit이라는 과학 쇼를 봤다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.89, "validFrom": "2026-09-06T00:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "public_release_only", "errors": ["candidate_count", "memory_type"], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "Atlas 게임은 2026-09-06에 출시되었다.", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.93, "validFrom": "2026-09-06T00:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "undated_past_with_habit", "errors": [], "candidates": [{"candidateIndex": 0, "memoryType": "PROFILE", "content": "사용자는 매주 화요일에 체스를 둔다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.98, "validFrom": "2026-09-07T10:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "dated_viewing_and_release", "errors": [], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "사용자는 2026년 9월 5일에 Orbit를 봤다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.92, "validFrom": "2026-09-05T00:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "relative_date_at_seoul_midnight", "errors": ["missing_detail", "event_time"], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "사용자는 2026-09-05에 어머니와 박물관을 방문했다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.99, "validFrom": "2026-09-05T00:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "relative_date_los_angeles", "errors": [], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "사용자는 2026-09-05에 아버지와 박물관을 방문했다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.98, "validFrom": "2026-09-05T00:00:00-07:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "dated_future_attendance", "errors": [], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "사용자는 2026년 9월 13일에 그 축제에 참석할 예정이다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.97, "validFrom": "2026-09-07T10:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1},
+    {"case": "dated_family_event", "errors": [], "candidates": [{"candidateIndex": 0, "memoryType": "EVENT", "content": "사용자의 여동생이 2026년 9월 20일에 결혼한다", "contentLocale": "KR", "sourceMessageIds": [1], "confidence": 0.97, "validFrom": "2026-09-07T10:00:00+09:00", "validTo": null, "embeddingModel": "openai/text-embedding-3-small"}], "run": 1}
+  ]
+}
