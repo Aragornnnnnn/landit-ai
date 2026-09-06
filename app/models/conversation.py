@@ -669,7 +669,6 @@ class SessionFeedbackResponse(BaseModel):
     highlightMessage: str
     summaryMessage: str
     messageFeedbacks: list[MessageFeedbackData]
-    levelAssessment: SessionLevelAssessment | None = None
 
     @field_validator("starRating")
     @classmethod
@@ -682,3 +681,38 @@ class SessionFeedbackResponse(BaseModel):
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+class SessionLevelAssessmentRequest(BaseModel):
+    """세션 수준 평가에 필요한 질문별 사용자 발화와 평가 메타데이터다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    scenario: ScenarioContext
+    expectedMessageIds: list[int] = Field(min_length=1)
+    assessmentMessages: list[SessionAssessmentMessage] = Field(min_length=1)
+
+    @field_validator("expectedMessageIds")
+    @classmethod
+    def expected_message_ids_must_be_valid(cls, value: list[int]) -> list[int]:
+        if any(message_id <= 0 for message_id in value):
+            raise ValueError("expectedMessageIds must contain positive ids")
+        if len(value) != len(set(value)):
+            raise ValueError("expectedMessageIds must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def assessment_message_ids_must_match_expected_ids(self) -> Self:
+        if [message.messageId for message in self.assessmentMessages] != self.expectedMessageIds:
+            raise ValueError("assessmentMessages must match expectedMessageIds in order")
+        return self
+
+
+class SessionLevelAssessmentResponse(BaseModel):
+    """세션 수준 평가의 검증된 Core와 선택 Details를 반환한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    levelAssessment: SessionLevelAssessment | None = None

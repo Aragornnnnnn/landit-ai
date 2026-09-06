@@ -54,6 +54,8 @@ from app.models.conversation import (
     SessionLevelAssessment,
     SessionLevelAssessmentCore,
     SessionLevelAssessmentDetails,
+    SessionLevelAssessmentRequest,
+    SessionLevelAssessmentResponse,
     correction_expression_placeholder_labels,
     normalize_correction_expression_placeholders,
 )
@@ -82,6 +84,7 @@ _MESSAGE_FEEDBACK_EVIDENCE_REASONS = frozenset(
 _BENCHMARK_PATTERN_CATALOG_PATH = (
     Path(__file__).parents[2] / "data" / "benchmark_patterns.json"
 )
+_USE_STRICT_RESPONSE_FORMAT = object()
 
 
 def _benchmark_message_from_feedback_copy(feedback_copy: str) -> str:
@@ -184,9 +187,14 @@ _message_feedback_cache_lock = RLock()
 class AiResponseInvalidError(Exception):
     """AI 응답이 API 계약과 다를 때 발생한다."""
 
-    def __init__(self, reason: str = "ai_response_invalid") -> None:
+    def __init__(
+        self,
+        reason: str = "ai_response_invalid",
+        response_format: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.response_format = response_format
 
 
 class AiGenerationFailedError(Exception):
@@ -1118,34 +1126,20 @@ def generate_session_feedback(
         request.expectedMessageIds,
     )
     message_feedbacks = [entry.feedback for entry in feedback_entries]
-    include_level_assessment = _assessment_messages_match_cache(
-        request,
-        feedback_entries,
-    )
     resolved_settings = settings or Settings()
-    system_prompt = _session_feedback_system_prompt(include_level_assessment)
+    system_prompt = _session_feedback_system_prompt(False)
     user_prompt = _session_feedback_user_prompt(
         request,
         feedback_entries,
-        include_level_assessment,
+        False,
     )
-    if include_level_assessment:
-        data, level_assessment = _request_session_feedback_with_level_assessment(
-            resolved_settings,
-            request,
-            feedback_entries,
-            system_prompt,
-            user_prompt,
-        )
-    else:
-        data = _request_recoverable_json_completion(
-            resolved_settings,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_tokens=512,
-            response_format=_session_feedback_response_format(False),
-        )
-        level_assessment = None
+    data = _request_recoverable_json_completion(
+        resolved_settings,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_tokens=512,
+        response_format=_session_feedback_response_format(),
+    )
     summary = _recover_session_feedback_summary(data, request.sessionId)
 
     native_score = _native_score_from_message_feedback_entries(feedback_entries)
@@ -1156,10 +1150,54 @@ def generate_session_feedback(
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
-        levelAssessment=level_assessment,
     )
     _delete_message_feedback_cache(request.sessionId)
     return response
+
+
+def generate_session_level_assessment(
+    request: SessionLevelAssessmentRequest,
+    settings: Settings | None = None,
+) -> SessionLevelAssessmentResponse:
+    """캐시와 독립적으로 세션의 텍스트 수준 평가를 생성한다."""
+    resolved_settings = settings or Settings()
+    user_prompt = _session_level_assessment_user_prompt(request)
+    data: dict[str, Any] = {}
+    selected_response_format: dict[str, Any] | None = (
+        _session_level_assessment_response_format()
+    )
+    try:
+        data, selected_response_format = _request_json_completion_with_format_fallback(
+            resolved_settings,
+            system_prompt=_session_level_assessment_system_prompt(),
+            user_prompt=user_prompt,
+            max_tokens=2048,
+            response_format=_session_level_assessment_response_format(),
+        )
+    except AiResponseInvalidError as exc:
+        selected_response_format = exc.response_format
+        logger.warning(
+            "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
+            "workflow=session_level_assessment_core_retry sessionId=%s",
+            request.sessionId,
+        )
+    level_assessment = _recover_session_level_assessment(
+        data,
+        request,
+        None,
+    )
+    if level_assessment is None:
+        level_assessment = _retry_session_level_assessment_core(
+            resolved_settings,
+            request,
+            None,
+            user_prompt,
+            selected_response_format,
+        )
+    return SessionLevelAssessmentResponse(
+        sessionId=request.sessionId,
+        levelAssessment=level_assessment,
+    )
 
 
 def _request_session_feedback_with_level_assessment(
@@ -1202,17 +1240,28 @@ def _request_session_feedback_with_level_assessment(
 
 def _retry_session_level_assessment_core(
     settings: Settings,
-    request: SessionFeedbackRequest,
-    feedback_entries: list[_MessageFeedbackCacheEntry],
+    request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     user_prompt: str,
+    response_format: dict[str, Any] | None | object = _USE_STRICT_RESPONSE_FORMAT,
 ) -> SessionLevelAssessment | None:
+    selected_response_format = (
+        _session_level_assessment_core_response_format()
+        if response_format is _USE_STRICT_RESPONSE_FORMAT
+        else response_format
+    )
+    if (
+        isinstance(selected_response_format, dict)
+        and selected_response_format.get("type") == "json_schema"
+    ):
+        selected_response_format = _session_level_assessment_core_response_format()
     try:
         retry_data = _request_json_completion(
             settings,
             system_prompt=_session_level_assessment_retry_system_prompt(),
             user_prompt=user_prompt,
             max_tokens=1536,
-            response_format=_session_level_assessment_core_response_format(),
+            response_format=selected_response_format,
         )
     except AiResponseInvalidError:
         logger.warning(
@@ -1229,7 +1278,7 @@ def _retry_session_level_assessment_core(
 
 
 def _assessment_messages_match_cache(
-    request: SessionFeedbackRequest,
+    request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry],
 ) -> bool:
     if not request.assessmentMessages:
@@ -1245,8 +1294,8 @@ def _assessment_messages_match_cache(
 
 def _recover_session_level_assessment(
     data: dict[str, Any],
-    request: SessionFeedbackRequest,
-    feedback_entries: list[_MessageFeedbackCacheEntry],
+    request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry] | None,
 ) -> SessionLevelAssessment | None:
     raw_assessment = data.get("levelAssessment")
     if not isinstance(raw_assessment, dict) or not request.assessmentMessages:
@@ -1258,7 +1307,10 @@ def _recover_session_level_assessment(
     expected_messages = {
         message.messageId: message for message in request.assessmentMessages
     }
-    if not _assessment_messages_match_cache(request, feedback_entries):
+    if feedback_entries is not None and not _assessment_messages_match_cache(
+        request,
+        feedback_entries,
+    ):
         return None
     if [message.messageId for message in core.messages] != request.expectedMessageIds:
         return None
@@ -1364,7 +1416,7 @@ def _get_expected_message_feedback_entries(
 
 
 def _session_feedback_response_format(
-    include_level_assessment: bool,
+    include_level_assessment: bool = False,
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "sessionId": {"type": "integer"},
@@ -1411,6 +1463,25 @@ def _session_level_assessment_core_response_format() -> dict[str, Any]:
     if definitions is not None:
         schema["$defs"] = definitions
     return _json_schema_response_format("session_level_assessment_core", schema)
+
+
+def _session_level_assessment_response_format() -> dict[str, Any]:
+    assessment_schema = _strict_output_schema(
+        SessionLevelAssessment.model_json_schema(),
+    )
+    definitions = assessment_schema.pop("$defs", None)
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "sessionId": {"type": "integer"},
+            "levelAssessment": assessment_schema,
+        },
+        "required": ["sessionId", "levelAssessment"],
+        "additionalProperties": False,
+    }
+    if definitions is not None:
+        schema["$defs"] = definitions
+    return _json_schema_response_format("session_level_assessment", schema)
 
 
 def _strict_output_schema(value: Any) -> Any:
@@ -1502,6 +1573,60 @@ def _request_recoverable_json_completion(
         )
     except AiResponseInvalidError as exc:
         raise AiGenerationFailedError from exc
+
+
+def _request_json_completion_with_format_fallback(
+    settings: Settings,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    response_format: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """지원되지 않는 구조화 출력 모드만 순서대로 낮춰 요청한다."""
+    response_formats: list[dict[str, Any] | None]
+    if response_format.get("type") == "json_schema":
+        response_formats = [response_format, {"type": "json_object"}, None]
+    elif response_format.get("type") == "json_object":
+        response_formats = [response_format, None]
+    else:
+        response_formats = [None]
+    for index, current_format in enumerate(response_formats):
+        try:
+            return (
+                _request_json_completion(
+                    settings,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    max_tokens=max_tokens,
+                    response_format=current_format,
+                ),
+                current_format,
+            )
+        except AiResponseInvalidError as exc:
+            exc.response_format = current_format
+            raise
+        except AiGenerationFailedError as exc:
+            if index == len(response_formats) - 1 or not _is_response_format_unsupported(exc):
+                raise
+    raise AiGenerationFailedError("No JSON response format was available.")
+
+
+def _is_response_format_unsupported(exception: AiGenerationFailedError) -> bool:
+    cause = exception.__cause__
+    if cause is None:
+        return False
+    status_code = getattr(cause, "status_code", None)
+    message = str(cause).lower()
+    if status_code not in {400, 404, 422}:
+        return False
+    return (
+        "response_format" in message
+        or "json_schema" in message
+        or "structured output" in message
+        or "not supported" in message
+        or "unsupported" in message
+    )
 
 
 def _required_openrouter_model(settings: Settings) -> str:
@@ -2180,6 +2305,45 @@ def _session_level_assessment_retry_system_prompt() -> str:
         "in evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED "
         "or INSUFFICIENT_EVIDENCE. Apply the same rubric as the initial assessment.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}"
+    )
+
+
+def _session_level_assessment_system_prompt() -> str:
+    return (
+        "You assess a Korean learner's English text conversation. "
+        "Return one JSON object containing the exact sessionId and levelAssessment. "
+        "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
+        "Judge taskPerformance against requiredElements. Assess situationPerformance, grammar, "
+        "vocabulary, discourse, and interactionPragmatics. Each domain must use level 1 through 5 "
+        "only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in "
+        "evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED or "
+        "INSUFFICIENT_EVIDENCE. Details is optional and must be Korean.\n"
+        f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
+        "Output Schema: Return ONLY valid JSON matching this shape: "
+        '{"sessionId":1,"levelAssessment":{"core":{"messages":[]},'
+        '"details":{"strength":"Korean","improvement":"Korean"}}}. '
+        "Return levelAssessment as null only when the assessment cannot be produced."
+    )
+
+
+def _session_level_assessment_user_prompt(
+    request: SessionLevelAssessmentRequest,
+) -> str:
+    assessment_message_json = json.dumps(
+        [message.model_dump(mode="json") for message in request.assessmentMessages],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return (
+        f"Session ID: {request.sessionId}\n"
+        f"Scenario ID: {request.scenario.scenarioId}\n"
+        f"Scenario title: {request.scenario.title}\n"
+        f"Scenario briefing: {request.scenario.briefing}\n"
+        f"Scenario conversation goal: {request.scenario.conversationGoal}\n"
+        f"Counterpart role: {request.scenario.counterpartRole}\n"
+        f"Service audience: {request.scenario.serviceAudience}\n"
+        f"Expected message IDs: {request.expectedMessageIds}\n\n"
+        f"Assessment messages JSON:\n{assessment_message_json}"
     )
 
 
