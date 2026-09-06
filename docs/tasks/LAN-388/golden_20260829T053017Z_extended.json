@@ -1,0 +1,217 @@
+{
+  "extended": true,
+  "results": [
+    {
+      "label": "s1_correct",
+      "run": 1,
+      "latency": 4.8,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_phoneme",
+      "run": 1,
+      "latency": 4.6,
+      "fields": [
+        {
+          "word": "nothing",
+          "type": "SOUND",
+          "userHeard": "nah·shing",
+          "targetSpan": "th",
+          "userSpan": "sh",
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "nothing:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s1_stress",
+      "run": 1,
+      "latency": 6.2,
+      "fields": [
+        {
+          "word": "hiking",
+          "type": "STRESS",
+          "userHeard": "hai·king",
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": 1
+        }
+      ],
+      "detected": [
+        "hiking:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_correct",
+      "run": 1,
+      "latency": 5.2,
+      "fields": [
+        {
+          "word": "diner",
+          "type": "SOUND",
+          "userHeard": "dih·ner",
+          "targetSpan": "i",
+          "userSpan": "ih",
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "diner:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [
+        "diner:SOUND"
+      ],
+      "exactMatch": false
+    },
+    {
+      "label": "s2_phoneme",
+      "run": 1,
+      "latency": 4.0,
+      "fields": [
+        {
+          "word": "real",
+          "type": "SOUND",
+          "userHeard": "lee·ur",
+          "targetSpan": "r",
+          "userSpan": "l",
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "real:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s2_stress",
+      "run": 1,
+      "latency": 4.5,
+      "fields": [
+        {
+          "word": "American",
+          "type": "STRESS",
+          "userHeard": "uh·meh·ri·kahn",
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": 3
+        }
+      ],
+      "detected": [
+        "american:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_correct",
+      "run": 1,
+      "latency": 3.2,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_phoneme",
+      "run": 1,
+      "latency": 4.2,
+      "fields": [
+        {
+          "word": "feeling",
+          "type": "SOUND",
+          "userHeard": "pee·ling",
+          "targetSpan": "f",
+          "userSpan": "p",
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "feeling:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s3_stress",
+      "run": 1,
+      "latency": 3.5,
+      "fields": [],
+      "detected": [],
+      "missed": [
+        "yesterday:STRESS"
+      ],
+      "falsePositives": [],
+      "exactMatch": false
+    },
+    {
+      "label": "s4_correct",
+      "run": 1,
+      "latency": 5.3,
+      "fields": [],
+      "detected": [],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_phoneme",
+      "run": 1,
+      "latency": 4.1,
+      "fields": [
+        {
+          "word": "available",
+          "type": "SOUND",
+          "userHeard": "uh·bay·luh·buhl",
+          "targetSpan": "v",
+          "userSpan": "b",
+          "stressIndex": null
+        }
+      ],
+      "detected": [
+        "available:SOUND"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    },
+    {
+      "label": "s4_stress",
+      "run": 1,
+      "latency": 4.8,
+      "fields": [
+        {
+          "word": "compensation",
+          "type": "STRESS",
+          "userHeard": "kuhm·pen·say·shuhn",
+          "targetSpan": null,
+          "userSpan": null,
+          "stressIndex": 1
+        }
+      ],
+      "detected": [
+        "compensation:STRESS"
+      ],
+      "missed": [],
+      "falsePositives": [],
+      "exactMatch": true
+    }
+  ]
+}

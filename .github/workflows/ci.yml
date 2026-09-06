@@ -28,6 +28,11 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e .
 
+      # 오디오 디코드 테스트(test_pronunciation_audio)는 ffmpeg가 없으면 조용히
+      # skip되므로 CI에는 명시적으로 설치한다
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg
+
       - name: Run tests
         run: python -m unittest discover -s tests
 
@@ -39,3 +44,7 @@ jobs:
 
       - name: Build container image
         run: docker build --tag landit-ai:ci .
+
+      # webm(opus) 녹음 지원의 전제 — 이미지의 ffmpeg 빌드가 opus를 디코드해야 한다
+      - name: Verify container ffmpeg decodes opus
+        run: docker run --rm --entrypoint ffmpeg landit-ai:ci -decoders | grep -w opus

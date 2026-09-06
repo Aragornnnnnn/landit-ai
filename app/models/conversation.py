@@ -198,11 +198,11 @@ class EvaluationContextType(StrEnum):
 class NextMessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    aiMessage: str
-    translatedMessage: str
+    acknowledgement: str
+    translatedAcknowledgement: str
     goalCompletionStatus: GoalCompletionStatus
 
-    @field_validator("aiMessage", "translatedMessage")
+    @field_validator("acknowledgement", "translatedAcknowledgement")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)

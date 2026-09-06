@@ -12,7 +12,7 @@ from app.common.errors import ApiException, ErrorCode
 from app.common.response import error_response, success_response
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
-from app.core.sentry import init_sentry
+from app.core.sentry import init_sentry, scrub_sensitive_request_data
 from app.main import create_app
 
 
@@ -126,6 +126,24 @@ class AppFactoryTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_alignment_warmup_registered_only_outside_local(self):
+        # 배포 직후 첫 요청이 모델(~378MB) 로드를 치르면 분석 예산(17초)을 넘겨
+        # 연쇄 503이 난다 — 배포 환경에서만 스타트업 워밍업을 등록한다.
+        # 로컬·테스트는 등록 자체를 막아 테스트가 모델 로드를 유발하지 않게 한다.
+        local_names = [
+            handler.__name__
+            for handler in create_app(make_settings()).router.on_startup
+        ]
+        develop_names = [
+            handler.__name__
+            for handler in create_app(
+                make_settings(app_env="develop")
+            ).router.on_startup
+        ]
+
+        self.assertNotIn("warm_pronunciation_alignment", local_names)
+        self.assertIn("warm_pronunciation_alignment", develop_names)
 
     def test_startup_logs_deployment_version(self):
         app = create_app(make_settings(app_version="ai-v1.2.3"))
@@ -441,6 +459,10 @@ class SentryInitializationTests(unittest.TestCase):
             environment="local",
             traces_sample_rate=0.0,
             integrations=[logging_integration],
+            before_send=scrub_sensitive_request_data,
+            include_local_variables=False,
+            max_request_body_size="never",
+            send_default_pii=False,
         )
 
 
