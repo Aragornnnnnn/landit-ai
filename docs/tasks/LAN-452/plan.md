@@ -50,7 +50,9 @@ JSON 응답을 요구하는 LLM 호출에 기존 Pydantic 모델 기반 strict J
 
 `require_parameters: true`를 넣은 `openai/gpt-5.4-mini`와 `openai/gpt-5.4` 요청은 모두 404 `No endpoints found that can handle the requested parameters`로 실패했다. 따라서 운영 요청에는 이 옵션을 추가하지 않는다. Google AI Studio 오디오 호출도 `require_parameters: true`에서 빈 결과가 한 번 발생했고, 해당 옵션을 제거하고 기존 `reasoning.effort=low`와 Provider 고정을 유지했을 때 정상 JSON을 반환했다.
 
-위 수치는 각각 1회 스모크 결과라 운영 성능 비교값으로 사용하지 않는다. 배포 전후 형식 성공률, retry·fallback 비율, latency와 token 비용 비교는 동일 익명 fixture를 반복 실행하거나 운영 메타데이터 집계로 측정한다. 비공개 사용자 음성을 사용하는 골든셋 실행은 외부 모델 전송 승인이 필요해 이번 로컬 검증에서는 수행하지 않았다. 현재 코드와 테스트는 배포 또는 운영 트래픽 결과를 증명하지 않는다.
+2026-09-07에 승인된 비공개 발음 골든셋을 확장 schema로 1회 실행했다. 정확일치 14/15, 놓침 0건, 오탐 run 1건(`s2_correct`의 `diner:SOUND`), 오류 0건으로 검출 게이트를 통과했다. 지연은 p50 3.6초, 최대 5.4초였고, 지적 12건의 `userHeard`가 모두 채워졌다. 단일 실행의 오탐 위치는 과거 실행과 달라 변동성이 남아 있으므로 안정적인 운영 성능 수치로 해석하지 않는다.
+
+위 스모크와 골든셋 수치는 각각 1회 결과다. 배포 전후 형식 성공률, retry·fallback 비율, latency와 token 비용 비교는 동일 fixture 반복 실행이나 운영 메타데이터 집계로 측정한다. 현재 코드와 테스트는 배포 또는 운영 트래픽 결과를 증명하지 않는다.
 
 ## 검증 기록
 
