@@ -2273,7 +2273,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v6",
+            "memory-candidate-v7",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -2311,7 +2311,68 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertIn("Do not split a cause and its behavioral restatement", system_prompt)
         self.assertIn("사용자는 고수를 싫어한다", system_prompt)
         self.assertIn("사용자는 Acme에서 엔지니어로 일한다", system_prompt)
-        self.assertIn("Every EPISODE content must explicitly name", system_prompt)
+        self.assertIn("only after a USER explicitly confirms", system_prompt)
+
+    def test_memory_candidates_drops_unsupported_character_participation(self):
+        cases = [
+            ("chloe", "EPISODE", "Chloe"),
+            ("chloe", "EVENT", "클로이"),
+            ("marco", "PROFILE", "Marco"),
+            ("teddy", "EPISODE", "테디"),
+        ]
+        for character, memory_type, name in cases:
+            with self.subTest(character=character, memory_type=memory_type):
+                payload = valid_memory_candidates_payload(characterId=character)
+                payload["conversationHistory"][0]["content"] = f"Did you visit {name}?"
+                payload["conversationHistory"][1]["content"] = (
+                    "I visited the museum with my sister. We enjoyed the exhibition."
+                )
+                completion = valid_memory_candidate_completion(
+                    memoryType=memory_type,
+                    content=f"사용자는 {name}와 박물관을 방문했다.",
+                )
+                fake = FakeOpenAI(contents=[json.dumps(completion)])
+                response = self._post("/api/v1/free-talk/memory-candidates", payload, fake)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(response.json()["data"]["candidates"]), 0)
+                self.assertEqual(fake.embeddings.calls, [])
+
+    def test_memory_candidates_preserves_explicit_shared_chat(self):
+        for source in (
+            "Chloe helped me create a study plan in this chat.",
+            "You and I created my study plan here.",
+            "너랑 이 대화에서 공부 계획을 함께 세웠어.",
+        ):
+            with self.subTest(source=source):
+                payload = valid_memory_candidates_payload()
+                payload["conversationHistory"][1]["content"] = source
+                completion = valid_memory_candidate_completion(
+                    memoryType="EPISODE", content="사용자는 Chloe와 공부 계획을 세웠다.",
+                )
+                fake = FakeOpenAI(contents=[json.dumps(completion)])
+                response = self._post("/api/v1/free-talk/memory-candidates", payload, fake)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(response.json()["data"]["candidates"]), 1)
+                self.assertEqual(len(fake.embeddings.calls), 1)
+
+    def test_memory_candidates_reindexes_after_unsupported_participant(self):
+        payload = valid_memory_candidates_payload()
+        payload["conversationHistory"][1]["content"] = "I swim with my sister every Sunday."
+        candidates = [
+            valid_memory_candidate_completion(
+                memoryType="EPISODE", content="사용자는 Chloe와 수영했다.",
+            )["candidates"][0],
+            valid_memory_candidate_completion(
+                candidateIndex=1, memoryType="PROFILE",
+                content="사용자는 매주 일요일에 자매와 수영한다.",
+            )["candidates"][0],
+        ]
+        fake = FakeOpenAI(contents=[json.dumps({"candidates": candidates})])
+        response = self._post("/api/v1/free-talk/memory-candidates", payload, fake)
+        self.assertEqual(response.status_code, 200)
+        result = response.json()["data"]["candidates"]
+        self.assertEqual([item["candidateIndex"] for item in result], [0])
+        self.assertEqual(fake.embeddings.calls[0]["input"], [candidates[1]["content"]])
 
     def test_memory_candidates_rejects_ai_message_as_source(self):
         fake_openai = FakeOpenAI(
@@ -2369,7 +2430,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v6",
+                "extractorVersion": "memory-candidate-v7",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)

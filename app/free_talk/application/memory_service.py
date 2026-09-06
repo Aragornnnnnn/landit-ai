@@ -36,7 +36,13 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v6"
+EXTRACTOR_VERSION = "memory-candidate-v7"
+_CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
+_DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
+    r"\b(?:you\s+and\s+I|I\s+and\s+you|with\s+you|"
+    r"you\s+(?:helped|taught|showed)\s+me)\b|(?:너랑|너와|당신과)",
+    re.IGNORECASE,
+)
 # ponytail: 한영 정정 단서만 허용하며, 실제 누락 사례가 쌓이면 의미 판정 평가를 확장한다.
 _EXPLICIT_CORRECTION_CUE_PATTERN = re.compile(
     r"\b(?:no longer|not anymore|instead|rather than|changed to|I meant|I was wrong)\b"
@@ -161,13 +167,41 @@ _CANDIDATE_PROMPT_PARTS = (
         "current character. EPISODE is a shared experience or interaction between the user "
         "and the current character; it is scoped to that character. Do not classify a fact "
         "as EPISODE merely because the user mentioned it in this conversation. Every EPISODE "
-        "content must explicitly name the request characterId as a participant, including "
-        "when the source refers to that character only as 'we' or 'our'. When an event "
+        "content may name the request characterId only after a USER explicitly confirms "
+        "that character's participation in a shared interaction within this chat. The "
+        "request characterId identifies the listener, not a participant in the user's "
+        "offline life. Never add the character to a visit, trip, gift, or meeting with "
+        "family or friends. 'We' or 'our' may refer to those real people. An AI question "
+        "about joining an event is not evidence of participation. If participation is "
+        "unclear, omit the EPISODE; keep a supported real-world EVENT without the character. "
+        "When an event "
         "establishes a more useful current stable fact, prefer the PROFILE meaning, such as "
         "'I adopted a dog named Bori' becoming '사용자는 보리라는 개를 키운다.' Preserve "
         "relevant named entities and participants. Never drop an explicitly stated companion "
         "or participant from a recurring habit, and do not generalize the habit by removing "
         "who it involves."
+    ),
+    (
+        "PROFILE requires a current stable fact or an explicitly recurring habit. A "
+        "single purchase intention, visit, past reading, past anticipation, or saved "
+        "chat artifact does not establish a PROFILE. Keep a useful dated occurrence as "
+        "EVENT, otherwise omit it. Do not convert 'I want to go now' into a lasting "
+        "preference. A clearly stated ongoing goal or stable preference is still allowed. "
+        "For mixed messages, keep each supported stable fact independently of transient "
+        "or uncertain claims in the same message. Preserve explicit participants and "
+        "relationships, including younger/older and brother/sister distinctions."
+    ),
+    (
+        "Unclear speech transcription is not a license to complete a plausible story. "
+        "Omit a candidate if its subject, action, participant, or certainty requires "
+        "guessing. Do not promote a tentative self-assessment into a trait or confirmed "
+        "condition, especially an unconfirmed health or pregnancy claim. Omit that "
+        "unconfirmed condition even if phrased as 'the user feels/thinks they have it'; "
+        "storing the suspicion is not a safe substitute for omitting it. Do not infer "
+        "any medical condition from symptoms. AI messages may resolve what a USER refers "
+        "to, but a generic agreement or 'that might help' is not confirmation that a "
+        "suggestion has worked or describes a durable fact. Include the USER messages "
+        "needed to support the fact in sourceMessageIds."
     ),
     (
         "Never keep relative time expressions such as 'today', 'yesterday', 'tomorrow', "
@@ -179,7 +213,11 @@ _CANDIDATE_PROMPT_PARTS = (
         "remaining relative time expression. For PROFILE, use the source utterance time as "
         "validFrom. For a future EVENT, keep the scheduled calendar date in content and use "
         "the utterance time as validFrom. For a past EVENT, include the resolved calendar date "
-        "in content and use the event time as validFrom. If only the event date is known, use "
+        "in content and use the event time as validFrom. A date belongs only to the action "
+        "it explicitly qualifies: a show's release date is not the user's viewing date. "
+        "Never transfer dates between actions. If a past EVENT date cannot be grounded "
+        "from the USER statement and its context, omit that EVENT instead of guessing. "
+        "If only the event date is known, use "
         "00:00:00 in the request timezone. Every validFrom and validTo must be a full RFC 3339 "
         "timestamp with a timezone offset; never return a date-only value. When an end date is "
         "supported but its time is unknown, use 23:59:59 in the request timezone as validTo. "
@@ -214,7 +252,16 @@ _CANDIDATE_PROMPT_PARTS = (
         "hate cilantro, so I always ask restaurants to leave it out' produces only the "
         "PROFILE content '사용자는 고수를 싫어한다'. (9) occurredAt=2026-09-02T17:00:00+09:00 "
         "and 'Today I started a new job as an engineer at Acme' produces the PROFILE content "
-        "'사용자는 Acme에서 엔지니어로 일한다' with the utterance time as validFrom."
+        "'사용자는 Acme에서 엔지니어로 일한다' with the utterance time as validFrom. "
+        "(10) 'I visited a gallery with my cousin on September 4, 2026' is an EVENT "
+        "with that cousin, never an EPISODE with the listener. (11) 'Maybe I am sick, "
+        "but I am not sure. I live alone' keeps only the confirmed PROFILE about living "
+        "alone. (12) 'You and I created my practice plan here in this chat' can be an "
+        "EPISODE; saving that plan does not create a separate PROFILE. "
+        "(13) 'I feel like have the asthma. Not know for sure' produces zero candidates, "
+        "including no PROFILE about feeling asthmatic. (14) 'I read Starfield. Its new "
+        "edition came out yesterday' does not date the reading: omit that reading EVENT "
+        "and do not use the publication date as its validFrom or content date."
     ),
 )
 
@@ -374,7 +421,7 @@ def _filtered_candidate_drafts(
     filtered = [
         draft
         for draft in drafts
-        if not _must_drop_candidate(draft, messages_by_id)
+        if not _must_drop_candidate(draft, messages_by_id, payload.characterId)
     ]
     return [
         draft.model_copy(update={"candidateIndex": candidate_index})
@@ -385,10 +432,13 @@ def _filtered_candidate_drafts(
 def _must_drop_candidate(
     draft: MemoryCandidate,
     messages_by_id: dict[int, MemoryConversationHistoryMessage],
+    character_id: str,
 ) -> bool:
     """후보 내용과 USER 원문에서 안전하게 판정 가능한 제외 조건만 적용한다."""
     source_messages = [messages_by_id[source_id] for source_id in draft.sourceMessageIds]
     source_text = " ".join(message.content for message in source_messages)
+    if _has_unsupported_character_reference(draft, source_text, character_id):
+        return True
     if (
         _RELATIVE_TIME_PATTERN.search(draft.content)
         or _AMBIGUOUS_RELATIVE_WEEKDAY_PATTERN.search(draft.content)
@@ -415,6 +465,26 @@ def _must_drop_candidate(
     return bool(
         _LANGUAGE_EXAMPLE_PATTERN.search(source_text)
         and _EXPLICIT_DENIAL_PATTERN.search(source_text)
+    )
+
+
+def _has_unsupported_character_reference(
+    draft: MemoryCandidate,
+    source_text: str,
+    character_id: str,
+) -> bool:
+    """USER 근거에 상대 지칭조차 없는 캐릭터 추가를 차단하며 참여 자체를 증명하지는 않는다."""
+    name_pattern = re.compile(
+        rf"(?<![A-Za-z]){re.escape(character_id)}(?![A-Za-z])"
+        rf"|{_CHARACTER_KOREAN_NAMES[character_id]}",
+        re.IGNORECASE,
+    )
+    mentions_character = name_pattern.search(draft.content)
+    if draft.memoryType != MemoryType.EPISODE and not mentions_character:
+        return False
+    return not (
+        name_pattern.search(source_text)
+        or _DIRECT_SHARED_EXPERIENCE_PATTERN.search(source_text)
     )
 
 
