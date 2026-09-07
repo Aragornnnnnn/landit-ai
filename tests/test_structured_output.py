@@ -102,6 +102,29 @@ class StructuredOutputTests(unittest.TestCase):
         self.assertEqual(result, expected)
         self.assertEqual(len(fake.completions.calls), 2)
 
+    def test_reasoning_options_survive_schema_fallback(self):
+        fake = _FakeOpenAI([
+            _ProviderUnsupportedError("response_format json_schema unsupported"),
+            json.dumps({"name": "legacy"}),
+        ])
+        with patch("app.free_talk.llm.json_completion.create_openai_client", return_value=fake):
+            request_json_completion(
+                settings=self.settings,
+                system_prompt="system",
+                user_prompt="user",
+                reasoning_effort="medium",
+                response_model=_ExampleOutput,
+            )
+        self.assertEqual(len(fake.completions.calls), 2)
+        for call in fake.completions.calls:
+            self.assertEqual(call["max_completion_tokens"], 4096)
+            self.assertEqual(
+                call["extra_body"],
+                {"reasoning": {"effort": "medium", "exclude": True}},
+            )
+        self.assertEqual(fake.completions.calls[0]["response_format"]["type"], "json_schema")
+        self.assertEqual(fake.completions.calls[1]["response_format"]["type"], "json_object")
+
     def test_unsupported_provider_falls_back_to_json_object(self):
         fake = _FakeOpenAI([
             _ProviderUnsupportedError(
