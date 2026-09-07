@@ -9,11 +9,17 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from typing import Annotated, Literal
 
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
 from app.pronunciation.llm.routing import llm_extra_body, served_by_fallback
+from app.pronunciation.llm.structured_completion import (
+    OutputFormat,
+    request_structured_pronunciation_completion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +130,50 @@ class JudgedDifference:
     stress_index: int | None = None
 
 
+class _BaseDifferenceOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    word: str
+    type: Literal["SOUND", "STRESS"]
+    note: str
+
+
+class _BaseCompareOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    differences: list[_BaseDifferenceOutput]
+
+
+class _SoundDifferenceOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    word: str
+    type: Literal["SOUND"]
+    userHeard: str
+    targetSpan: str
+    userSpan: str
+
+
+class _StressDifferenceOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    word: str
+    type: Literal["STRESS"]
+    userHeard: str
+    stressIndex: int = Field(ge=0)
+
+
+class _ExtendedCompareOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    differences: list[
+        Annotated[
+            _SoundDifferenceOutput | _StressDifferenceOutput,
+            Field(discriminator="type"),
+        ]
+    ]
+
+
 def judge_pronunciation(
     client: OpenAI,
     settings: Settings,
@@ -141,54 +191,85 @@ def judge_pronunciation(
         _audio_part(reference_wav),
         _audio_part(user_wav),
     ]
-    return _call_with_retry(client, settings, content, deadline)
+    response_model = _ExtendedCompareOutput if extended else _BaseCompareOutput
+    return _call_with_retry(
+        client,
+        settings,
+        content,
+        response_model,
+        deadline,
+    )
 
 
 def _call_with_retry(
     client: OpenAI,
     settings: Settings,
     content: list,
+    response_model: type[BaseModel],
     deadline: float | None = None,
 ) -> list["JudgedDifference"]:
     # 실측(LAN-373 스파이크)에서 36회 중 1회 스키마 위반이 나왔으므로
     # JSON 파싱뿐 아니라 스키마 검증 실패까지 같은 재시도로 흡수한다.
     # 단, 전체 분석 예산(deadline)이 남아 있을 때만 시도한다.
     last_error: Exception | None = None
-    for _ in range(2):
-        timeout = settings.pronunciation_llm_timeout_seconds
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            timeout = min(timeout, remaining)
+    output_format: OutputFormat = "json_schema"
+    for attempt in range(1, 3):
+        if deadline is not None and deadline - time.monotonic() <= 0:
+            break
         try:
-            response = client.chat.completions.create(
-                model=settings.pronunciation_model,
-                temperature=0.0,
-                max_tokens=4000,
-                messages=[{"role": "user", "content": content}],
-                extra_body=llm_extra_body(settings),
-                timeout=timeout,
+            result = request_structured_pronunciation_completion(
+                client,
+                settings,
+                request={
+                    "model": settings.pronunciation_model,
+                    "temperature": 0.0,
+                    "max_tokens": 4000,
+                    "messages": [{"role": "user", "content": content}],
+                    "extra_body": llm_extra_body(settings),
+                },
+                response_model=response_model,
+                schema_name="pronunciation_comparison",
+                workflow="pronunciation_comparison",
+                deadline=deadline,
+                start_format=output_format,
             )
         except Exception as error:  # noqa: BLE001 — SDK 예외 전반을 생성 실패로 취급
             raise PronunciationJudgmentError(str(error)) from error
+        output_format = result.output_format
         # 폴백 프로바이더 서빙은 STRESS 검출이 죽는 조용한 품질 저하다 (LAN-389).
         # 가용성을 위해 허용하되 발동 사실은 반드시 관측 가능해야 한다.
-        fallback_provider = served_by_fallback(settings, response)
+        fallback_provider = served_by_fallback(settings, result.response)
         if fallback_provider is not None:
             logger.warning(
                 "pronunciation judgment served by fallback provider %s",
                 fallback_provider,
             )
-        raw = (response.choices[0].message.content or "").strip()
         try:
-            return _parse_differences(raw)
+            return _parse_differences(
+                result.content,
+                response_model if output_format == "json_schema" else None,
+            )
         except (
             json.JSONDecodeError,
             ValueError,
+            ValidationError,
             PronunciationJudgmentInvalidError,
         ) as error:
             last_error = error
+            logger.warning(
+                "발음 판정 JSON 계약 검증에 실패했습니다. "
+                "event=json_format_failure workflow=pronunciation_comparison "
+                "reason=%s attempt=%s maxAttempts=2",
+                type(error).__name__,
+                attempt,
+            )
+            if attempt < 2:
+                logger.warning(
+                    "발음 판정 JSON 계약 오류를 재시도합니다. "
+                    "event=structured_output_retry "
+                    "workflow=pronunciation_comparison nextAttempt=%s maxAttempts=2",
+                    attempt + 1,
+                )
     if last_error is None:
         raise PronunciationJudgmentError(
             "analysis budget exhausted before judgment"
@@ -198,8 +279,24 @@ def _call_with_retry(
     ) from last_error
 
 
-def _parse_differences(raw: str) -> list[JudgedDifference]:
-    payload = json.loads(_strip_fences(raw))
+def _parse_differences(
+    raw: str,
+    response_model: type[BaseModel] | None = None,
+) -> list[JudgedDifference]:
+    if response_model is None:
+        payload = json.loads(_strip_fences(raw))
+    else:
+        try:
+            payload = response_model.model_validate_json(raw).model_dump()
+        except ValidationError as exc:
+            reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
+            logger.warning(
+                "발음 판정 schema 검증에 실패해 기존 parser로 전환합니다. "
+                "event=schema_validation_failure workflow=pronunciation_comparison "
+                "reason=%s",
+                reason,
+            )
+            payload = json.loads(_strip_fences(raw))
     if not isinstance(payload, dict):
         # 배열·문자열 등 유효 JSON이지만 객체가 아닌 응답 — 스키마 위반으로 재시도한다
         raise PronunciationJudgmentInvalidError("response must be a JSON object")

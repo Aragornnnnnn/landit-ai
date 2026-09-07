@@ -36,7 +36,8 @@ class FakeCompletions:
         self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        content = self.contents.pop(0)
+        index = len(self.calls) - 1
+        content = self.contents[min(index, len(self.contents) - 1)]
         if isinstance(content, Exception):
             raise content
         return SimpleNamespace(
@@ -1952,7 +1953,7 @@ class FreeTalkApiTests(unittest.TestCase):
         response = self._post(
             "/api/v1/free-talk/turn",
             valid_turn_payload(),
-            FakeOpenAI(contents=["not json"]),
+            FakeOpenAI(contents=["not json", "still not json"]),
         )
 
         self.assertEqual(response.status_code, 502)
@@ -2197,7 +2198,7 @@ class FreeTalkApiTests(unittest.TestCase):
         response = self._post(
             "/api/v1/free-talk/conversation-embeddings",
             valid_conversation_embeddings_payload(),
-            FakeOpenAI(contents=["not json"]),
+            FakeOpenAI(contents=["not json", "still not json"]),
         )
 
         self.assertEqual(response.status_code, 502)
@@ -2860,7 +2861,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
 
-    def test_memory_candidates_rejects_malformed_json_without_repair(self):
+    def test_memory_candidates_retries_malformed_json_once(self):
         fake_openai = FakeOpenAI(
             contents=[
                 "not json",
@@ -2874,11 +2875,10 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai,
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_memory_candidates_rejects_missing_fields_without_repair(self):
+    def test_memory_candidates_retries_missing_fields_once(self):
         fake_openai = FakeOpenAI(
             contents=[
                 json.dumps({"candidates": [{}]}),
@@ -2892,11 +2892,10 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai,
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_memory_candidates_does_not_repair_type_errors(self):
+    def test_memory_candidates_retries_schema_type_errors_once(self):
         fake_openai = FakeOpenAI(
             contents=[
                 json.dumps(
@@ -2912,8 +2911,8 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai,
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_memory_candidates_trims_content_before_length_validation(self):
         fake_openai = FakeOpenAI(
@@ -2961,10 +2960,9 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"]["resolutions"][0]["operation"],
             "SUPERSEDE",
         )
-        self.assertEqual(
-            fake_openai.completions.calls[0]["response_format"],
-            {"type": "json_object"},
-        )
+        response_format = fake_openai.completions.calls[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
         system_prompt = fake_openai.completions.calls[0]["messages"][0]["content"]
         self.assertIn(
             "candidateIndex, operation, and supersededMemoryIds",
@@ -3260,7 +3258,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
-    def test_memory_resolution_rejects_missing_fields_without_repair(self):
+    def test_memory_resolution_retries_missing_fields_once(self):
         fake_openai = FakeOpenAI(
             contents=[
                 json.dumps({}),
@@ -3284,11 +3282,10 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai,
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_memory_resolution_does_not_repair_type_errors(self):
+    def test_memory_resolution_retries_schema_type_errors_once(self):
         fake_openai = FakeOpenAI(
             contents=[
                 json.dumps(
@@ -3322,8 +3319,8 @@ class FreeTalkApiTests(unittest.TestCase):
             fake_openai,
         )
 
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_openapi_exposes_all_free_talk_generation_routes(self):
         paths = self._app().openapi()["paths"]
