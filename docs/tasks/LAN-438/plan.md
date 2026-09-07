@@ -74,3 +74,29 @@ AI rubric 구현과 BE 계산·저장 구현은 파일이 겹치지 않는 독�
 - 블라인드 fixture의 ID 고유성·split·repeat·답변 타입을 호출 전에 검증한다. 기존 manifest와 데이터·모델·루브릭·프롬프트·평가 버전이 다르면 실행을 중단한다.
 - baseline의 300회 호출·토큰은 제품 전용이고 기준 평가 40회는 별도로 명시한다.
 - 전체 unittest 488개 실행, 7개 건너뜀으로 통과했다. 안전 정책 보강 후 실제 LLM 평가는 재실행하지 않았다.
+
+## 독립 평가 경로 블라인드 재측정 준비
+
+- 실행기를 `generate_session_level_assessment()`로 전환했다. 턴 피드백 4회와 최종 피드백 생성·캐시 준비를 제거해, 비용과 지연은 독립 수준 평가 및 그 복구 호출만 집계한다.
+- 계측 SDK factory는 제품 호출의 `timeout` 키워드를 그대로 전달한다. 평가 모델·루브릭·가중치·임계값은 변경하지 않았다.
+- manifest에 실제 대상 endpoint, 최초 평가·Core 재요청 프롬프트 해시를 기록한다. 이전 결합 경로 manifest를 새 실행에 재사용하면 중단한다.
+- `--reference-dir`은 새 결과 디렉터리에 기준표만 복사한다. 데이터·질문·루브릭·기준 모델·평가 버전 일치, 40개 ID의 완전성, 성공 응답의 근거를 검증한다. 원본 경로·파일 해시를 기록하고 기존 출력은 덮어쓰지 않는다.
+- 이전 기준표 manifest에는 기준 프롬프트 해시가 없다. 재사용 시 이 제한을 `legacyPromptFingerprintMissing`에 명시한다. 이는 새 사람 평가나 새 독립 모델 검증을 대체하지 않는다.
+- 재사용 기준표의 비용은 과거 비용으로 분리하고 이번 지출·신규 기준 모델 호출 수에는 포함하지 않는다.
+- 검증: 전체 unittest 490개 실행, 7개 건너뜀으로 통과했다. 이번 수정 자체는 외부 모델을 호출하지 않았다.
+
+재측정 명령은 저장소 루트에서 실행한다. 기존 40개 입력 및 10개 반복 표본의 추가 20회를 사용한다.
+
+```sh
+.venv/bin/python -m scripts.evaluate_onboarding_level_blind product \
+  --cases tests/fixtures/lan_438_onboarding_blind_cases.json \
+  --output-dir /private/tmp/lan438-independent-full60-20260907 \
+  --reference-dir /private/tmp/lan438-structured-full60-20260906 \
+  --product-model openai/gpt-5.4-mini \
+  --reference-model google/gemini-3.5-flash
+.venv/bin/python -m scripts.evaluate_onboarding_level_blind score \
+  --cases tests/fixtures/lan_438_onboarding_blind_cases.json \
+  --output-dir /private/tmp/lan438-independent-full60-20260907 \
+  --product-model openai/gpt-5.4-mini \
+  --reference-model google/gemini-3.5-flash
+```

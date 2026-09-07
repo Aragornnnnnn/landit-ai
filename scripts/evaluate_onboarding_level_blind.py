@@ -16,16 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter
 
 from app.conversation.application import next_message_service
 from app.conversation.application.next_message_service import (
-    clear_message_feedback_cache,
-    generate_message_feedback,
-    generate_session_feedback,
+    generate_session_level_assessment,
 )
 from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
-from app.models.conversation import MessageFeedbackRequest, SessionFeedbackRequest
+from app.models.conversation import SessionLevelAssessmentRequest
 
 
 QUESTIONS = [
@@ -153,11 +151,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("phase", choices=("reference", "product", "score"))
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--reference-dir", type=Path)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--repeat-runs", type=int, default=3)
     parser.add_argument("--reference-model", default="google/gemini-3.5-flash")
     parser.add_argument("--product-model", default="openai/gpt-5.4-mini")
-    parser.add_argument("--message-feedback-model", default="openai/gpt-5.4")
     parser.add_argument("--aws-profile", default="landit")
     parser.add_argument("--ssm-key", default="/landit/develop/OPENROUTER_API_KEY")
     return parser.parse_args()
@@ -221,30 +219,36 @@ def write_manifest(args: argparse.Namespace) -> None:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    prompt = next_message_service._session_feedback_system_prompt(True)
+    prompt = next_message_service._session_level_assessment_system_prompt()
     manifest = {
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "aiRevision": revision,
-        "beRevision": "af1e778b5e5914f8c4e9efcc90b4bdff1f56a04b",
+        "bePolicyScope": "local formula replica, not BE HTTP or database",
         "datasetSha256": file_sha256(args.cases),
         "rubricSha256": file_sha256(
             repository / "app/conversation/application/session_assessment_rubric.py"
         ),
-        "sessionFeedbackPromptSha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "productEndpoint": "/api/v1/conversation/session-level-assessment",
+        "measurementScope": "session-level-assessment only",
+        "sessionLevelAssessmentPromptSha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "coreRetryPromptSha256": hashlib.sha256(
+            next_message_service._session_level_assessment_retry_system_prompt().encode()
+        ).hexdigest(),
         "questionSha256": hashlib.sha256(
             json.dumps(QUESTIONS, ensure_ascii=False, sort_keys=True).encode()
         ).hexdigest(),
         "productModel": args.product_model,
-        "messageFeedbackModel": args.message_feedback_model,
-        "messageFeedbackReviewEnabled": False,
         "referenceModel": args.reference_model,
+        "referencePromptSha256": hashlib.sha256(
+            reference_prompt({"answers": [""] * 4}).encode()
+        ).hexdigest(),
         "assessmentVersion": "text-level-v1.1",
     }
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text(encoding="utf-8"))
         changed = [
             key for key, value in manifest.items()
-            if key not in {"createdAt", "aiRevision", "beRevision"}
+            if key not in {"createdAt", "aiRevision"}
             and previous.get(key) != value
         ]
         if changed:
@@ -386,23 +390,6 @@ def run_reference(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None
         print(f"reference {case['caseId']} {value['status']}", flush=True)
 
 
-def message_payload(session_id: int, sequence: int, answer: str) -> dict[str, Any]:
-    question = QUESTIONS[sequence - 1]
-    return {
-        "sessionId": session_id,
-        "messageId": session_id * 10 + sequence,
-        "turnNumber": sequence,
-        "messageSequence": sequence * 2,
-        "scenario": SCENARIO,
-        "evaluationContext": {
-            "type": "AI_MESSAGE",
-            "content": question["text"],
-            "translatedContent": question["translation"],
-        },
-        "userMessage": answer,
-    }
-
-
 def assessment_payload(session_id: int, case: dict[str, Any]) -> dict[str, Any]:
     messages = []
     for sequence, (question, answer) in enumerate(
@@ -506,13 +493,11 @@ def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
         openrouter_api_key=SecretStr(key),
         openrouter_base_url="https://openrouter.ai/api/v1",
         openrouter_model=args.product_model,
-        message_feedback_model=args.message_feedback_model,
-        message_feedback_review_enabled=False,
     )
     recorder = UsageRecorder([])
     original_factory = next_message_service.create_openai_client
-    next_message_service.create_openai_client = lambda resolved: recorder.wrap(
-        create_openai_client(resolved)
+    next_message_service.create_openai_client = lambda resolved, **kwargs: recorder.wrap(
+        create_openai_client(resolved, **kwargs)
     )
     try:
         for index, (case, run) in enumerate(
@@ -523,19 +508,9 @@ def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             recorder.phase = f"run-{run}"
             call_start = len(recorder.calls)
             started = time.perf_counter()
-            clear_message_feedback_cache()
             try:
-                feedback_statuses = []
-                for sequence, answer in enumerate(case["answers"], start=1):
-                    response = generate_message_feedback(
-                        MessageFeedbackRequest.model_validate(
-                            message_payload(session_id, sequence, answer)
-                        ),
-                        settings,
-                    )
-                    feedback_statuses.append(response.feedbackStatus.value)
-                response = generate_session_feedback(
-                    SessionFeedbackRequest.model_validate(
+                response = generate_session_level_assessment(
+                    SessionLevelAssessmentRequest.model_validate(
                         assessment_payload(session_id, case)
                     ),
                     settings,
@@ -550,7 +525,6 @@ def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
                     "split": case["split"],
                     "run": run,
                     "status": "SUCCESS",
-                    "messageFeedbackStatuses": feedback_statuses,
                     "levelAssessment": assessment,
                     "bePolicy": be_policy(assessment),
                     "latencySeconds": round(time.perf_counter() - started, 3),
@@ -567,8 +541,6 @@ def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
                     "latencySeconds": round(time.perf_counter() - started, 3),
                     "calls": recorder.calls[call_start:],
                 }
-            finally:
-                clear_message_feedback_cache()
             append_jsonl(output, value)
             print(
                 f"product {index} {case['caseId']} run={run} {value['status']}",
@@ -580,6 +552,43 @@ def run_product(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def reuse_reference(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
+    source = args.reference_dir / "reference.jsonl"
+    target = args.output_dir / "reference.jsonl"
+    if target.exists():
+        raise FileExistsError(f"reference output already exists: {target}")
+    previous = json.loads((args.reference_dir / "manifest.json").read_text())
+    manifest_path = args.output_dir / "manifest.json"
+    current = json.loads(manifest_path.read_text())
+    for key in (
+        "datasetSha256", "rubricSha256", "questionSha256",
+        "referenceModel", "assessmentVersion",
+    ):
+        if previous.get(key) != current[key]:
+            raise ValueError("reference manifest settings changed: " + key)
+    if previous.get("referencePromptSha256", current["referencePromptSha256"]) != current["referencePromptSha256"]:
+        raise ValueError("reference manifest settings changed: referencePromptSha256")
+    rows = read_jsonl(source)
+    by_id = {case["caseId"]: case for case in cases}
+    if len(rows) != len(cases) or {row["caseId"] for row in rows} != set(by_id):
+        raise ValueError("reference must contain every case exactly once")
+    for row in rows:
+        if row["status"] == "SUCCESS":
+            if row["model"] != current["referenceModel"]:
+                raise ValueError("reference row model changed")
+            parse_reference(json.dumps(row["reference"]), by_id[row["caseId"]])
+        elif row["status"] != "FAILED":
+            raise ValueError("reference row status is invalid")
+    current["referenceReuse"] = {
+        "source": str(source.resolve()),
+        "sha256": file_sha256(source),
+        "sourceManifestSha256": file_sha256(args.reference_dir / "manifest.json"),
+        "legacyPromptFingerprintMissing": "referencePromptSha256" not in previous,
+    }
+    target.write_bytes(source.read_bytes())
+    manifest_path.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n")
 
 
 def distance_to_range(level: int | None, allowed: list[int]) -> int | None:
@@ -662,6 +671,12 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
     reference_cost = sum(
         Decimal(str(usage.get("cost", 0) or 0)) for usage in reference_usage
     )
+    manifest_path = args.output_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    reused_reference = manifest.get("referenceReuse")
+    if reused_reference and file_sha256(args.output_dir / "reference.jsonl") != reused_reference["sha256"]:
+        raise ValueError("reused reference file changed")
+    new_reference_cost = Decimal("0") if reused_reference else reference_cost
     domain_stats = {}
     for name in DOMAIN_NAMES:
         pairs = []
@@ -736,14 +751,16 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             ),
             "referenceSuccess": len(references),
             "modelCalls": len(calls),
-            "modelCallsScope": "product",
-            "referenceModelCalls": len(read_jsonl(args.output_dir / "reference.jsonl")),
+            "modelCallsScope": "session-level-assessment only",
+            "referenceModelCalls": 0 if reused_reference else len(reference_rows),
+            "reusedReferenceResults": len(reference_rows) if reused_reference else 0,
             "finishReasons": finish_reasons,
             "tokens": tokens,
-            "tokensScope": "product",
+            "tokensScope": "session-level-assessment only",
             "productCostUsd": decimal(product_cost),
-            "referenceCostUsd": decimal(reference_cost),
-            "totalCostUsd": decimal(product_cost + reference_cost),
+            "referenceCostUsd": decimal(new_reference_cost),
+            "historicalReferenceCostUsd": decimal(reference_cost) if reused_reference else "0.00",
+            "totalCostUsd": decimal(product_cost + new_reference_cost),
             "latencyP50": statistics.median(
                 row["latencySeconds"] for row in products
             ),
@@ -800,6 +817,10 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_manifest(args)
     cases = load_cases(args.cases)
+    if args.reference_dir:
+        if args.phase != "product":
+            raise ValueError("--reference-dir is only supported for the product phase")
+        reuse_reference(args, cases)
     if args.phase == "reference":
         run_reference(args, cases)
     elif args.phase == "product":
