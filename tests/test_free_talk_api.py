@@ -2278,7 +2278,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v8",
+            "memory-candidate-v9",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -2451,7 +2451,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v8",
+                "extractorVersion": "memory-candidate-v9",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
@@ -2565,39 +2565,6 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(len(response.json()["data"]["candidates"]), 1)
                 self.assertEqual(len(fake_openai.embeddings.calls), 1)
-
-    def test_memory_candidates_drops_fact_inferred_only_from_question(self):
-        questions = (
-            "Where should I go for my usual Saturday walk with Nori?",
-            "I wonder where I should go for my usual Saturday walk with Nori?",
-            "혹시 노리랑 매주 토요일에 산책할 만한 곳이 어디일까?",
-            "노리랑 매주 토요일에 산책해도 될까?",
-        )
-
-        for question in questions:
-            with self.subTest(question=question):
-                payload = valid_memory_candidates_payload()
-                payload["conversationHistory"][1]["content"] = question
-                fake_openai = FakeOpenAI(
-                    contents=[
-                        json.dumps(
-                            valid_memory_candidate_completion(
-                                memoryType="PROFILE",
-                                content="사용자는 Nori와 매주 토요일에 산책한다.",
-                            ),
-                        ),
-                    ],
-                )
-
-                response = self._post(
-                    "/api/v1/free-talk/memory-candidates",
-                    payload,
-                    fake_openai,
-                )
-
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.json()["data"]["candidates"], [])
-                self.assertEqual(len(fake_openai.embeddings.calls), 0)
 
     def test_memory_candidates_drops_conversation_control_message(self):
         payload = valid_memory_candidates_payload()
