@@ -428,6 +428,9 @@ class NextMessageApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(fake_openai.completions.kwargs["model"], "openrouter-test-model")
+        response_format = fake_openai.completions.kwargs["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
         messages = fake_openai.completions.kwargs["messages"]
         self.assertIn("Counterpart role: friend", messages[1]["content"])
         self.assertIn(
@@ -2894,7 +2897,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_message_feedback_non_json_candidate_returns_failed_without_retry(self):
+    def test_message_feedback_non_json_candidate_retries_once_then_returns_failed(self):
         fake_openai = FakeOpenAI(content="The response is unavailable.")
         app = create_app(
             make_settings(
@@ -2911,10 +2914,10 @@ class MessageFeedbackApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json()["data"]["feedbackStatus"], "FAILED")
-        self.assertEqual(len(fake_openai.completions.calls), 1)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIsNone(get_cached_message_feedback(100, 1001))
 
-    def test_message_feedback_non_json_copy_uses_candidate_without_retry(self):
+    def test_message_feedback_non_json_copy_retries_once_then_uses_candidate(self):
         candidate = message_feedback_candidate(good_message_feedback(1001))
         fake_openai = FakeOpenAI(
             contents=[json.dumps(candidate), "The response is unavailable."],
@@ -2933,7 +2936,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 202)
-        self.assertEqual(len(fake_openai.completions.calls), 2)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
         entry = next_message_service._get_expected_message_feedback_entries(100, [1001])[0]
         self.assertTrue(entry.copy_was_fallback)
 
@@ -2982,6 +2985,9 @@ class MessageFeedbackApiTests(unittest.TestCase):
                 "error": None,
             },
         )
+        response_format = fake_openai.completions.calls[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
         candidate_messages = fake_openai.completions.calls[0]["messages"]
         review_messages = fake_openai.completions.calls[1]["messages"]
         self.assertIn("Feedback Task", candidate_messages[0]["content"])
