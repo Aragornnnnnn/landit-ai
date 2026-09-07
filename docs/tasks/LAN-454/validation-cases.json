@@ -1,0 +1,6 @@
+[
+  {"id": "different_personal_action_dates", "turns": [["USER", "I visited my younger brother once. He started school yesterday."]], "types": ["EVENT", "PROFILE"], "min": 1, "max": 2, "required": ["남동생", "2026-09-06"], "forbidden": ["방문"], "validFrom": "2026-09-06T00:00:00+09:00", "eventCount": 1, "eventRequired": ["남동생"]},
+  {"id": "public_news_with_stable_preferences", "turns": [["USER", "I love jazz and play piano every Sunday. A famous singer won an award yesterday."]], "types": ["PROFILE"], "min": 2, "max": 2, "required": ["재즈", "일요일"], "forbidden": ["수상"]},
+  {"id": "undated_concert_with_public_event", "turns": [["USER", "I went to a concert once. The world tournament started on September 5, 2026."]], "types": [], "min": 0, "max": 0},
+  {"id": "explicit_current_chat_episode", "turns": [["USER", "You helped me create my study plan here in this chat."]], "types": ["EPISODE"], "min": 1, "max": 1, "required": ["chloe"]}
+]

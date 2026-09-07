@@ -472,6 +472,20 @@ class JudgmentBudgetTests(unittest.TestCase):
             )
         self.assertEqual(len(client.completions.calls), 0)
 
+    def test_blank_response_is_retried_before_success(self):
+        for content in ("", "   ", None):
+            with self.subTest(content=content):
+                client = FakeClient(contents=[content, '{"differences": []}'])
+                result = judge_pronunciation(
+                    client,
+                    make_settings(),
+                    reference_wav=b"reference",
+                    user_wav=b"user",
+                    deadline=time.monotonic() + 1.0,
+                )
+                self.assertEqual(result, [])
+                self.assertEqual(len(client.completions.calls), 2)
+
     def test_retry_is_skipped_when_deadline_passes_mid_call(self):
         client = FakeClient(contents=["not json", '{"differences": []}'], delay=0.15)
 
@@ -503,9 +517,14 @@ class DescribeHardeningTests(unittest.TestCase):
         return result, client
 
     def test_stress_index_within_syllables_is_kept(self):
-        result, _ = self.describe('{"userHeard": "hik·ing", "stressIndex": 1}')
+        result, client = self.describe(
+            '{"userHeard": "hik·ing", "stressIndex": 1}'
+        )
 
         self.assertEqual(result.stress_index, 1)
+        response_format = client.completions.calls[0]["response_format"]
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
 
     def test_stress_index_beyond_syllables_falls_back_to_none(self):
         result, _ = self.describe('{"userHeard": "hik·ing", "stressIndex": 99}')

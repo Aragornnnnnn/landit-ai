@@ -202,6 +202,7 @@ class MemoryCandidateForResolution(BaseModel):
     content: str = Field(max_length=500)
     memoryType: MemoryType
     sourceMessageIds: list[int] = Field(min_length=1)
+    sourceMessages: list[MemoryConversationHistoryMessage] = Field(default_factory=list)
     observedAt: datetime
     comparableMemories: list["ComparableMemory"] = Field(max_length=3)
 
@@ -352,6 +353,7 @@ class FreeTalkContext(BaseModel):
     characterId: FreeTalkCharacter
     targetLocale: str
     baseLocale: str
+    timezone: str = "Asia/Seoul"
     topic: FreeTalkTopicContext | None = None
 
     @field_validator("topic", mode="before")
@@ -373,6 +375,15 @@ class FreeTalkContext(BaseModel):
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_must_be_supported(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a supported IANA timezone") from exc
+        return value
 
 
 class MemoryContext(BaseModel):

@@ -2,7 +2,7 @@
 import json
 import logging
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
 from app.free_talk.llm.embeddings import EMBEDDING_MODEL, request_embeddings
@@ -21,6 +21,12 @@ from app.models.free_talk import (
 _MAX_EXCERPTS = 4
 
 logger = logging.getLogger(__name__)
+
+
+class _ExcerptSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    excerpts: list[str] = Field(min_length=1, max_length=_MAX_EXCERPTS)
 
 
 class _RepairableExcerptError(AiResponseInvalidError):
@@ -80,6 +86,10 @@ def _extract_excerpt_texts(
         settings=settings,
         system_prompt=_extraction_system_prompt(),
         user_prompt=user_prompt,
+        response_model=_ExcerptSelection,
+        schema_name="free_talk_conversation_excerpts",
+        workflow="free_talk_conversation_excerpts",
+        retry_schema_violations=False,
     )
     try:
         return _validated_excerpt_texts(data)
@@ -91,6 +101,10 @@ def _extract_excerpt_texts(
         settings=settings,
         system_prompt=_extraction_repair_system_prompt(repair_reason),
         user_prompt=user_prompt,
+        response_model=_ExcerptSelection,
+        schema_name="free_talk_conversation_excerpts_repair",
+        workflow="free_talk_conversation_excerpts_repair",
+        retry_schema_violations=False,
     )
     try:
         return _validated_excerpt_texts(repaired_data, limit_excess=True)

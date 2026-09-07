@@ -10,9 +10,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.common.inner_thought_contract import (
+    InnerThoughtCandidate,
     InnerThoughtContractError,
     InnerThoughtResult,
     fallback_inner_thought,
@@ -25,6 +26,10 @@ from app.conversation.application.session_assessment_rubric import (
 )
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
+from app.core.structured_output import (
+    json_schema_response_format,
+    structured_outputs_unsupported,
+)
 from app.models.conversation import (
     ClosingMessageRequest,
     ClosingMessageResponse,
@@ -209,6 +214,16 @@ class MessageFeedbackNotReadyError(Exception):
         super().__init__(f"message feedback is not ready: {missing_message_ids}")
 
 
+class _DetectedPattern(BaseModel):
+    errorType: str
+    status: str
+    evidence: str
+
+
+class _MessageFeedbackStructuredOutput(MessageFeedbackCandidate):
+    detectedPatterns: list[_DetectedPattern]
+
+
 def _message_feedback_validation_type(reason: str) -> str:
     if reason in _RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS:
         return "CONSISTENCY"
@@ -232,6 +247,9 @@ def generate_next_message(
         system_prompt=_next_message_system_prompt(),
         user_prompt=_next_message_user_prompt(request),
         max_tokens=512,
+        response_model=NextMessageResponse,
+        schema_name="scenario_next_message",
+        workflow="scenario_next_message",
     )
     return _recover_next_message_response(data, request)
 
@@ -308,6 +326,10 @@ def generate_inner_thought(
             system_prompt=_inner_thought_system_prompt(),
             user_prompt=_inner_thought_user_prompt(request),
             max_tokens=256,
+            response_model=InnerThoughtCandidate,
+            schema_name="scenario_inner_thought",
+            workflow="scenario_inner_thought",
+            max_attempts=1,
         )
         inner_thought = parse_inner_thought(data)
     except (AiResponseInvalidError, InnerThoughtContractError):
@@ -330,6 +352,10 @@ def _repair_or_fallback_inner_thought(
             system_prompt=_inner_thought_repair_system_prompt(),
             user_prompt=_inner_thought_user_prompt(request),
             max_tokens=256,
+            response_model=InnerThoughtCandidate,
+            schema_name="scenario_inner_thought_repair",
+            workflow="scenario_inner_thought_repair",
+            max_attempts=1,
         )
     except AiGenerationFailedError:
         raise
@@ -363,6 +389,9 @@ def generate_closing_message(
         system_prompt=_closing_message_system_prompt(),
         user_prompt=_closing_message_user_prompt(request),
         max_tokens=320,
+        response_model=ClosingMessageResponse,
+        schema_name="scenario_closing_message",
+        workflow="scenario_closing_message",
     )
     return _recover_closing_message_response(data)
 
@@ -376,6 +405,9 @@ def _generate_closing_message_candidate(
         system_prompt=_closing_message_system_prompt(),
         user_prompt=_closing_message_user_prompt(request),
         max_tokens=320,
+        response_model=ClosingMessageResponse,
+        schema_name="scenario_closing_message_candidate",
+        workflow="scenario_closing_message_candidate",
     )
     try:
         return ClosingMessageResponse.model_validate(data)
@@ -538,6 +570,10 @@ def _generate_message_feedback_candidate(
             user_prompt=_message_feedback_user_prompt(request),
             max_tokens=768,
             model=candidate_model,
+            response_model=_MessageFeedbackStructuredOutput,
+            schema_name="scenario_message_feedback",
+            workflow="message_feedback_candidate",
+            retry_schema_violations=False,
         )
         parsed = _parse_message_feedback_candidate_with_consistency_warning(
             candidate_data,
@@ -569,6 +605,10 @@ def _generate_message_feedback_candidate(
             ),
             max_tokens=768,
             model=candidate_model,
+            response_model=_MessageFeedbackStructuredOutput,
+            schema_name="scenario_message_feedback_repair",
+            workflow="message_feedback_candidate_repair",
+            retry_schema_violations=False,
         )
         try:
             parsed = _parse_message_feedback_candidate_with_consistency_warning(
@@ -641,6 +681,10 @@ def _review_message_feedback_candidate(
             ),
             max_tokens=768,
             model=review_model,
+            response_model=_MessageFeedbackStructuredOutput,
+            schema_name="scenario_message_feedback_review",
+            workflow="message_feedback_review",
+            retry_schema_violations=False,
         )
         (
             feedback,
@@ -688,6 +732,10 @@ def _review_message_feedback_candidate(
             ),
             max_tokens=768,
             model=review_model,
+            response_model=_MessageFeedbackStructuredOutput,
+            schema_name="scenario_message_feedback_review_repair",
+            workflow="message_feedback_review_repair",
+            retry_schema_violations=False,
         )
         (
             feedback,
@@ -1138,7 +1186,9 @@ def generate_session_feedback(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         max_tokens=512,
-        response_format=_session_feedback_response_format(),
+        response_model=SessionFeedbackSummary,
+        schema_name="scenario_session_feedback",
+        workflow="scenario_session_feedback",
     )
     summary = _recover_session_feedback_summary(data, request.sessionId)
 
@@ -1541,6 +1591,11 @@ def _request_json_completion(
     model: str | None = None,
     response_format: dict[str, Any] | None = None,
     deadline: float | None = None,
+    response_model: type[BaseModel] | None = None,
+    schema_name: str = "json_response",
+    workflow: str = "scenario_json_completion",
+    max_attempts: int = 2,
+    retry_schema_violations: bool = True,
 ) -> dict[str, Any]:
     resolved_model = model or _required_openrouter_model(settings)
     try:
@@ -1552,7 +1607,7 @@ def _request_json_completion(
             if remaining is None
             else create_openai_client(settings, timeout=remaining)
         )
-        completion_arguments: dict[str, Any] = {
+        request = {
             "model": resolved_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -1561,18 +1616,116 @@ def _request_json_completion(
             "temperature": 0,
             "max_tokens": max_tokens,
         }
-        if response_format is not None:
-            completion_arguments["response_format"] = response_format
-        completion = client.chat.completions.create(
-            **completion_arguments,
+        if response_model is None:
+            if response_format is not None:
+                request["response_format"] = response_format
+            completion = client.chat.completions.create(**request)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise AiGenerationFailedError("assessment_deadline_exceeded")
+            return _parse_json_object(_extract_message_content(completion))
+
+        request["response_format"] = json_schema_response_format(
+            response_model,
+            name=schema_name,
         )
-        if deadline is not None and time.monotonic() >= deadline:
-            raise AiGenerationFailedError("assessment_deadline_exceeded")
+        for attempt in range(1, max_attempts + 1):
+            try:
+                completion = client.chat.completions.create(**request)
+            except Exception as exc:
+                if not structured_outputs_unsupported(exc):
+                    raise
+                logger.warning(
+                    "Structured Outputs를 지원하지 않아 json_object로 전환합니다. "
+                    "event=structured_output_fallback workflow=%s provider=%s model=%s "
+                    "fromFormat=json_schema toFormat=json_object "
+                    "attempt=%s maxAttempts=%s",
+                    workflow,
+                    settings.llm_provider,
+                    resolved_model,
+                    attempt,
+                    max_attempts,
+                )
+                request["response_format"] = {"type": "json_object"}
+                try:
+                    completion = client.chat.completions.create(**request)
+                except Exception as fallback_exc:
+                    if not structured_outputs_unsupported(fallback_exc):
+                        raise
+                    logger.warning(
+                        "json_object를 지원하지 않아 기존 프롬프트 방식으로 전환합니다. "
+                        "event=structured_output_fallback workflow=%s provider=%s "
+                        "model=%s fromFormat=json_object toFormat=prompt "
+                        "attempt=%s maxAttempts=%s",
+                        workflow,
+                        settings.llm_provider,
+                        resolved_model,
+                        attempt,
+                        max_attempts,
+                    )
+                    request.pop("response_format", None)
+                    completion = client.chat.completions.create(**request)
+                return _parse_json_object(_extract_message_content(completion))
+            try:
+                data = _parse_strict_json_object(_extract_message_content(completion))
+            except AiResponseInvalidError as exc:
+                logger.warning(
+                    "Structured Outputs JSON 형식 검증에 실패했습니다. "
+                    "event=json_format_failure workflow=%s provider=%s model=%s "
+                    "reason=%s attempt=%s maxAttempts=%s",
+                    workflow,
+                    settings.llm_provider,
+                    resolved_model,
+                    exc.reason,
+                    attempt,
+                    max_attempts,
+                )
+                if attempt == max_attempts:
+                    raise
+                logger.warning(
+                    "Structured Outputs JSON 형식 오류를 재시도합니다. "
+                    "event=structured_output_retry workflow=%s provider=%s model=%s "
+                    "nextAttempt=%s maxAttempts=%s",
+                    workflow,
+                    settings.llm_provider,
+                    resolved_model,
+                    attempt + 1,
+                    max_attempts,
+                )
+                continue
+            try:
+                response_model.model_validate(data)
+            except ValidationError as exc:
+                reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
+                logger.warning(
+                    "Structured Outputs schema 검증에 실패했습니다. "
+                    "event=schema_validation_failure workflow=%s provider=%s model=%s "
+                    "reason=%s attempt=%s maxAttempts=%s",
+                    workflow,
+                    settings.llm_provider,
+                    resolved_model,
+                    reason,
+                    attempt,
+                    max_attempts,
+                )
+                if retry_schema_violations and attempt < max_attempts:
+                    logger.warning(
+                        "Structured Outputs schema 위반을 재시도합니다. "
+                        "event=structured_output_retry workflow=%s provider=%s model=%s "
+                        "nextAttempt=%s maxAttempts=%s",
+                        workflow,
+                        settings.llm_provider,
+                        resolved_model,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    continue
+            return data
     except AiGenerationFailedError:
+        raise
+    except AiResponseInvalidError:
         raise
     except Exception as exc:
         raise AiGenerationFailedError from exc
-    return _parse_json_object(_extract_message_content(completion))
 
 
 def _request_recoverable_json_completion(
@@ -1581,7 +1734,9 @@ def _request_recoverable_json_completion(
     system_prompt: str,
     user_prompt: str,
     max_tokens: int,
-    response_format: dict[str, Any] | None = None,
+    response_model: type[BaseModel],
+    schema_name: str,
+    workflow: str,
 ) -> dict[str, Any]:
     try:
         return _request_json_completion(
@@ -1589,7 +1744,9 @@ def _request_recoverable_json_completion(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=max_tokens,
-            response_format=response_format,
+            response_model=response_model,
+            schema_name=schema_name,
+            workflow=workflow,
         )
     except AiResponseInvalidError as exc:
         raise AiGenerationFailedError from exc
@@ -1702,6 +1859,16 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
         except JSONDecodeError as exc:
             raise AiResponseInvalidError("json_object_invalid") from exc
 
+    if not isinstance(data, dict):
+        raise AiResponseInvalidError("json_object_required")
+    return data
+
+
+def _parse_strict_json_object(raw: str) -> dict[str, Any]:
+    try:
+        data = json.loads(raw)
+    except JSONDecodeError as exc:
+        raise AiResponseInvalidError("json_object_invalid") from exc
     if not isinstance(data, dict):
         raise AiResponseInvalidError("json_object_required")
     return data

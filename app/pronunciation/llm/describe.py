@@ -14,9 +14,13 @@ import time
 from dataclasses import dataclass
 
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
 from app.pronunciation.llm.routing import llm_extra_body, served_by_fallback
+from app.pronunciation.llm.structured_completion import (
+    request_structured_pronunciation_completion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,21 @@ class ErrorDescription:
     stress_index: int | None
 
 
+class _SoundDescriptionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    userHeard: str
+    targetSpan: str
+    userSpan: str
+
+
+class _StressDescriptionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    userHeard: str
+    stressIndex: int = Field(ge=0)
+
+
 def describe_error(
     client: OpenAI,
     settings: Settings,
@@ -82,45 +101,85 @@ def describe_error(
             else ', "targetSpan": "<letters>", "userSpan": "<letters>"',
         )
     )
+    response_model = (
+        _StressDescriptionOutput if is_stress else _SoundDescriptionOutput
+    )
     try:
-        response = client.chat.completions.create(
-            model=settings.pronunciation_model,
-            temperature=0.0,
-            max_tokens=1000,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        _audio_part(reference_wav),
-                        _audio_part(user_wav),
-                    ],
-                }
-            ],
-            extra_body=llm_extra_body(settings),
-            timeout=timeout,
+        result = request_structured_pronunciation_completion(
+            client,
+            settings,
+            request={
+                "model": settings.pronunciation_model,
+                "temperature": 0.0,
+                "max_tokens": 1000,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            _audio_part(reference_wav),
+                            _audio_part(user_wav),
+                        ],
+                    }
+                ],
+                "extra_body": llm_extra_body(settings),
+            },
+            response_model=response_model,
+            schema_name="pronunciation_error_description",
+            workflow="pronunciation_error_description",
+            deadline=time.monotonic() + timeout,
         )
     except Exception:  # noqa: BLE001 — 묘사는 보조 정보이므로 실패해도 판정은 유지한다
         return None
 
     # 폴백 프로바이더 서빙은 조용한 품질 저하다 (LAN-389) — 발동 사실을 관측한다
-    fallback_provider = served_by_fallback(settings, response)
+    fallback_provider = served_by_fallback(settings, result.response)
     if fallback_provider is not None:
         logger.warning(
             "error description served by fallback provider %s", fallback_provider
         )
 
-    raw = (response.choices[0].message.content or "").strip()
-    return _parse(raw, is_stress)
+    return _parse(
+        result.content,
+        is_stress,
+        strict=result.output_format == "json_schema",
+    )
 
 
-def _parse(raw: str, is_stress: bool) -> ErrorDescription | None:
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").removeprefix("json").strip()
+def _parse(
+    raw: str,
+    is_stress: bool,
+    *,
+    strict: bool = False,
+) -> ErrorDescription | None:
     try:
-        payload = json.loads(cleaned)
+        if strict:
+            response_model = (
+                _StressDescriptionOutput if is_stress else _SoundDescriptionOutput
+            )
+            try:
+                payload = response_model.model_validate_json(raw).model_dump()
+            except ValidationError as exc:
+                reason = (
+                    exc.errors()[0]["type"] if exc.errors() else "validation_error"
+                )
+                logger.warning(
+                    "발음 설명 schema 검증에 실패해 기존 parser로 전환합니다. "
+                    "event=schema_validation_failure "
+                    "workflow=pronunciation_error_description reason=%s",
+                    reason,
+                )
+                payload = json.loads(raw)
+        else:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("`").removeprefix("json").strip()
+            payload = json.loads(cleaned)
     except json.JSONDecodeError:
+        logger.warning(
+            "발음 설명 JSON 형식 검증에 실패했습니다. "
+            "event=json_format_failure workflow=pronunciation_error_description"
+        )
         return None
     if not isinstance(payload, dict):
         return None

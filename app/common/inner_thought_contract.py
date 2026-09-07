@@ -29,7 +29,7 @@ class InnerThoughtContractError(ValueError):
         self.invalid_fields = invalid_fields
 
 
-class _InnerThoughtCandidate(BaseModel):
+class InnerThoughtCandidate(BaseModel):
     innerThought: str
     answerCoverage: AnswerCoverage
     relationshipTone: RelationshipTone
@@ -57,7 +57,7 @@ def parse_inner_thought(data: dict[str, object]) -> InnerThoughtResult:
     elif "directedAttack" in candidate_data:
         candidate_data["directedAttack"] = object()
     try:
-        candidate = _InnerThoughtCandidate.model_validate(candidate_data)
+        candidate = InnerThoughtCandidate.model_validate(candidate_data)
     except ValidationError as exc:
         invalid_fields = tuple(
             sorted({str(error["loc"][0]) for error in exc.errors()})
