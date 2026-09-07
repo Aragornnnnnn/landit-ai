@@ -91,6 +91,4 @@ def request_structured_pronunciation_completion(
 
 def _extract_content(response) -> str:
     content = response.choices[0].message.content
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError("pronunciation completion content is blank")
-    return content.strip()
+    return (content or "").strip()
