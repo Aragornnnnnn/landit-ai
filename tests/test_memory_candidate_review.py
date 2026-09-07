@@ -27,6 +27,58 @@ class MemoryCandidateReviewTests(unittest.TestCase):
             )
         return response, fake
 
+    def test_keeps_explicit_fact_even_when_source_ends_in_question(self):
+        for source in (
+            "I am studying for a language exam because my employer requires it. You know?",
+            "I am studying for a language exam because my employer requires it, you know?",
+            "회사 요구 때문에 어학 시험을 준비하고 있어. 무슨 말인지 알겠어？",
+        ):
+            with self.subTest(source=source):
+                content = "사용자는 회사 요구로 어학 시험을 준비한다."
+                response, fake = self.post(
+                    valid_memory_candidate_completion(memoryType="PROFILE", content=content),
+                    [{"candidateIndex": 0, "decision": "KEEP"}], source=source,
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake.completions.calls), 2)
+                self.assertEqual(fake.embeddings.calls[0]["input"], [content])
+
+    def test_reviews_question_presuppositions_before_embedding(self):
+        for source in (
+            "Where should I go for my usual Saturday walk with Nori?",
+            "I wonder where I should go for my usual Saturday walk with Nori?",
+            "혹시 노리랑 매주 토요일에 산책할 만한 곳이 어디일까?",
+            "노리랑 매주 토요일에 산책해도 될까?",
+            "Hello. Where should I go for my usual Saturday walk with Nori?",
+        ):
+            with self.subTest(source=source):
+                response, fake = self.post(
+                    valid_memory_candidate_completion(
+                        memoryType="PROFILE", content="사용자는 Nori와 매주 토요일에 산책한다.",
+                    ),
+                    [{"candidateIndex": 0, "decision": "DROP"}], source=source,
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake.completions.calls), 2)
+                self.assertEqual(response.json()["data"]["candidates"], [])
+                self.assertEqual(fake.embeddings.calls, [])
+
+    def test_mixed_message_keeps_only_the_explicit_fact(self):
+        candidates = valid_memory_candidate_completion(
+            memoryType="PROFILE", content="사용자는 채식주의자다.",
+        )["candidates"]
+        candidates += valid_memory_candidate_completion(
+            candidateIndex=1, memoryType="PROFILE", content="사용자는 매주 토요일 산책한다.",
+        )["candidates"]
+        response, fake = self.post(
+            {"candidates": candidates},
+            [{"candidateIndex": 0, "decision": "KEEP"},
+             {"candidateIndex": 1, "decision": "DROP"}],
+            source="I am vegetarian. Where should I go for my usual Saturday walk?",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(fake.embeddings.calls[0]["input"], ["사용자는 채식주의자다."])
+
     def test_drops_unverified_event_before_embedding(self):
         for source, content in (
             ("I visited a castle once.", "사용자는 성을 방문했다."),

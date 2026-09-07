@@ -38,7 +38,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v8"
+EXTRACTOR_VERSION = "memory-candidate-v9"
 _CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
 _DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
     r"\b(?:you\s+and\s+I|I\s+and\s+you|with\s+you|"
@@ -108,13 +108,6 @@ _LANGUAGE_EXAMPLE_PATTERN = re.compile(
 _EXPLICIT_DENIAL_PATTERN = re.compile(
     r"\b(?:isn't|is\s+not|not)\s+(?:actually\s+)?true\b"
     r"|\bjust\s+an?\s+example\b|(?:사실이\s*아니|예시일\s*뿐)",
-    re.IGNORECASE,
-)
-_QUESTION_ONLY_PATTERN = re.compile(r"[?？]\s*$")
-_EXPLICIT_MEMORY_REQUEST_PATTERN = re.compile(
-    r"^\s*(?:please\s+|(?:can|could|would|will|do)\s+you\s+(?:please\s+)?)"
-    r"(?:remember|keep\s+in\s+mind)\b"
-    r"|기억해\s*(?:줘|주세요|줄래|줄\s*수\s*있어|주실래)",
     re.IGNORECASE,
 )
 _CONTENT_TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣]+")
@@ -467,8 +460,6 @@ def _must_drop_candidate(
         return True
     if _CONVERSATION_CONTROL_PATTERN.search(source_text):
         return True
-    if all(_is_question_without_explicit_fact(message.content) for message in source_messages):
-        return True
     if (
         draft.memoryType == MemoryType.EPISODE
         and _GREETING_ONLY_PATTERN.search(source_text)
@@ -499,14 +490,6 @@ def _has_unsupported_character_reference(
     return not (
         name_pattern.search(source_text)
         or _DIRECT_SHARED_EXPERIENCE_PATTERN.search(source_text)
-    )
-
-
-def _is_question_without_explicit_fact(source_text: str) -> bool:
-    """명시적 기억 요청이 아닌 순수 질문형 발화인지 판정한다."""
-    return bool(
-        _QUESTION_ONLY_PATTERN.search(source_text)
-        and not _EXPLICIT_MEMORY_REQUEST_PATTERN.search(source_text)
     )
 
 
