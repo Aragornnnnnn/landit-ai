@@ -2279,7 +2279,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v9",
+            "memory-candidate-v10",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -2452,7 +2452,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v9",
+                "extractorVersion": "memory-candidate-v10",
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
@@ -2566,68 +2566,6 @@ class FreeTalkApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(len(response.json()["data"]["candidates"]), 1)
                 self.assertEqual(len(fake_openai.embeddings.calls), 1)
-
-    def test_memory_candidates_drops_conversation_control_message(self):
-        payload = valid_memory_candidates_payload()
-        payload["conversationHistory"][1]["content"] = (
-            "I would like to end this conversation now."
-        )
-        fake_openai = FakeOpenAI(
-            contents=[
-                json.dumps(
-                    valid_memory_candidate_completion(
-                        memoryType="EVENT",
-                        content="사용자는 2026-09-04에 이 대화를 끝내고 싶다고 말했다.",
-                    ),
-                ),
-            ],
-        )
-
-        response = self._post(
-            "/api/v1/free-talk/memory-candidates",
-            payload,
-            fake_openai,
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["candidates"], [])
-        self.assertEqual(len(fake_openai.embeddings.calls), 0)
-
-    def test_memory_candidates_drops_conversation_control_variants(self):
-        sources = (
-            "Let's wrap up here.",
-            "That's all for today.",
-            "I need to go now, let us stop here.",
-            "I need to go now.",
-            "I have to leave.",
-            "I should get going now.",
-            "That was fun, talk to you later!",
-            "Bye for now.",
-            "이제 그만할게.",
-            "오늘은 여기까지 하자.",
-            "나 이제 가봐야 해.",
-            "이만 갈게.",
-            "다음에 이야기하자.",
-            "잘 가.",
-        )
-
-        for source in sources:
-            with self.subTest(source=source):
-                payload = valid_memory_candidates_payload()
-                payload["conversationHistory"][1]["content"] = source
-                fake_openai = FakeOpenAI(
-                    contents=[json.dumps(valid_memory_candidate_completion())],
-                )
-
-                response = self._post(
-                    "/api/v1/free-talk/memory-candidates",
-                    payload,
-                    fake_openai,
-                )
-
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.json()["data"]["candidates"], [])
-                self.assertEqual(len(fake_openai.embeddings.calls), 0)
 
     def test_memory_candidates_keeps_titles_that_match_goodbye_phrases(self):
         cases = (

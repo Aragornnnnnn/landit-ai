@@ -39,7 +39,7 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
-EXTRACTOR_VERSION = "memory-candidate-v9"
+EXTRACTOR_VERSION = "memory-candidate-v10"
 _CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
 _DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
     r"\b(?:you\s+and\s+I|I\s+and\s+you|with\s+you|"
@@ -70,23 +70,6 @@ _ONE_OFF_REQUEST_PATTERN = re.compile(
     r"^\s*(?:(?:could|can|would|will)\s+you\s+(?:say|repeat|speak)\b"
     r"|please\s+(?:say|repeat|speak)\b)"
     r"|^\s*(?:다시|천천히).*(?:말해|말씀해|반복해)",
-    re.IGNORECASE,
-)
-_CONVERSATION_CONTROL_PATTERN = re.compile(
-    r"\b(?:end|stop|finish|leave)\s+(?:(?:this|the|our)\s+)?"
-    r"(?:conversation|session)\b"
-    r"|\b(?:let'?s|let\s+us)\s+(?:wrap\s+(?:(?:it|this)\s+)?up"
-    r"(?:\s+(?:here|now))?|stop\s+here)\s*[.!?]*\s*$"
-    r"|\b(?:that'?s|that\s+is)\s+all\s+for\s+(?:today|now)\s*[.!?]*\s*$"
-    r"|\b(?:i\s+)?(?:need|have|got)\s+to\s+(?:go|leave)(?:\s+now)?\s*[.!?]*\s*$"
-    r"|\bi\s+should\s+get\s+going(?:\s+now)?\s*[.!?]*\s*$"
-    r"|(?:^|,\s*)(?:talk\s+to\s+you\s+later|bye\s+for\s+now)\s*[.!?]*\s*$"
-    r"|(?:대화|세션).*(?:끝내|종료|마무리|그만)"
-    r"|(?:이제\s*)?그만\s*(?:할게|하자|할래|해요|하겠습니다)\s*[.!?]*\s*$"
-    r"|(?:오늘은?\s*)?여기까지\s*(?:하자|할게|할래|해요|하겠습니다)\s*[.!?]*\s*$"
-    r"|(?:(?:나|저)는?\s*)?(?:이제\s+)?가봐야\s*해\s*[.!?]*\s*$"
-    r"|이만\s+갈게\s*[.!?]*\s*$"
-    r"|(?:^|,\s*)(?:다음에\s+이야기하자|잘\s+가)\s*[.!?]*\s*$",
     re.IGNORECASE,
 )
 _GREETING_ONLY_PATTERN = re.compile(
@@ -198,6 +181,23 @@ _CANDIDATE_PROMPT_PARTS = (
         "to, but a generic agreement or 'that might help' is not confirmation that a "
         "suggestion has worked or describes a durable fact. Include the USER messages "
         "needed to support the fact in sourceMessageIds."
+    ),
+    (
+        "Make each memory understandable on its own: retain the object of a preference "
+        "and the purpose of a study method in that same sentence, even if another candidate "
+        "already names them. 'The 20-minute version' of an English fluency routine means "
+        "a preference for that routine, not a general preference for 20 minutes. A USER "
+        "answer selecting early bedtime over naps states a preference, not proof of "
+        "habitually sleeping early. AI questions can resolve the referent of a specific "
+        "USER answer but cannot establish an unconfirmed fact. Include all supporting "
+        "USER message IDs, including earlier statements naming the study goal or event "
+        "date; citing only the final clarification leaves that context unsupported. "
+        "When a USER names an exam and then answers how they prepare, retain the "
+        "confirmed method as a fact scoped to that exam, not only the goal. "
+        "Follow USER clarifications of the SAME event across turns: an unclear "
+        "movie action dated today, later clarified as watching, retains that viewing date. "
+        "A generic greeting about today or a date for a different action cannot date it. "
+        "A goodbye or temporary feeling in a mixed message does not erase independent facts."
     ),
     (
         "Never keep relative time expressions such as 'today', 'yesterday', 'tomorrow', "
@@ -464,8 +464,6 @@ def _must_drop_candidate(
     ):
         return True
     if _ONE_OFF_REQUEST_PATTERN.search(source_text):
-        return True
-    if _CONVERSATION_CONTROL_PATTERN.search(source_text):
         return True
     if (
         draft.memoryType == MemoryType.EPISODE

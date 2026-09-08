@@ -1,5 +1,6 @@
 # 추출 후보를 원문과 대조하고 검증된 내용만 임베딩 단계로 전달한다.
 import json
+import logging
 import re
 from typing import Literal
 
@@ -8,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from app.core.config import Settings
 from app.free_talk.llm.json_completion import AiResponseInvalidError, request_json_completion
 from app.models.free_talk import MemoryCandidate, MemoryType
+
+
+logger = logging.getLogger(__name__)
 
 
 _REVIEW_PROMPT = (
@@ -34,6 +38,13 @@ _REVIEW_PROMPT = (
     "only evidence is an assumption or presupposition inside a question. For example, "
     "'Where should I go for my usual Saturday walk?' alone does not establish a weekly "
     "walking habit. Greetings or unrelated assertions do not support that habit.\n"
+    "DROP conversation-control requests and goodbyes as memories, while keeping "
+    "independent facts in the same message. Each memory must retain its own referent: "
+    "a bare '20-minute version' without the activity is incomplete even if a separate "
+    "candidate names it. Preserve the study purpose when summarizing a study method. "
+    "AI questions may resolve the referent of a specific USER answer, but do not "
+    "supply unconfirmed facts. Choosing early bedtime over naps states a preference; "
+    "DROP a candidate asserting an actual recurring bedtime habit from that choice.\n"
     "Resolve ordinary pronouns from an unambiguous person or group established in the "
     "same USER message. Evidence does not require repeating that person's name in each "
     "sentence. This can ground a companion, but NEVER transfers a date between actions.\n"
@@ -43,6 +54,12 @@ _REVIEW_PROMPT = (
     "Yesterday its episode released' dates only the release, NEVER the viewing. "
     "Do not infer a viewing date from anticipation, release or narrative proximity. "
     "Use occurredAt in the supplied timezone for unambiguous relative dates only. "
+    "A USER can date an event in one message and clarify the SAME action in a later "
+    "message; consider those cited USER messages together instead of requiring the "
+    "date and complete action in one sentence. For example, a movie action dated "
+    "today and later clarified as watching can support today's viewing EVENT when "
+    "both USER messages are cited. A greeting about today or the date of a different "
+    "action (such as releasing the movie) never establishes the viewing date. "
     "A future EVENT must have a supported scheduled date in content; its validFrom is "
     "the source utterance time. A past EVENT must contain its date and use that event "
     "date/time as validFrom. eventDateIsGrounded is true only with that action's own "
@@ -154,7 +171,11 @@ def _reviewed_candidate(
         return None
     if review.decision == "REFINE":
         if not _has_refinement_evidence(draft, review, context):
-            raise AiResponseInvalidError("candidate refinement requires source evidence")
+            logger.warning(
+                "Memory candidate dropped. workflow=memory_candidate_review "
+                "reason=invalid_refinement_evidence candidateIndex=%s", draft.candidateIndex,
+            )
+            return None
         refined = MemoryCandidate.model_validate(draft.model_dump() | {"content": review.content})
         return _restore_sibling_detail(refined, context)
     if any(value is not None for value in (
