@@ -38,13 +38,15 @@ def acceptance_errors(case: dict, candidates: list) -> list[str]:
         errors.append("candidate_count")
     if any(candidate.memoryType.value not in case["types"] for candidate in candidates):
         errors.append("memory_type")
-    content = " ".join(candidate.content for candidate in candidates).casefold()
-    content = re.sub(
-        r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일",
-        lambda match: "-".join(f"{int(part):02d}" for part in match.groups()), content,
-    )
+    content = normalize_content(" ".join(candidate.content for candidate in candidates))
     if any(word.casefold() not in content for word in case.get("required", [])):
         errors.append("missing_detail")
+    if any(not any(word.casefold() in content for word in words)
+           for words in case.get("requiredAny", [])):
+        errors.append("missing_alternative_detail")
+    if any(not any(all(word.casefold() in candidate.content.casefold() for word in words)
+                   for candidate in candidates) for words in case.get("requiredTogether", [])):
+        errors.append("missing_self_contained_detail")
     if any(word.casefold() in content for word in case.get("forbidden", [])):
         errors.append("unsupported_detail")
     events = [candidate for candidate in candidates if candidate.memoryType.value == "EVENT"]
@@ -55,10 +57,19 @@ def acceptance_errors(case: dict, candidates: list) -> list[str]:
         errors.append("event_time")
     if "eventCount" in case and len(events) != case["eventCount"]:
         errors.append("event_count")
-    if any(word not in " ".join(candidate.content for candidate in events)
+    event_content = normalize_content(" ".join(candidate.content for candidate in events))
+    if any(word.casefold() not in event_content
            for word in case.get("eventRequired", [])):
         errors.append("event_detail")
     return errors
+
+
+def normalize_content(content: str) -> str:
+    return re.sub(
+        r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일",
+        lambda match: "-".join(f"{int(part):02d}" for part in match.groups()),
+        content.casefold(),
+    )
 
 
 def evaluate(case: dict, settings: Settings) -> dict:

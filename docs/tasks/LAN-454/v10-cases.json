@@ -1,0 +1,17 @@
+[
+  {"id": "meeting_event", "turns": [["AI", "What made you proud today?"], ["USER", "Today was good. My idea was chosen in our team meeting. I feel proud."]], "types": ["EVENT"], "min": 1, "max": 1, "eventRequired": ["회의", "2026-09-07"]},
+  {"id": "teaching_correction", "turns": [["USER", "Today I had a class, not as a student. I taught it."], ["AI", "What was it about?"], ["USER", "It was about recycling for elementary school students."]], "types": ["EVENT", "PROFILE"], "min": 1, "max": 2, "eventCount": 1, "eventRequired": ["초등", "2026-09-07"]},
+  {"id": "movie_clarification", "turns": [["USER", "Today was nice. I acting movie was good."], ["AI", "Were you acting or watching a movie?"], ["USER", "I watched a movie."], ["AI", "What kind?"], ["USER", "A comedy. It made me happy."]], "types": ["EVENT"], "min": 1, "max": 1, "eventRequired": ["영화", "2026-09-07"]},
+  {"id": "hobby_and_goodbye", "turns": [["AI", "What do you enjoy?"], ["USER", "I have been learning and playing badminton these days. I like hiking too. I need to go now."]], "types": ["PROFILE"], "min": 2, "max": 3, "required": ["배드민턴"], "requiredAny": [["등산", "하이킹"]]},
+  {"id": "routine_preference", "turns": [["USER", "I want to improve English speaking fluency."], ["AI", "Would you prefer a 5-minute or 20-minute daily fluency practice routine?"], ["USER", "The twenty-minute version is better for me."]], "types": ["PROFILE"], "min": 1, "max": 2, "requiredTogether": [["20분", "영어", "선호"]], "forbidden": ["매일 20분씩 연습한다"]},
+  {"id": "bedtime_preference", "turns": [["USER", "Rest is my favorite part of the day."], ["AI", "Do you prefer a nap or going to bed early?"], ["USER", "Going to bed early."]], "types": ["PROFILE"], "min": 1, "max": 2, "requiredTogether": [["일찍", "선호"]], "forbidden": ["편이다", "매일", "습관"]},
+  {"id": "study_context", "turns": [["USER", "I'm preparing for a Spanish exam, but I feel tired today."], ["AI", "How do you study for it?"], ["USER", "I study with an app."]], "types": ["PROFILE"], "min": 1, "max": 2, "requiredTogether": [["스페인어", "앱"]]},
+  {"id": "basketball_profile", "turns": [["USER", "I have played basketball since I was sixteen. I have a team in my town."], ["AI", "How often do you play?"], ["USER", "On Mondays and Thursdays. I play center."]], "types": ["PROFILE"], "min": 1, "max": 5, "required": ["농구", "월요일", "목요일"]},
+  {"id": "unrelated_date", "turns": [["USER", "I watched the Atlas series once. Today its new season came out."]], "types": [], "min": 0, "max": 0},
+  {"id": "suggestion_not_confirmed", "turns": [["AI", "You could do 20-minute fluency practice every day. Has it helped?"], ["USER", "Maybe. I haven't tried it."]], "types": [], "min": 0, "max": 0},
+  {"id": "question_only", "turns": [["USER", "Where should I go for my usual Saturday walk with Nori?"]], "types": [], "min": 0, "max": 0},
+  {"id": "ambiguous_event_and_fact", "turns": [["USER", "I have a dentist appointment next Friday. I play the violin every Monday."]], "types": ["PROFILE"], "min": 1, "max": 1, "required": ["바이올린", "월요일"]},
+  {"id": "control_exit_en", "turns": [["USER", "I need to go now. Let's stop here."]], "types": [], "min": 0, "max": 0},
+  {"id": "control_exit_kr", "turns": [["USER", "오늘은 여기까지 하자. 나 이제 가봐야 해."]], "types": [], "min": 0, "max": 0},
+  {"id": "control_goodbye", "turns": [["USER", "That was fun, talk to you later!"]], "types": [], "min": 0, "max": 0}
+]

@@ -110,18 +110,70 @@ class MemoryCandidateReviewTests(unittest.TestCase):
         self.assertEqual(fake.embeddings.calls[0]["input"], [content])
         self.assertNotIn("quote", candidate)
 
-    def test_rejects_missing_duplicate_unknown_and_ungrounded_reviews(self):
+    def test_bad_refinement_drops_only_that_candidate(self):
+        for invalid in (
+            {"quote": "not in source"},
+            {"sourceMessageId": 3001, "quote": "How was your weekend?"},
+            {"content": "사용자는 주 3회 농구한다."},
+            {"quote": None},
+        ):
+            with self.subTest(invalid=invalid):
+                drafts = valid_memory_candidate_completion(
+                    memoryType="PROFILE", content="사용자는 주 2회 농구한다.",
+                )["candidates"] + valid_memory_candidate_completion(
+                    candidateIndex=1, memoryType="PROFILE", content="사용자는 센터로 뛴다.",
+                )["candidates"]
+                response, fake = self.post(
+                    {"candidates": drafts},
+                    [{"candidateIndex": 0, "decision": "REFINE",
+                      "content": "사용자는 농구를 주 2회 한다.", "sourceMessageId": 3002,
+                      "quote": "I play basketball twice a week", **invalid},
+                     {"candidateIndex": 1, "decision": "KEEP"}],
+                    source="I play basketball twice a week. I play center.",
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake.completions.calls), 2)
+                self.assertEqual(fake.embeddings.calls[0]["input"], ["사용자는 센터로 뛴다."])
+                candidates = response.json()["data"]["candidates"]
+                self.assertEqual([item["candidateIndex"] for item in candidates], [0])
+
+    def test_fact_before_conversation_exit_reaches_review(self):
+        response, fake = self.post(
+            valid_memory_candidate_completion(
+                memoryType="PROFILE", content="사용자는 배드민턴을 배운다.",
+            ),
+            [{"candidateIndex": 0, "decision": "KEEP"}],
+            source="I have been learning badminton. I need to go now.",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(fake.completions.calls), 2)
+        self.assertEqual(fake.embeddings.calls[0]["input"], ["사용자는 배드민턴을 배운다."])
+
+    def test_conversation_control_without_facts_is_dropped_by_review(self):
+        for source in (
+            "I would like to end this conversation now.", "Let's wrap up here.",
+            "That's all for today.", "I need to go now, let us stop here.",
+            "I need to go now.", "I have to leave.", "I should get going now.",
+            "That was fun, talk to you later!", "Bye for now.", "이제 그만할게.",
+            "오늘은 여기까지 하자.", "나 이제 가봐야 해.", "이만 갈게.",
+            "다음에 이야기하자.", "잘 가.",
+        ):
+            with self.subTest(source=source):
+                response, fake = self.post(
+                    valid_memory_candidate_completion(),
+                    [{"candidateIndex": 0, "decision": "DROP"}], source=source,
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake.completions.calls), 2)
+                self.assertEqual(response.json()["data"]["candidates"], [])
+                self.assertEqual(fake.embeddings.calls, [])
+
+    def test_rejects_missing_duplicate_unknown_and_malformed_reviews(self):
         for reviews in (
             [],
             [{"candidateIndex": 1, "decision": "KEEP"}],
             [{"candidateIndex": 0, "decision": "KEEP"}] * 2,
-            [{"candidateIndex": 0, "decision": "REFINE", "content": "새 사실",
-              "sourceMessageId": 3002, "quote": "not in source"}],
-            [{"candidateIndex": 0, "decision": "REFINE", "content": "새 사실",
-              "sourceMessageId": 3001, "quote": "How was your weekend?"}],
             [{"candidateIndex": 0, "decision": "KEEP", "content": "새 사실"}],
-            [{"candidateIndex": 0, "decision": "REFINE", "content": "면접은 2027년이다.",
-              "sourceMessageId": 3002, "quote": "I have an interview"}],
             [{"candidateIndex": 0, "decision": "REFINE", "content": "  ",
               "sourceMessageId": 3002, "quote": "I have an interview"}],
             [{"candidateIndex": 0, "decision": "KEEP", "validFrom": "2027-01-01"}],
@@ -130,6 +182,16 @@ class MemoryCandidateReviewTests(unittest.TestCase):
                 response, fake = self.post(valid_memory_candidate_completion(), reviews)
                 self.assertEqual(response.status_code, 502)
                 self.assertEqual(fake.embeddings.calls, [])
+
+    def test_all_ungrounded_refinements_skip_embedding(self):
+        response, fake = self.post(
+            valid_memory_candidate_completion(),
+            [{"candidateIndex": 0, "decision": "REFINE", "content": "새 사실",
+              "sourceMessageId": 3002, "quote": "not in source"}],
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["candidates"], [])
+        self.assertEqual(fake.embeddings.calls, [])
 
     def test_keeps_supported_candidate_and_reindexes_after_drop(self):
         candidates = valid_memory_candidate_completion()["candidates"]
