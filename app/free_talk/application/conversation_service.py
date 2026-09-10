@@ -17,6 +17,7 @@ from app.common.inner_thought_contract import (
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
+from app.free_talk.application.memory_context import memory_context_with_time_status
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
     AiResponseInvalidError,
@@ -187,10 +188,13 @@ def generate_opening(
         AiResponseInvalidError: AI 응답 또는 사용 기억 ID가 계약을 위반할 때.
         AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
     """
+    current_time = datetime.now(UTC)
     data = request_json_completion(
         settings=settings,
-        system_prompt=_opening_system_prompt(payload.characterId, payload.timezone),
-        user_prompt=_opening_user_prompt(payload),
+        system_prompt=_opening_system_prompt(
+            payload.characterId, payload.timezone, current_time,
+        ),
+        user_prompt=_memory_user_prompt(payload, current_time),
         response_model=_OpeningStructuredOutput,
         schema_name="free_talk_opening",
         workflow="free_talk_opening",
@@ -242,14 +246,17 @@ def _request_turn_completion(
     settings: Settings,
 ) -> dict[str, object]:
     """CONTINUE 응답에 메시지가 없으면 같은 요청을 복구 계약으로 한 번 재호출한다."""
+    current_time = datetime.now(UTC)
+    user_prompt = _memory_user_prompt(payload, current_time)
     data = request_json_completion(
         settings=settings,
         system_prompt=_turn_system_prompt(
             payload.responseMode,
             payload.characterId,
             payload.timezone,
+            current_time,
         ),
-        user_prompt=_turn_user_prompt(payload),
+        user_prompt=user_prompt,
         response_model=_TurnStructuredOutput,
         schema_name="free_talk_turn",
         workflow="free_talk_turn",
@@ -264,8 +271,9 @@ def _request_turn_completion(
             system_prompt=_continue_turn_repair_system_prompt(
                 payload.characterId,
                 payload.timezone,
+                current_time,
             ),
-            user_prompt=_turn_user_prompt(payload),
+            user_prompt=user_prompt,
             response_model=_TurnStructuredOutput,
             schema_name="free_talk_turn_repair",
             workflow="free_talk_turn_repair",
@@ -511,13 +519,14 @@ def _character_prompt(character: FreeTalkCharacter, *, include_dialect: bool) ->
 
 def _opening_system_prompt(
     character: FreeTalkCharacter,
-    timezone_name: str = "Asia/Seoul",
+    timezone_name: str,
+    current_time: datetime,
 ) -> str:
     return (
         _character_prompt(character, include_dialect=True)
         + "Generate one natural opening question for an English free talk. "
         "Do not mention English proficiency, mistakes, correctness, perfection, or improvement. "
-        + _memory_system_policy(timezone_name)
+        + _memory_system_policy(timezone_name, current_time)
         + "Return only JSON with aiMessage, translatedMessage, and usedMemoryIds."
     )
 
@@ -525,7 +534,8 @@ def _opening_system_prompt(
 def _turn_system_prompt(
     response_mode: FreeTalkResponseMode,
     character: FreeTalkCharacter,
-    timezone_name: str = "Asia/Seoul",
+    timezone_name: str,
+    current_time: datetime,
 ) -> str:
     exit_policy = (
         "Decide whether the user clearly wants to end the conversation."
@@ -548,20 +558,22 @@ def _turn_system_prompt(
         "Briefly acknowledge the user's meaning without restating it, then ask at most one "
         "follow-up question. Do not repeat the same reaction or empathy in different words. "
         "Make translatedMessage a concise equivalent without adding details. "
-        + _memory_system_policy(timezone_name)
+        + _memory_system_policy(timezone_name, current_time)
         + "Return inferredTitle as null."
     )
 
 
 def _continue_turn_repair_system_prompt(
     character: FreeTalkCharacter,
-    timezone_name: str = "Asia/Seoul",
+    timezone_name: str,
+    current_time: datetime,
 ) -> str:
     return (
         _turn_system_prompt(
             FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED,
             character,
             timezone_name,
+            current_time,
         )
         + " Return a complete replacement JSON response. "
         "userExitIntentDetected must be false, and aiMessage and translatedMessage must both "
@@ -604,10 +616,25 @@ def _title_repair_system_prompt() -> str:
     )
 
 
-def _memory_system_policy(timezone_name: str = "Asia/Seoul") -> str:
-    current_time = datetime.now(UTC).astimezone(ZoneInfo(timezone_name)).isoformat()
+def _memory_system_policy(timezone_name: str, current_time: datetime) -> str:
+    reference_time = current_time.astimezone(ZoneInfo(timezone_name)).isoformat()
     return (
-        f"The current instant is {current_time} in the request timezone {timezone_name}. "
+        f"The current instant is {reference_time} in the request timezone {timezone_name}. "
+        "Apply the server-computed temporalStatus separately to each memory. "
+        "EXPIRED memories are historical "
+        "reports only; their current status is unknown. Never answer a current-fact question "
+        "with an EXPIRED statement as if it were still true, even if content uses present tense. "
+        "Follow-up questions must not presuppose that an EXPIRED fact is still true either. "
+        "For example, an expired workplace does not tell you where the user works now. "
+        "For a current-fact question, say you only know the past fact and ask for an update. "
+        "For past recall, answer in past tense without requiring a current update. "
+        "Expiry also does not prove "
+        "the opposite fact or that an event happened. Preserve this uncertainty and past tense "
+        "in both aiMessage and translatedMessage. NOT_YET_VALID cannot be stated as current. "
+        "UNKNOWN means current validity is unconfirmed, not that the recorded statement is "
+        "absent: it remains available for recall. WITHIN_TIME_BOUNDS PROFILE facts "
+        "may be used as current unless the user contradicts them; do not label them expired "
+        "or historical only. For EVENT, time bounds do not prove a scheduled event happened. "
         "Interpret validFrom and validTo as instants, using the request timezone when an "
         "older memory has no offset. A validTo before the current instant means the memory "
         "is historical or expired; do not present it as a current or upcoming fact. "
@@ -654,12 +681,16 @@ def _inner_thought_repair_system_prompt(character: FreeTalkCharacter) -> str:
     )
 
 
-def _opening_user_prompt(payload: FreeTalkOpeningRequest) -> str:
-    return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
-
-
-def _turn_user_prompt(payload: FreeTalkTurnRequest) -> str:
-    return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+def _memory_user_prompt(
+    payload: FreeTalkOpeningRequest | FreeTalkTurnRequest,
+    current_time: datetime,
+) -> str:
+    data = payload.model_dump(mode="json")
+    data["memoryContext"] = [
+        memory_context_with_time_status(memory, payload.timezone, current_time)
+        for memory in payload.memoryContext
+    ]
+    return json.dumps(data, ensure_ascii=False)
 
 
 def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
