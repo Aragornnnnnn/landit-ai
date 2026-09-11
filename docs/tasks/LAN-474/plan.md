@@ -10,3 +10,5 @@
 - 운영 workflow는 live task 설정을 보존한 새 digest revision을 배포하고 이전 revision·실행 digest를 기록한다. IAM 추가 권한 코드 작성은 자동 승인 검토가 거절해 미포함이다. 권한 준비 전 운영 workflow를 실행하지 않는다.
 
 검증: `.venv/bin/python -m unittest discover -s tests` 539개, 실패 0·생략 7개. 캐시 초기화·다른 인스턴스·반복 요청·구버전 요청·잘못된 ID/버전·인증을 포함한다. 배포 revision Python 테스트 3개와 ECS 검증 shell 테스트도 통과했다. 실제 LLM·배포·구매는 실행하지 않았다.
+
+2026-09-12 2차 PR 검증: 운영 BE hotfix #184 배포 완료는 사용자가 확인했고, BE 역병합 #185가 develop에 반영됐다. AI 전체 unittest 539개(실패 0·생략 7), 배포 Python 3개와 ECS shell 테스트를 다시 통과했다. 역병합·2차 BE와 실제 AI HTTP 계약을 각각 확인했고, 수정하지 않은 FE의 결제 ON 통합도 통과했다. 외부 LLM·스토어만 대역이다. BE·AI 순서가 섞여도 상태 응답을 유지하며, 내부 인증 강제와 결제 활성화는 이번 PR 생성과 별도다.
