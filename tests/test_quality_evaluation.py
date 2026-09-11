@@ -192,7 +192,7 @@ class QualityEvaluationTests(unittest.TestCase):
         )
         cases = json.loads(fixture_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(len(cases), 4)
+        self.assertEqual(len(cases), 7)
         message_ids = []
         for case in cases:
             self.assertEqual(

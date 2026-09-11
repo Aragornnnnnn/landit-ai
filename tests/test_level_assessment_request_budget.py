@@ -17,6 +17,21 @@ from tests.test_conversation_api import FakeOpenAI
 
 
 class LevelAssessmentRequestBudgetTests(unittest.TestCase):
+    def test_initial_and_retry_share_short_answer_and_task_coverage_calibration(self):
+        for prompt in (
+            _session_level_assessment_system_prompt(),
+            _session_level_assessment_retry_system_prompt(),
+        ):
+            with self.subTest(prompt=prompt[:40]):
+                self.assertIn("A concise choice, time, or contact preference", prompt)
+                self.assertIn("Discourse 1 requires disconnected ideas", prompt)
+                self.assertIn("PARTIAL requires an identifiable missing required element", prompt)
+                self.assertIn("Please send it by email", prompt)
+                self.assertIn("Asked 'When, and why that time?'", prompt)
+                self.assertIn("the same answer is PARTIAL", prompt)
+                self.assertIn("do not add unstated reasons", prompt)
+                self.assertIn("Appropriate short answers do not automatically earn levels 4 or 5", prompt)
+
     def test_initial_and_retry_prompts_treat_utterances_as_data(self):
         for prompt in (
             _session_level_assessment_system_prompt(),

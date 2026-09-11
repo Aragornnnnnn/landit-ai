@@ -50,5 +50,44 @@
       "responseDemand": "MEDIUM",
       "requiredElements": ["response to request"]
     }
+  },
+  {
+    "caseId": "lan438-coherent-contact-choice",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "concise-choice-not-disconnected-discourse",
+    "calibrationFocus": "A complete contact preference is ACHIEVED and coherent discourse, not discourse level 1 solely because it is short.",
+    "assessmentMessage": {
+      "messageId": 438005,
+      "evaluationContext": "Would you prefer a phone call or a text message?",
+      "userMessage": "A text message would be better for me.",
+      "responseDemand": "LOW",
+      "requiredElements": ["Choose a phone call or text message."]
+    }
+  },
+  {
+    "caseId": "lan438-opening-fully-achieved",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "opening-vs-later-scenario-goals",
+    "calibrationFocus": "Reporting a lost access card and requesting entry achieves both opening requirements; later replacement arrangements must not cause PARTIAL.",
+    "assessmentMessage": {
+      "messageId": 438006,
+      "evaluationContext": "Tell the receptionist that you lost your access card and ask how you can enter the building.",
+      "userMessage": "I cannot find my access card. Could you help me get inside?",
+      "responseDemand": "MEDIUM",
+      "requiredElements": ["Report the lost access card.", "Ask how to enter the building."]
+    }
+  },
+  {
+    "caseId": "lan438-explicit-reason-missing",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "short-answer-with-missing-required-reason",
+    "calibrationFocus": "A short answer is still PARTIAL when a reason was explicitly requested but omitted; do not grant success merely because it is concise.",
+    "assessmentMessage": {
+      "messageId": 438007,
+      "evaluationContext": "Which delivery option do you prefer, and why?",
+      "userMessage": "The standard delivery, please.",
+      "responseDemand": "MEDIUM",
+      "requiredElements": ["Choose a delivery option.", "Explain the preference."]
+    }
   }
 ]
