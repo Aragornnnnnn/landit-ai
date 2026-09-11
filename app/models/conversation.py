@@ -104,6 +104,105 @@ class ConversationHistoryMessage(BaseModel):
         return _optional_not_blank(value)
 
 
+class AssessmentResponseDemand(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class AssessmentEvidenceStatus(StrEnum):
+    OBSERVED = "OBSERVED"
+    NOT_OBSERVED = "NOT_OBSERVED"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+
+
+class AssessmentTaskPerformance(StrEnum):
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
+    ACHIEVED = "ACHIEVED"
+
+
+class SessionAssessmentMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messageId: int = Field(strict=True, gt=0)
+    evaluationContext: str
+    userMessage: str
+    responseDemand: AssessmentResponseDemand
+    requiredElements: list[str] = Field(min_length=1)
+
+    @field_validator("evaluationContext", "userMessage")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("requiredElements")
+    @classmethod
+    def required_elements_must_not_be_blank(cls, values: list[str]) -> list[str]:
+        return [_validate_not_blank(value) for value in values]
+
+
+class SessionAssessmentDomain(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: int | None = Field(default=None, strict=True, ge=1, le=5)
+    evidenceStatus: AssessmentEvidenceStatus
+    evidenceExcerpt: str | None = None
+
+    @model_validator(mode="after")
+    def evidence_and_level_must_match_status(self) -> Self:
+        if self.evidenceStatus == AssessmentEvidenceStatus.OBSERVED:
+            if self.level is None or not self.evidenceExcerpt or not self.evidenceExcerpt.strip():
+                raise ValueError("observed domain requires level and evidenceExcerpt")
+            return self
+        if self.level is not None or self.evidenceExcerpt is not None:
+            raise ValueError("unobserved domain must not contain level or evidenceExcerpt")
+        return self
+
+
+class SessionAssessmentDomains(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    situationPerformance: SessionAssessmentDomain
+    grammar: SessionAssessmentDomain
+    vocabulary: SessionAssessmentDomain
+    discourse: SessionAssessmentDomain
+    interactionPragmatics: SessionAssessmentDomain
+
+
+class SessionMessageLevelAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messageId: int = Field(strict=True, gt=0)
+    taskPerformance: AssessmentTaskPerformance
+    domains: SessionAssessmentDomains
+
+
+class SessionLevelAssessmentCore(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[SessionMessageLevelAssessment] = Field(min_length=1)
+
+
+class SessionLevelAssessmentDetails(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strength: str
+    improvement: str
+
+    @field_validator("strength", "improvement")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class SessionLevelAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    core: SessionLevelAssessmentCore
+    details: SessionLevelAssessmentDetails | None = None
+
+
 class NextFixedQuestion(BaseModel):
     questionId: int = Field(gt=0)
     sequence: int = Field(gt=0)
@@ -341,12 +440,6 @@ class MessageFeedbackRequest(BaseModel):
         return self
 
 
-class MessageFeedbackResponse(BaseModel):
-    sessionId: int = Field(gt=0)
-    messageId: int = Field(gt=0)
-    feedbackStatus: FeedbackStatus
-
-
 class MessageFeedbackContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -522,10 +615,35 @@ class MessageFeedbackCandidate(MessageFeedbackContent):
         return self
 
 
+class CompletedMessageFeedback(BaseModel):
+    """BE가 저장하고 다른 AI 인스턴스에 전달하는 완성된 평가 결과다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: int = Field(default=1, strict=True, ge=1, le=1)
+    sessionId: int = Field(gt=0)
+    feedback: MessageFeedbackData
+    scoreEvidence: MessageFeedbackScoreEvidence
+    adjudicationEvidence: MessageFeedbackAdjudicationEvidence
+    userMessage: str = Field(min_length=1)
+    candidateWasRepaired: bool
+    copyWasRepaired: bool
+    copyWasFallback: bool
+
+
+class MessageFeedbackResponse(BaseModel):
+    sessionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    feedbackStatus: FeedbackStatus
+    completedFeedback: CompletedMessageFeedback | None = None
+
+
 class SessionFeedbackRequest(BaseModel):
     sessionId: int = Field(gt=0)
     scenario: ScenarioContext
     expectedMessageIds: list[int]
+    assessmentMessages: list[SessionAssessmentMessage] = Field(default_factory=list)
+    completedFeedbacks: list[CompletedMessageFeedback] | None = None
 
     @field_validator("expectedMessageIds")
     @classmethod
@@ -537,6 +655,23 @@ class SessionFeedbackRequest(BaseModel):
         if len(value) != len(set(value)):
             raise ValueError("expectedMessageIds must not contain duplicates")
         return value
+
+    @model_validator(mode="after")
+    def completed_feedbacks_must_match_session(self) -> Self:
+        if self.completedFeedbacks is not None:
+            if [entry.feedback.messageId for entry in self.completedFeedbacks] != self.expectedMessageIds:
+                raise ValueError("completedFeedbacks must match expectedMessageIds in order")
+            if any(entry.sessionId != self.sessionId for entry in self.completedFeedbacks):
+                raise ValueError("completedFeedbacks must belong to this session")
+        return self
+
+    @model_validator(mode="after")
+    def assessment_message_ids_must_match_expected_ids(self) -> Self:
+        if self.assessmentMessages and [
+            message.messageId for message in self.assessmentMessages
+        ] != self.expectedMessageIds:
+            raise ValueError("assessmentMessages must match expectedMessageIds in order")
+        return self
 
 
 class SessionFeedbackSummary(BaseModel):
@@ -573,3 +708,38 @@ class SessionFeedbackResponse(BaseModel):
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+
+class SessionLevelAssessmentRequest(BaseModel):
+    """세션 수준 평가에 필요한 질문별 사용자 발화와 평가 메타데이터다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    scenario: ScenarioContext
+    expectedMessageIds: list[int] = Field(min_length=1)
+    assessmentMessages: list[SessionAssessmentMessage] = Field(min_length=1)
+
+    @field_validator("expectedMessageIds")
+    @classmethod
+    def expected_message_ids_must_be_valid(cls, value: list[int]) -> list[int]:
+        if any(message_id <= 0 for message_id in value):
+            raise ValueError("expectedMessageIds must contain positive ids")
+        if len(value) != len(set(value)):
+            raise ValueError("expectedMessageIds must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def assessment_message_ids_must_match_expected_ids(self) -> Self:
+        if [message.messageId for message in self.assessmentMessages] != self.expectedMessageIds:
+            raise ValueError("assessmentMessages must match expectedMessageIds in order")
+        return self
+
+
+class SessionLevelAssessmentResponse(BaseModel):
+    """세션 수준 평가의 검증된 Core와 선택 Details를 반환한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    levelAssessment: SessionLevelAssessment | None = None

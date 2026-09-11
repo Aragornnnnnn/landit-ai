@@ -1,0 +1,39 @@
+{
+  "dataset": {
+    "total": 40,
+    "splits": {"development": 10, "holdout": 20, "edge": 10}
+  },
+  "execution": {
+    "productSessions": 60,
+    "productSuccess": 15,
+    "productFailure": 45,
+    "primarySessions": 40,
+    "primarySuccess": 9,
+    "referenceSuccess": 40,
+    "modelCalls": 300,
+    "modelCallsScope": "product",
+    "referenceModelCalls": 40,
+    "finishReasons": {"stop": 300},
+    "tokens": {"prompt": 787382, "completion": 106247},
+    "tokensScope": "product",
+    "productCostUsd": "1.77",
+    "referenceCostUsd": "0.70",
+    "totalCostUsd": "2.47",
+    "latencyP50": 15.366,
+    "latencyP95": 20.438
+  },
+  "primary": {"comparable": 9, "initialized": 9, "withinRange": 9, "withinOne": 9},
+  "holdout": {"comparable": 5, "initialized": 5, "withinRange": 5, "withinOne": 5},
+  "failureReasons": {"AiGenerationFailedError:INVALID_JSON": 45},
+  "expectedBeFallbacks": 45,
+  "expectedBeNotApplied": 45,
+  "repeatabilityPassed": 0,
+  "repeatabilityTotal": 10,
+  "domains": {
+    "situationPerformance": {"observedPairs": 36, "exact": 26, "withinOne": 36},
+    "grammar": {"observedPairs": 36, "exact": 31, "withinOne": 36},
+    "vocabulary": {"observedPairs": 36, "exact": 28, "withinOne": 36},
+    "discourse": {"observedPairs": 36, "exact": 31, "withinOne": 36},
+    "interactionPragmatics": {"observedPairs": 36, "exact": 26, "withinOne": 36}
+  }
+}

@@ -10,6 +10,7 @@ from app.api.health import router as health_router
 from app.api.pronunciation import router as pronunciation_router
 from app.common.exception_handlers import register_exception_handlers
 from app.core.config import Settings
+from app.core.internal_auth import register_internal_auth
 from app.core.logging import configure_logging
 from app.core.observability import init_metrics
 from app.core.sentry import init_sentry
@@ -29,6 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None if resolved_settings.app_env == "prod" else "/redoc",
         openapi_url=None if resolved_settings.app_env == "prod" else "/openapi.json",
     )
+    register_internal_auth(fastapi_app, resolved_settings)
     fastapi_app.state.settings = resolved_settings
     fastapi_app.include_router(health_router)
     fastapi_app.include_router(conversation_router)

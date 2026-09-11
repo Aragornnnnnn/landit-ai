@@ -1,0 +1,22 @@
+{
+  "createdAt": "2026-09-07T04:01:48.712854+00:00",
+  "aiRevision": "47ff9d6395c85a0b94fa552278c5a13d4d93b559",
+  "bePolicyScope": "local formula replica, not BE HTTP or database",
+  "datasetSha256": "6c7fdfa26c733dd7aadd2cc93640da82488b558776ea25d4317fb9903a79a219",
+  "rubricSha256": "fe4f11924953278bc0947dc1a132645887ee4ab6478c5b5ef00fef5973c890ae",
+  "productEndpoint": "/api/v1/conversation/session-level-assessment",
+  "measurementScope": "session-level-assessment only",
+  "sessionLevelAssessmentPromptSha256": "2f6c35b841586ff8bf0b931dc725e11190d2b6dc02daf8a4fd155c5a98bfe7b4",
+  "coreRetryPromptSha256": "92e05d46eac910b779270af3b3773f3a7b5e6cb84c5c32c71dfcec0c0373b430",
+  "questionSha256": "38bcc5c475e6fc739aa3b7b92cb6f54e029c304cbb68a2a827d305d43abc73b4",
+  "productModel": "openai/gpt-5.4-mini",
+  "referenceModel": "google/gemini-3.5-flash",
+  "referencePromptSha256": "f2014a3a71718f5149f8bc66028cc76a2c3df2c059d9691e03965eec117ba102",
+  "assessmentVersion": "text-level-v1.1",
+  "referenceReuse": {
+    "source": "/private/tmp/lan438-structured-full60-20260906/reference.jsonl",
+    "sha256": "d6c2ec0bfe278c6457a63a003998f7e621a85f6314707bd564a9e4a3e946478f",
+    "sourceManifestSha256": "abb1293abee4d1085ce0358e930edb28ae2bf1855feb7405133f2641b62fcd07",
+    "legacyPromptFingerprintMissing": true
+  }
+}

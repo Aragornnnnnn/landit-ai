@@ -1,0 +1,236 @@
+{
+  "dataset": {
+    "total": 40,
+    "splits": {
+      "development": 10,
+      "holdout": 20,
+      "edge": 10
+    }
+  },
+  "execution": {
+    "productSessions": 60,
+    "productSuccess": 60,
+    "productFailure": 0,
+    "validLevelAssessment": 57,
+    "missingLevelAssessment": 3,
+    "primarySessions": 40,
+    "primarySuccess": 40,
+    "primaryValidLevelAssessment": 38,
+    "referenceSuccess": 40,
+    "modelCalls": 69,
+    "modelCallsScope": "session-level-assessment only",
+    "referenceModelCalls": 0,
+    "reusedReferenceResults": 40,
+    "finishReasons": {
+      "stop": 69
+    },
+    "tokens": {
+      "prompt": 110299,
+      "completion": 58334
+    },
+    "tokensScope": "session-level-assessment only",
+    "productCostUsd": "0.35",
+    "referenceCostUsd": "0.00",
+    "historicalReferenceCostUsd": "0.70",
+    "totalCostUsd": "0.35",
+    "latencyP50": 5.199,
+    "latencyP95": 12.313
+  },
+  "primary": {
+    "comparable": 38,
+    "initialized": 38,
+    "withinRange": 33,
+    "withinOne": 38
+  },
+  "holdout": {
+    "comparable": 20,
+    "initialized": 20,
+    "withinRange": 17,
+    "withinOne": 20
+  },
+  "repeatability": [
+    {
+      "caseId": "c7f29a10",
+      "levels": [
+        1,
+        1,
+        1
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "a1d84c73",
+      "levels": [
+        2,
+        2,
+        2
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "f9b30e42",
+      "levels": [
+        3,
+        3,
+        3
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "d4057b91",
+      "levels": [
+        4,
+        4
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        false
+      ]
+    },
+    {
+      "caseId": "b62ec518",
+      "levels": [
+        4,
+        4,
+        4
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "e3184ad6",
+      "levels": [
+        1,
+        1,
+        1
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "6b4e17fa",
+      "levels": [
+        2,
+        3,
+        3
+      ],
+      "range": 1,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "47d1a8c5",
+      "levels": [
+        3,
+        3,
+        3
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "218df9c0",
+      "levels": [
+        4,
+        4,
+        4
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "caseId": "9da24f61",
+      "levels": [
+        3,
+        3,
+        3
+      ],
+      "range": 0,
+      "initialized": [
+        true,
+        true,
+        true
+      ]
+    }
+  ],
+  "domains": {
+    "situationPerformance": {
+      "observedPairs": 152,
+      "exact": 102,
+      "withinOne": 148,
+      "productMissingWhenReferenceObserved": 0,
+      "productObservedWhenReferenceMissing": 0
+    },
+    "grammar": {
+      "observedPairs": 152,
+      "exact": 118,
+      "withinOne": 150,
+      "productMissingWhenReferenceObserved": 0,
+      "productObservedWhenReferenceMissing": 0
+    },
+    "vocabulary": {
+      "observedPairs": 152,
+      "exact": 102,
+      "withinOne": 151,
+      "productMissingWhenReferenceObserved": 0,
+      "productObservedWhenReferenceMissing": 0
+    },
+    "discourse": {
+      "observedPairs": 152,
+      "exact": 118,
+      "withinOne": 151,
+      "productMissingWhenReferenceObserved": 0,
+      "productObservedWhenReferenceMissing": 0
+    },
+    "interactionPragmatics": {
+      "observedPairs": 152,
+      "exact": 80,
+      "withinOne": 149,
+      "productMissingWhenReferenceObserved": 0,
+      "productObservedWhenReferenceMissing": 0
+    }
+  },
+  "failureReasons": {
+    "MISSING_LEVEL_ASSESSMENT": 3
+  },
+  "directProductFallbacks": 3,
+  "directProductNotApplied": 3,
+  "expectedBeFallbacks": 3,
+  "expectedBeNotApplied": 3
+}
