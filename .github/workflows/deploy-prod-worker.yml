@@ -23,11 +23,15 @@ env:
   ECR_IMAGE_URI: ${{ vars.PROD_WORKER_ECR_IMAGE_URI }}
   ECS_CLUSTER: ${{ vars.PROD_WORKER_ECS_CLUSTER }}
   ECS_SERVICE: ${{ vars.PROD_WORKER_ECS_SERVICE }}
+  CONTAINER_NAME: worker
+  HEALTH_CHECK_URL: ${{ vars.PROD_WORKER_HEALTH_CHECK_URL || 'https://ai.landit.im/health' }}
 
 jobs:
   deploy:
     name: Build and deploy prod worker
     runs-on: ubuntu-latest
+    env:
+      RELEASE_RECORD: deployment-record.json
 
     steps:
       - name: Validate main branch
@@ -81,97 +85,33 @@ jobs:
           docker build \
             --build-arg "APP_VERSION=${GITHUB_SHA}" \
             -t "$ECR_IMAGE_URI:${GITHUB_SHA}" \
-            -t "$ECR_IMAGE_URI:latest" \
             .
 
       - name: Push Docker image
         run: |
           docker push "$ECR_IMAGE_URI:${GITHUB_SHA}"
-          docker push "$ECR_IMAGE_URI:latest"
 
-      - name: Force ECS service deployment
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --query 'service.{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount}' \
-            --output json
+      - name: Deploy pinned ECS task revision
+        id: deploy
+        run: python3 .github/scripts/deploy-ecs-revision.py
 
       - name: Verify ECS service
         timeout-minutes: 12
-        run: |
-          desired_count="$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query 'services[0].desiredCount' \
-            --output text)"
+        env:
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+          DEPLOYMENT_CREATED_AT: ${{ steps.deploy.outputs.deployment_created_at }}
+          TASK_DEFINITION: ${{ steps.deploy.outputs.task_definition }}
+          IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
+        run: bash .github/scripts/verify-ecs-deployment.sh
 
-          if [ "$desired_count" = "None" ] || [ "$desired_count" = "null" ]; then
-            echo "ECS service not found"
-            exit 1
-          fi
-
-          print_service_state() {
-            aws ecs describe-services \
-              --cluster "$ECS_CLUSTER" \
-              --services "$ECS_SERVICE" \
-              --query 'services[0].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,deployments:deployments[*].{status:status,rolloutState:rolloutState,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,failedTasks:failedTasks}}' \
-              --output json
-          }
-
-          print_service_events() {
-            aws ecs describe-services \
-              --cluster "$ECS_CLUSTER" \
-              --services "$ECS_SERVICE" \
-              --query 'services[0].events[0:10].[createdAt,message]' \
-              --output table
-          }
-
-          print_service_state
-
-          if [ "$desired_count" -gt 0 ]; then
-            for attempt in $(seq 1 40); do
-              rollout_state="$(aws ecs describe-services \
-                --cluster "$ECS_CLUSTER" \
-                --services "$ECS_SERVICE" \
-                --query 'services[0].deployments[?status==`PRIMARY`][0].rolloutState' \
-                --output text)"
-              deployment_count="$(aws ecs describe-services \
-                --cluster "$ECS_CLUSTER" \
-                --services "$ECS_SERVICE" \
-                --query 'length(services[0].deployments)' \
-                --output text)"
-              running_count="$(aws ecs describe-services \
-                --cluster "$ECS_CLUSTER" \
-                --services "$ECS_SERVICE" \
-                --query 'services[0].runningCount' \
-                --output text)"
-
-              print_service_state
-
-              if [ "$rollout_state" = "FAILED" ]; then
-                echo "PRIMARY ECS deployment failed"
-                print_service_events
-                exit 1
-              fi
-
-              if [ "$deployment_count" -eq 1 ] && [ "$running_count" -eq "$desired_count" ]; then
-                echo "ECS service is stable"
-                break
-              fi
-
-              if [ "$attempt" -eq 40 ]; then
-                echo "ECS service did not become stable within 10 minutes"
-                print_service_events
-                exit 1
-              fi
-
-              sleep 15
-            done
-          else
-            echo "desired count is 0; skipping services-stable wait"
-          fi
+      - name: Preserve deployment and rollback versions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RELEASE_RECORD }}
+          retention-days: 90
+          if-no-files-found: warn
 
       - name: Publish Git tag and GitHub Release
         env:
@@ -181,7 +121,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "$RELEASE_TAG 프로덕션 배포"
           git push origin "$RELEASE_TAG"
-          gh release create "$RELEASE_TAG" \
+          gh release create "$RELEASE_TAG" "$RELEASE_RECORD" \
             --verify-tag \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TAG" \
