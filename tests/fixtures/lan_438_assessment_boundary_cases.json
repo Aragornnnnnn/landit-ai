@@ -1,0 +1,54 @@
+[
+  {
+    "caseId": "lan438-short-natural-answer",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "short-natural-answer",
+    "calibrationFocus": "A short natural answer should be judged against the demand, not treated as automatically low or insufficient.",
+    "assessmentMessage": {
+      "messageId": 438001,
+      "evaluationContext": "What would you like to drink?",
+      "userMessage": "An iced americano, please.",
+      "responseDemand": "LOW",
+      "requiredElements": ["drink"]
+    }
+  },
+  {
+    "caseId": "lan438-achieved-not-level-five",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "task-achievement-vs-proficiency",
+    "calibrationFocus": "Meeting the required elements should not be treated as proficiency level 5 without domain evidence.",
+    "assessmentMessage": {
+      "messageId": 438002,
+      "evaluationContext": "What food do you like, and why?",
+      "userMessage": "I like pizza because it is spicy.",
+      "responseDemand": "HIGH",
+      "requiredElements": ["favorite food", "reason"]
+    }
+  },
+  {
+    "caseId": "lan438-off-topic-observed",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "off-topic-is-observed-evidence",
+    "calibrationFocus": "An off-topic answer is still observed performance when the text supports a judgment; it is not automatically insufficient evidence.",
+    "assessmentMessage": {
+      "messageId": 438003,
+      "evaluationContext": "What did you eat recently?",
+      "userMessage": "My sister has a new job.",
+      "responseDemand": "MEDIUM",
+      "requiredElements": ["recent food experience"]
+    }
+  },
+  {
+    "caseId": "lan438-evidence-status-boundary",
+    "fixtureStatus": "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+    "boundary": "not-observed-vs-insufficient-evidence",
+    "calibrationFocus": "Human calibration should distinguish no opportunity (NOT_OBSERVED) from a technical or processing gap (INSUFFICIENT_EVIDENCE).",
+    "assessmentMessage": {
+      "messageId": 438004,
+      "evaluationContext": "Please respond to the request in one sentence.",
+      "userMessage": "I can help with that.",
+      "responseDemand": "MEDIUM",
+      "requiredElements": ["response to request"]
+    }
+  }
+]

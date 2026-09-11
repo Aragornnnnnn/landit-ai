@@ -14,6 +14,8 @@ from app.models.conversation import (
     NextMessageResponse,
     SessionFeedbackRequest,
     SessionFeedbackResponse,
+    SessionLevelAssessmentRequest,
+    SessionLevelAssessmentResponse,
 )
 from app.conversation.application.next_message_service import (
     AiGenerationFailedError,
@@ -24,6 +26,7 @@ from app.conversation.application.next_message_service import (
     generate_message_feedback,
     generate_next_message,
     generate_session_feedback,
+    generate_session_level_assessment,
 )
 
 router = APIRouter(prefix="/api/v1/conversation", tags=["conversation"])
@@ -152,6 +155,31 @@ def create_session_feedback(
             status_code=503,
             error_code=ErrorCode.AI_GENERATION_FAILED,
             message="세션 최종 피드백 생성에 실패했습니다.",
+        ) from exc
+
+    return success_response(response)
+
+
+@router.post(
+    "/session-level-assessment",
+    response_model=ApiResponse[SessionLevelAssessmentResponse],
+)
+def create_session_level_assessment(
+    payload: SessionLevelAssessmentRequest,
+    request: Request,
+) -> ApiResponse[SessionLevelAssessmentResponse]:
+    try:
+        response = generate_session_level_assessment(payload, request.app.state.settings)
+    except AiResponseInvalidError as exc:
+        raise ApiException(
+            status_code=502,
+            error_code=ErrorCode.AI_RESPONSE_INVALID,
+        ) from exc
+    except AiGenerationFailedError as exc:
+        raise ApiException(
+            status_code=503,
+            error_code=ErrorCode.AI_GENERATION_FAILED,
+            message="세션 수준 평가 생성에 실패했습니다.",
         ) from exc
 
     return success_response(response)

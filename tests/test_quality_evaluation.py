@@ -23,6 +23,7 @@ from app.models.conversation import (
     MessageFeedbackRequest,
     MessageFeedbackResponse,
     MessageFeedbackScoreEvidence,
+    SessionAssessmentMessage,
     SessionFeedbackResponse,
 )
 from scripts.evaluate_conversation_quality import (
@@ -182,6 +183,28 @@ class QualityEvaluationTests(unittest.TestCase):
                 expected["forbiddenFeedbackTerms"],
             )
             MessageFeedbackRequest.model_validate(case["payload"])
+
+    def test_lan_438_boundary_fixture_uses_assessment_input_contract(self):
+        fixture_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "lan_438_assessment_boundary_cases.json"
+        )
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(cases), 4)
+        message_ids = []
+        for case in cases:
+            self.assertEqual(
+                case["fixtureStatus"],
+                "CANDIDATE_ONLY_NOT_HUMAN_VALIDATED",
+            )
+            self.assertTrue(case["boundary"])
+            message = SessionAssessmentMessage.model_validate(
+                case["assessmentMessage"],
+            )
+            message_ids.append(message.messageId)
+        self.assertEqual(len(message_ids), len(set(message_ids)))
 
     def test_lan_180_feedback_fixture_covers_six_anonymized_regressions(self):
         """LAN-180 품질 fixture의 사례별 판정 계약을 고정한다."""
