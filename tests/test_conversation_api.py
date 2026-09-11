@@ -3057,6 +3057,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
                     "sessionId": 100,
                     "messageId": 1001,
                     "feedbackStatus": "PREPARING",
+                    "completedFeedback": response.json()["data"]["completedFeedback"],
                 },
                 "error": None,
             },
@@ -3235,7 +3236,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
             ["AI_MESSAGE", "SCENARIO_OPENING_INSTRUCTION"],
         )
         self.assertNotIn("MessageFeedbackEvaluation", schemas)
-        self.assertNotIn("MessageFeedbackScoreEvidence", schemas)
+        self.assertIn("MessageFeedbackScoreEvidence", schemas)
 
     def test_message_feedback_generates_and_caches_good_feedback(self):
         ai_response = {
@@ -3680,6 +3681,7 @@ class MessageFeedbackApiTests(unittest.TestCase):
                     "sessionId": 100,
                     "messageId": 1001,
                     "feedbackStatus": "FAILED",
+                    "completedFeedback": None,
                 },
                 "error": None,
             },
@@ -4066,8 +4068,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "detectedPatterns",
             body["data"]["messageFeedbacks"][0],
         )
-        self.assertIsNone(get_cached_message_feedback(100, 1001))
-        self.assertIsNone(get_cached_message_feedback(100, 1003))
+        self.assertIsNotNone(get_cached_message_feedback(100, 1001))
+        self.assertIsNotNone(get_cached_message_feedback(100, 1003))
         messages = fake_openai.completions.kwargs["messages"]
         self.assertIn("Session ID: 100", messages[1]["content"])
         self.assertIn("Expected message IDs: [1001, 1003]", messages[1]["content"])
@@ -4423,7 +4425,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("missingMessageIds", response.text)
         openai_class.assert_not_called()
 
-    def test_session_feedback_completes_missing_summary_and_clears_cache(self):
+    def test_session_feedback_completes_missing_summary_and_preserves_retry_cache(self):
         app = self._app()
         self._cache_feedback(app, good_message_feedback(1001))
         payload = valid_session_feedback_payload()
@@ -4448,7 +4450,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
             response.json()["data"]["summaryMessage"],
             "메시지별 피드백을 참고해 다음 대화에서 한 문장씩 더 구체적으로 말해 보세요.",
         )
-        self.assertIsNone(get_cached_message_feedback(100, 1001))
+        self.assertIsNotNone(get_cached_message_feedback(100, 1001))
 
     def test_session_feedback_generation_failure_returns_503_and_preserves_cache(self):
         app = self._app()

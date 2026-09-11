@@ -31,6 +31,7 @@ from app.core.structured_output import (
     structured_outputs_unsupported,
 )
 from app.models.conversation import (
+    CompletedMessageFeedback,
     ClosingMessageRequest,
     ClosingMessageResponse,
     CORRECTION_EXPRESSION_PLACEHOLDER_PROMPT_RULE,
@@ -184,7 +185,7 @@ class _MessageFeedbackCacheEntry:
     expires_at: float
 
 
-# ponytail: 단일 프로세스 TTL cache다. 여러 인스턴스 공유가 필요해지면 외부 저장소로 옮긴다.
+# 구버전 BE 요청을 지원하는 전환용 캐시다. 새 BE는 응답을 DB에 저장해 재전달한다.
 _message_feedback_cache: dict[int, dict[int, _MessageFeedbackCacheEntry]] = {}
 _message_feedback_cache_lock = RLock()
 
@@ -546,6 +547,16 @@ def generate_message_feedback(
         sessionId=request.sessionId,
         messageId=request.messageId,
         feedbackStatus=FeedbackStatus.PREPARING,
+        completedFeedback=CompletedMessageFeedback(
+            sessionId=request.sessionId,
+            feedback=feedback,
+            scoreEvidence=final_score_evidence,
+            adjudicationEvidence=final_adjudication_evidence,
+            userMessage=request.userMessage,
+            candidateWasRepaired=candidate_was_repaired,
+            copyWasRepaired=copy_was_repaired,
+            copyWasFallback=copy_was_fallback,
+        ),
     )
 
 
@@ -1165,13 +1176,27 @@ def _message_feedback_validation_reason(error: ValidationError) -> str:
     return f"message_feedback_schema: {errors[0]['msg']}"
 
 
+def _entry_from_completed_feedback(result: CompletedMessageFeedback) -> _MessageFeedbackCacheEntry:
+    return _MessageFeedbackCacheEntry(
+        feedback=result.feedback,
+        score_evidence=result.scoreEvidence,
+        adjudication_evidence=result.adjudicationEvidence,
+        user_message=result.userMessage,
+        candidate_was_repaired=result.candidateWasRepaired,
+        copy_was_repaired=result.copyWasRepaired,
+        copy_was_fallback=result.copyWasFallback,
+        expires_at=float("inf"),
+    )
+
+
 def generate_session_feedback(
     request: SessionFeedbackRequest,
     settings: Settings | None = None,
 ) -> SessionFeedbackResponse:
-    feedback_entries = _get_expected_message_feedback_entries(
-        request.sessionId,
-        request.expectedMessageIds,
+    feedback_entries = (
+        [_entry_from_completed_feedback(entry) for entry in request.completedFeedbacks]
+        if request.completedFeedbacks is not None
+        else _get_expected_message_feedback_entries(request.sessionId, request.expectedMessageIds)
     )
     message_feedbacks = [entry.feedback for entry in feedback_entries]
     resolved_settings = settings or Settings()
@@ -1201,7 +1226,7 @@ def generate_session_feedback(
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
     )
-    _delete_message_feedback_cache(request.sessionId)
+    # 구버전 BE도 응답 유실 뒤 다시 요청할 수 있도록 TTL까지 유지한다.
     return response
 
 
