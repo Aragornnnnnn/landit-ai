@@ -440,12 +440,6 @@ class MessageFeedbackRequest(BaseModel):
         return self
 
 
-class MessageFeedbackResponse(BaseModel):
-    sessionId: int = Field(gt=0)
-    messageId: int = Field(gt=0)
-    feedbackStatus: FeedbackStatus
-
-
 class MessageFeedbackContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -621,11 +615,35 @@ class MessageFeedbackCandidate(MessageFeedbackContent):
         return self
 
 
+class CompletedMessageFeedback(BaseModel):
+    """BE가 저장하고 다른 AI 인스턴스에 전달하는 완성된 평가 결과다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schemaVersion: int = Field(default=1, strict=True, ge=1, le=1)
+    sessionId: int = Field(gt=0)
+    feedback: MessageFeedbackData
+    scoreEvidence: MessageFeedbackScoreEvidence
+    adjudicationEvidence: MessageFeedbackAdjudicationEvidence
+    userMessage: str = Field(min_length=1)
+    candidateWasRepaired: bool
+    copyWasRepaired: bool
+    copyWasFallback: bool
+
+
+class MessageFeedbackResponse(BaseModel):
+    sessionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    feedbackStatus: FeedbackStatus
+    completedFeedback: CompletedMessageFeedback | None = None
+
+
 class SessionFeedbackRequest(BaseModel):
     sessionId: int = Field(gt=0)
     scenario: ScenarioContext
     expectedMessageIds: list[int]
     assessmentMessages: list[SessionAssessmentMessage] = Field(default_factory=list)
+    completedFeedbacks: list[CompletedMessageFeedback] | None = None
 
     @field_validator("expectedMessageIds")
     @classmethod
@@ -637,6 +655,15 @@ class SessionFeedbackRequest(BaseModel):
         if len(value) != len(set(value)):
             raise ValueError("expectedMessageIds must not contain duplicates")
         return value
+
+    @model_validator(mode="after")
+    def completed_feedbacks_must_match_session(self) -> Self:
+        if self.completedFeedbacks is not None:
+            if [entry.feedback.messageId for entry in self.completedFeedbacks] != self.expectedMessageIds:
+                raise ValueError("completedFeedbacks must match expectedMessageIds in order")
+            if any(entry.sessionId != self.sessionId for entry in self.completedFeedbacks):
+                raise ValueError("completedFeedbacks must belong to this session")
+        return self
 
     @model_validator(mode="after")
     def assessment_message_ids_must_match_expected_ids(self) -> Self:

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    landit_ai_internal_token: SecretStr | None = None
     app_name: str = "landit-ai"
     app_env: str = "local"
     app_version: str = "local"
