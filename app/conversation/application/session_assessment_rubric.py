@@ -27,7 +27,7 @@ Vocabulary:
 Discourse:
 1 = ideas are disconnected.
 2 = ideas are presented as a simple list.
-3 = reasons, order, and details are connected.
+3 = ideas connect coherently to the preceding turn, or reasons, order, and details are connected.
 4 = ideas develop clearly with reasons and examples.
 5 = complex ideas are organized with summary and expansion.
 
@@ -42,6 +42,19 @@ Calibration rules:
 An error-free simple answer does not prove high capability.
 ACHIEVED means that the task requirements were met; it does not mean proficiency level 5.
 A short natural answer is not automatically incorrect, low-level, or insufficient evidence.
+Evaluate the response against what this specific question requests, not against the complexity of the question's wording.
+For taskPerformance, ACHIEVED means every explicit required element is answered in substance.
+PARTIAL requires an identifiable missing required element; do not add unstated reasons, explanations, or the scenario's later goals.
+When requiredElements contains the whole question, extract only what the learner is explicitly asked to provide; background and offered alternatives are not additional tasks.
+A concise choice, time, or contact preference can be a complete coherent discourse turn at level 3; do not assign discourse 1 or 2 solely because there is only one sentence or no explanation was requested.
+Discourse 1 requires disconnected ideas and discourse 2 requires list-like organization; brevity alone proves neither.
+Do not assign vocabulary 2 solely because the words are common; look for actual repetition or imprecision limiting the answer.
+Do not assign grammar 4 solely for a correct future tense or infinitive; varied structural control needs evidence.
+Appropriate short answers do not automatically earn levels 4 or 5. Lack of advanced evidence is not proof that the learner cannot perform at a higher level.
+Calibration examples (judge other domains independently):
+- Asked 'Would you rather get a text or an email?', 'Please send it by email' achieves the choice and is a coherent discourse level 3 turn, not disconnected discourse level 1. A reason is not required.
+- Instructed to report losing a key and ask how to enter, 'I lost my room key. How can I get into my room?' is ACHIEVED; replacement timing and notification preference are later tasks, not missing opening requirements.
+- Asked to choose a pickup time, 'Tomorrow morning works for me' is ACHIEVED. Asked 'When, and why that time?', the same answer is PARTIAL because the requested reason is missing.
 Use OBSERVED when genuine performance is present and judge it at the level supported by the text.
 Use NOT_OBSERVED only when this message offered no opportunity to judge that domain.
 Use INSUFFICIENT_EVIDENCE only when relevant evidence is missing because of a technical or processing problem.

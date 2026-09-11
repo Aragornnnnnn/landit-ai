@@ -242,7 +242,7 @@ def write_manifest(args: argparse.Namespace) -> None:
         "referencePromptSha256": hashlib.sha256(
             reference_prompt({"answers": [""] * 4}).encode()
         ).hexdigest(),
-        "assessmentVersion": "text-level-v1.1",
+        "assessmentVersion": "text-level-v1.2",
     }
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text(encoding="utf-8"))
