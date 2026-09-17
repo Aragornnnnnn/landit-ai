@@ -1283,7 +1283,8 @@ def generate_session_level_assessment(
         None,
         require_session_id=True,
     )
-    if level_assessment is None:
+    retried = level_assessment is None
+    if retried:
         level_assessment = _retry_session_level_assessment_core(
             resolved_settings,
             request,
@@ -1292,6 +1293,15 @@ def generate_session_level_assessment(
             selected_response_format,
             deadline=deadline,
         )
+    if level_assessment is None:
+        observe(workflow="level_assessment", failure_stage="core_validation",
+                reason="core_missing", outcome="failed", attempt=2)
+    elif retried:
+        observe(workflow="level_assessment", failure_stage="core_validation",
+                reason="core_repaired", outcome="recovered", attempt=2)
+    elif level_assessment.details is None:
+        observe(workflow="level_assessment", failure_stage="details_validation",
+                reason="optional_details_missing", outcome="recovered")
     return SessionLevelAssessmentResponse(
         sessionId=request.sessionId,
         levelAssessment=level_assessment,
