@@ -62,3 +62,20 @@ class FailureObservationTests(unittest.TestCase):
         self.assertEqual(len(self.transport.events), 1)
         self.assertEqual(self.transport.events[0]["tags"]["outcome"], "failed")
         self.assertNotIn("secret-provider-key", json.dumps(self.transport.events))
+
+    def test_recovered_missing_completion_content_is_an_output_contract_failure(self):
+        try:
+            service._extract_message_content(SimpleNamespace(choices=[]))
+        except service.AiResponseInvalidError as failure:
+            observe(workflow="closing", failure_stage="output_validation", reason="safe_fallback",
+                    outcome="recovered", exc=failure)
+        self.assertEqual(self.transport.events, [])
+
+    def test_local_file_defect_is_not_treated_as_transient_provider_io(self):
+        failure = AiGenerationFailedError()
+        failure.__cause__ = FileNotFoundError("secret-config-path")
+        observe(workflow="closing", failure_stage="generation", reason="safe_fallback",
+                outcome="recovered", exc=failure)
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertEqual(self.transport.events[0]["tags"]["outcome"], "failed")
+        self.assertNotIn("secret-", json.dumps(self.transport.events))
