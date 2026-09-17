@@ -141,6 +141,25 @@ class FailureObservationTests(unittest.TestCase):
         self.assertIn("GET", response.headers["allow"])
         self.assertEqual(self.transport.events, [])
 
+    def test_feedback_failed_body_reports_even_without_http_exception(self):
+        with patch.object(service, "_generate_message_feedback_candidate",
+                          side_effect=service.AiGenerationFailedError()):
+            result = service.generate_message_feedback(SimpleNamespace(sessionId=1, messageId=2), make_settings())
+        self.assertEqual(result.feedbackStatus.value, "FAILED")
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertEqual(self.transport.events[0]["tags"]["workflow"], "message_feedback")
+
+    def test_missing_assessment_core_reports_even_inside_success_response(self):
+        request = SimpleNamespace(sessionId=1)
+        with (patch.object(service, "_session_level_assessment_user_prompt", return_value=""),
+              patch.object(service, "_request_json_completion_with_format_fallback", return_value=({}, None)),
+              patch.object(service, "_recover_session_level_assessment", return_value=None),
+              patch.object(service, "_retry_session_level_assessment_core", return_value=None)):
+            result = service.generate_session_level_assessment(request, make_settings())
+        self.assertIsNone(result.levelAssessment)
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertEqual(self.transport.events[0]["tags"]["reason"], "core_missing")
+
     def test_missing_result_fingerprints_separate_workflows(self):
         for workflow in ("feedback", "level_assessment"):
             observe(workflow=workflow, failure_stage="result", reason="result_missing", outcome="failed")
