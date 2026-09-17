@@ -1,6 +1,8 @@
 # 외부 전송 없이 실제 Sentry 이벤트의 정책·중복·민감정보 제거를 검증한다.
+import asyncio
 import json
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,7 +15,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from pydantic import BaseModel
 
-from app.common.failure_observation import observe
+from app.common.failure_observation import observe, request_id
 from app.core.sentry import scrub_sensitive_request_data, init_sentry
 from app.free_talk.llm.json_completion import AiResponseInvalidError, AiGenerationFailedError
 from app.free_talk.application.memory_candidate_review import _refinement_failure_reason
@@ -133,6 +135,32 @@ class FailureObservationTests(unittest.TestCase):
         self.assertEqual(len(self.transport.events), 1)
         self.assertEqual(self.transport.events[0]["tags"]["request_id"], correlation)
         self.assertNotIn("secret-auth", json.dumps(self.transport.events))
+
+    def test_invalid_internal_token_records_server_request_id_without_trusting_header(self):
+        app = create_app(make_settings(landit_ai_internal_token="secret-auth"))
+        supplied_id = "5c8e22b5-07c0-4c93-90f5-1c023411ffec"
+        observed_ids = []
+
+        async def reject_request():
+            previous = request_id.set("outer")
+            try:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://testserver",
+                ) as client:
+                    response = await client.post("/api/v1/conversation/next-message", headers={
+                        "X-Landit-Internal-Token": "wrong", "X-Request-Id": supplied_id})
+                self.assertEqual(request_id.get(), "outer")
+                return response
+            finally:
+                request_id.reset(previous)
+
+        with patch("app.core.internal_auth.observe", side_effect=lambda **_: observed_ids.append(request_id.get())):
+            response = asyncio.run(reject_request())
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(len(observed_ids), 1)
+        self.assertEqual(str(uuid.UUID(observed_ids[0])), observed_ids[0])
+        self.assertNotEqual(observed_ids[0], supplied_id)
 
     def test_http_405_keeps_allow_header_without_event(self):
         app = create_app(make_settings())
