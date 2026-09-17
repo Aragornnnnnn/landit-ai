@@ -520,6 +520,8 @@ def generate_message_feedback(
                     request.sessionId,
                     request.messageId,
                 )
+                observe(workflow="message_feedback", failure_stage="copy_review",
+                        reason="candidate_preserved", outcome="recovered", exc=exc)
                 copy_was_fallback = True
         feedback = _postprocess_message_feedback_benchmark(
             feedback,
@@ -553,6 +555,8 @@ def generate_message_feedback(
             request.sessionId,
             request.messageId,
         )
+        observe(workflow="message_feedback", failure_stage="generation",
+                reason="generation_failed", outcome="failed", exc=exc)
         return MessageFeedbackResponse(
             sessionId=request.sessionId,
             messageId=request.messageId,
