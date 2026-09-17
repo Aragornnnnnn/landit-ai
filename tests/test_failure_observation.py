@@ -79,3 +79,29 @@ class FailureObservationTests(unittest.TestCase):
         self.assertEqual(len(self.transport.events), 1)
         self.assertEqual(self.transport.events[0]["tags"]["outcome"], "failed")
         self.assertNotIn("secret-", json.dumps(self.transport.events))
+
+    def test_event_preserves_stack_and_cause_types_but_no_sensitive_values(self):
+        sentry_sdk.set_user({"email": "secret-email"})
+        sentry_sdk.set_context("payload", {"text": "secret-context"})
+        sentry_sdk.set_extra("body", "secret-body")
+        sentry_sdk.add_breadcrumb(message="secret-breadcrumb", data={"token": "secret-token"})
+        try:
+            try:
+                raise ValueError("secret-cause")
+            except ValueError as cause:
+                raise RuntimeError("secret-exception") from cause
+        except RuntimeError as failure:
+            observe(workflow="feedback", failure_stage="storage", reason="storage_failed",
+                    outcome="failed", exc=failure)
+            sentry_sdk.capture_exception(failure)
+        self.assertEqual(len(self.transport.events), 1)
+        event = self.transport.events[0]
+        self.assertNotIn("secret-", json.dumps(event))
+        self.assertEqual([x["type"] for x in event["exception"]["values"]], ["ValueError", "RuntimeError"])
+        self.assertTrue(event["exception"]["values"][-1]["stacktrace"]["frames"])
+
+    def test_missing_result_fingerprints_separate_workflows(self):
+        for workflow in ("feedback", "level_assessment"):
+            observe(workflow=workflow, failure_stage="result", reason="result_missing", outcome="failed")
+        self.assertEqual(len(self.transport.events), 2)
+        self.assertNotEqual(self.transport.events[0]["fingerprint"], self.transport.events[1]["fingerprint"])
