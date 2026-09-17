@@ -197,6 +197,7 @@ def _has_refinement_evidence(
 
 
 def _refinement_failure_reason(draft, review, context) -> str | None:
+    """REFINE 후보의 근거를 검증하고 유효하면 None, 아니면 거절 사유를 반환한다."""
     if not review.content or not review.quote:
         return "refinement_fields_missing"
     if review.sourceMessageId not in draft.sourceMessageIds:
