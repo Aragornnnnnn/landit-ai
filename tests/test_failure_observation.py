@@ -192,3 +192,51 @@ class FailureObservationTests(unittest.TestCase):
             setattr(review, field, original)
         context["conversationHistory"][0]["role"] = "AI"
         self.assertEqual(_refinement_failure_reason(draft, review, context), "source_message_missing_or_not_user")
+
+
+class ProductionIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.transport = MemoryTransport()
+        actual_init = sentry_sdk.init
+        with patch("app.core.sentry.sentry_sdk.init",
+                   side_effect=lambda **options: actual_init(**options, transport=self.transport)):
+            init_sentry(make_settings(sentry_dsn="https://public@example.invalid/1"))
+
+    def tearDown(self):
+        sentry_sdk.get_client().close()
+
+    def provider_failure(self, *, invalid_url=False):
+        def reply(request):
+            if invalid_url:
+                raise httpx.UnsupportedProtocol("secret-base-url")
+            return httpx.Response(429, json={"error": {"message": "secret-provider-message"}})
+        with openai.OpenAI(api_key="secret-key", max_retries=0,
+                           http_client=httpx.Client(transport=httpx.MockTransport(reply))) as client:
+            try:
+                client.chat.completions.create(model="test", messages=[{"role": "user", "content": "secret-input"}])
+            except openai.OpenAIError as cause:
+                failure = AiGenerationFailedError()
+                failure.__cause__ = cause
+                return failure
+        self.fail("provider did not fail")
+
+    def test_provider_failure_waits_for_final_outcome(self):
+        recovered = self.provider_failure()
+        observe(workflow="closing", failure_stage="generation", reason="safe_fallback",
+                outcome="recovered", exc=recovered)
+        self.assertEqual(self.transport.events, [])
+        failed = self.provider_failure()
+        observe(workflow="feedback", failure_stage="generation", reason="result_missing",
+                outcome="failed", exc=failed)
+        sentry_sdk.capture_exception(failed)
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertEqual(self.transport.events[0]["tags"]["workflow"], "feedback")
+        self.assertNotIn("secret-", json.dumps(self.transport.events))
+
+    def test_invalid_provider_configuration_survives_successful_fallback(self):
+        failure = self.provider_failure(invalid_url=True)
+        observe(workflow="closing", failure_stage="generation", reason="safe_fallback",
+                outcome="recovered", exc=failure)
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertEqual(self.transport.events[0]["tags"]["reason"], "recovered_with_defect")
+        self.assertNotIn("secret-", json.dumps(self.transport.events))
