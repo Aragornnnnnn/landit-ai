@@ -1,6 +1,7 @@
 # 대화 생성 API의 LLM 호출과 응답 검증을 담당하는 모듈
 import json
 import logging
+
 import re
 import time
 import unicodedata
@@ -24,6 +25,7 @@ from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
+from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -369,7 +371,10 @@ def _repair_or_fallback_inner_thought(
         )
         return fallback_inner_thought(None)
     try:
-        return parse_inner_thought(data)
+        result = parse_inner_thought(data)
+        observe(workflow="scenario_inner_thought", failure_stage="output_validation",
+                reason="contract_repaired", outcome="recovered", attempt=2)
+        return result
     except InnerThoughtContractError as exc:
         report_inner_thought_fallback(
             workflow="scenario_inner_thought_contract_fallback",
@@ -446,9 +451,19 @@ def _recover_closing_message_response(
     try:
         _validate_closing_message_policy(response)
     except AiResponseInvalidError:
+        observe(workflow="scenario_closing_message", failure_stage="output_validation",
+                reason="safe_closing_fallback", outcome="recovered")
         return response.model_copy(
             update={"aiMessage": "Okay.", "translatedMessage": "알겠어."},
         )
+    if (
+        not has_messages
+        or not isinstance(data.get("innerThought"), str)
+        or not data.get("innerThought", "").strip()
+        or data.get("innerThoughtType") not in tuple(item.value for item in InnerThoughtType)
+    ):
+        observe(workflow="scenario_closing_message", failure_stage="output_validation",
+                reason="safe_closing_fallback", outcome="recovered")
     return response
 
 
