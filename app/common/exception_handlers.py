@@ -1,17 +1,13 @@
 # FastAPI 예외를 공통 API 응답으로 변환하는 핸들러 등록 모듈
-import logging
-
-import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.common.failure_observation import observe
 from app.common.errors import ApiException, ErrorCode
 from app.common.response import error_response
 
-
-logger = logging.getLogger("uvicorn.error")
 
 _AI_FAILURE_CODES = {
     ErrorCode.AI_RESPONSE_INVALID,
@@ -33,6 +29,7 @@ async def request_validation_error_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
+    _observe_request_error(request, exc, "request_contract")
     return _error_json_response(
         status_code=400,
         error_code=ErrorCode.INVALID_REQUEST,
@@ -45,8 +42,14 @@ async def api_exception_handler(
 ) -> JSONResponse:
     if exc.error_code in _AI_FAILURE_CODES:
         _report_ai_failure(request, exc)
+    elif exc.error_code == ErrorCode.MESSAGE_FEEDBACK_NOT_READY:
+        observe(workflow="session_feedback", failure_stage="readiness",
+                reason="not_ready", outcome="expected_rejection", exc=exc)
+    elif exc.status_code >= 500:
+        observe(workflow="api", failure_stage="execution",
+                reason="server_failure", outcome="failed", exc=exc)
     else:
-        _log_server_exception(exc.status_code)
+        _observe_request_error(request, exc, "request_contract")
     return _error_json_response(
         status_code=exc.status_code,
         error_code=exc.error_code,
@@ -58,12 +61,17 @@ async def http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ) -> JSONResponse:
-    _log_server_exception(exc.status_code)
+    if exc.status_code >= 500:
+        observe(workflow="http", failure_stage="execution",
+                reason="server_failure", outcome="failed", exc=exc)
+    else:
+        _observe_request_error(request, exc, "http_contract")
     message = exc.detail if isinstance(exc.detail, str) else None
     return _error_json_response(
         status_code=exc.status_code,
         error_code=ErrorCode.INVALID_REQUEST,
         message=message,
+        headers=exc.headers,
     )
 
 
@@ -71,66 +79,38 @@ async def unexpected_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    logger.exception("Unexpected server error.")
+    observe(workflow="api", failure_stage="execution",
+            reason="unexpected_exception", outcome="failed", exc=exc)
     return _error_json_response(
         status_code=500,
         error_code=ErrorCode.INTERNAL_SERVER_ERROR,
     )
 
 
-def _log_server_exception(status_code: int) -> None:
-    if status_code >= 500:
-        logger.exception("Handled server error.")
+def _observe_request_error(request: Request, exc: Exception, reason: str) -> None:
+    trusted = getattr(request.state, "internal_authenticated", False)
+    observe(workflow="api", failure_stage="request_validation", reason=reason,
+            outcome="failed" if trusted else "expected_rejection", exc=exc)
 
 
 def _report_ai_failure(request: Request, exc: ApiException) -> None:
-    provider = request.app.state.settings.llm_provider
-    endpoint = request.url.path
-    logger.exception(
-        "AI request failed. workflow=ai_request_failed endpoint=%s "
-        "errorCode=%s statusCode=%s provider=%s",
-        endpoint,
-        exc.error_code.value,
-        exc.status_code,
-        provider,
-    )
-    sentry_sdk.capture_exception(
-        exc,
-        tags={
-            "workflow": "ai_request_failed",
-            "endpoint": endpoint,
-            "error_code": exc.error_code.value,
-            "status_code": str(exc.status_code),
-            "provider": provider,
-        },
-    )
+    observe(workflow="ai_request_failed", failure_stage="generation",
+            reason=exc.error_code.value.lower(), outcome="failed", exc=exc)
 
 
 def report_ai_fallback(request: Request, exc: Exception, *, workflow: str) -> None:
-    provider = request.app.state.settings.llm_provider
-    endpoint = request.url.path
-    logger.exception(
-        "AI request used fallback. workflow=%s endpoint=%s provider=%s",
-        workflow,
-        endpoint,
-        provider,
-    )
-    sentry_sdk.capture_exception(
-        exc,
-        tags={
-            "workflow": workflow,
-            "endpoint": endpoint,
-            "provider": provider,
-        },
-    )
+    observe(workflow=workflow, failure_stage="generation", reason="safe_fallback",
+            outcome="recovered", exc=exc)
 
 
 def _error_json_response(
     status_code: int,
     error_code: ErrorCode,
     message: str | None = None,
+    headers: dict | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
+        headers=headers,
         content=error_response(error_code, message).model_dump(mode="json"),
     )

@@ -1111,7 +1111,7 @@ class FreeTalkApiTests(unittest.TestCase):
             ],
         )
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             response = self._post(
                 "/api/v1/free-talk/inner-thought",
                 valid_inner_thought_payload(),
@@ -1123,7 +1123,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIn("workflow=free_talk_inner_thought_contract_fallback", logs.output[0])
-        self.assertIn("fields=directedAttack", logs.output[0])
+        self.assertIn("reason=contract_validation", logs.output[0])
         self.assertNotIn(inner_thought, logs.output[0])
 
     def test_inner_thought_repairs_malformed_json_response(self):
@@ -1144,7 +1144,7 @@ class FreeTalkApiTests(unittest.TestCase):
     def test_inner_thought_uses_safe_fallback_after_malformed_json_repair(self):
         fake_openai = FakeOpenAI(contents=["not JSON", "still not JSON"])
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             response = self._post(
                 "/api/v1/free-talk/inner-thought",
                 valid_inner_thought_payload(),
@@ -1208,8 +1208,8 @@ class FreeTalkApiTests(unittest.TestCase):
         )
 
         with self.assertLogs(
-            "app.common.inner_thought_contract",
-            level="ERROR",
+            "app.common.failure_observation",
+            level="WARNING",
         ) as logs:
             response = self._post(
                 "/api/v1/free-talk/inner-thought",
