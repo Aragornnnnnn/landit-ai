@@ -1718,7 +1718,10 @@ def _request_json_completion(
                     )
                     request.pop("response_format", None)
                     completion = client.chat.completions.create(**request)
-                return _parse_json_object(_extract_message_content(completion))
+                data = _parse_json_object(_extract_message_content(completion))
+                observe(workflow=workflow, failure_stage="output_format", reason="format_fallback",
+                        outcome="recovered", attempt=attempt)
+                return data
             try:
                 data = _parse_strict_json_object(_extract_message_content(completion))
             except AiResponseInvalidError as exc:
@@ -1746,9 +1749,11 @@ def _request_json_completion(
                     max_attempts,
                 )
                 continue
+            schema_valid = True
             try:
                 response_model.model_validate(data)
             except ValidationError as exc:
+                schema_valid = False
                 reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
                 logger.warning(
                     "Structured Outputs schema 검증에 실패했습니다. "
@@ -1773,6 +1778,9 @@ def _request_json_completion(
                         max_attempts,
                     )
                     continue
+            if schema_valid and attempt > 1:
+                observe(workflow=workflow, failure_stage="output_validation", reason="json_repaired",
+                        outcome="recovered", attempt=attempt)
             return data
     except AiGenerationFailedError:
         raise
