@@ -160,8 +160,35 @@ class FailureObservationTests(unittest.TestCase):
         self.assertEqual(len(self.transport.events), 1)
         self.assertEqual(self.transport.events[0]["tags"]["reason"], "core_missing")
 
+    def test_normal_closing_recovery_has_metrics_but_no_event(self):
+        with patch("app.common.failure_observation._counter") as counter:
+            response = service._recover_closing_message_response({"innerThoughtType": []})
+        self.assertEqual(response.aiMessage, "Okay.")
+        self.assertEqual(self.transport.events, [])
+        counter.add.assert_called_once()
+        self.assertEqual(counter.add.call_args.args[1]["outcome"], "recovered")
+        self.assertNotIn("request_id", counter.add.call_args.args[1])
+
     def test_missing_result_fingerprints_separate_workflows(self):
         for workflow in ("feedback", "level_assessment"):
             observe(workflow=workflow, failure_stage="result", reason="result_missing", outcome="failed")
         self.assertEqual(len(self.transport.events), 2)
         self.assertNotEqual(self.transport.events[0]["fingerprint"], self.transport.events[1]["fingerprint"])
+
+    def test_memory_rejection_reasons_are_safe_and_distinct(self):
+        draft = SimpleNamespace(content="2 dogs", sourceMessageIds=[1])
+        review = SimpleNamespace(content="2 pet dogs", sourceMessageId=1, quote="dogs")
+        context = {"conversationHistory": [{"messageId": 1, "role": "USER", "content": "2 dogs"}]}
+        self.assertIsNone(_refinement_failure_reason(draft, review, context))
+        for field, value, reason in [
+            ("content", None, "refinement_fields_missing"),
+            ("sourceMessageId", 2, "source_id_mismatch"),
+            ("content", "3 dogs", "numbers_changed"),
+            ("quote", "secret-mismatch", "quote_not_in_source"),
+        ]:
+            original = getattr(review, field)
+            setattr(review, field, value)
+            self.assertEqual(_refinement_failure_reason(draft, review, context), reason)
+            setattr(review, field, original)
+        context["conversationHistory"][0]["role"] = "AI"
+        self.assertEqual(_refinement_failure_reason(draft, review, context), "source_message_missing_or_not_user")
