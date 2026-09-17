@@ -34,11 +34,12 @@
 
 ## 검증
 
-- 전체 `.venv/bin/python -m unittest discover -s tests`: 554개, 실패 0, 기존 환경 의존 skip 7개. 격리 worktree에서는 원본 저장소의 Python 3.12 venv 실행 파일을 사용했다.
-- 새 관측 테스트 15개: 실제 메모리 transport의 이벤트/민감정보/중복, FastAPI 미처리·입력 오류, 405 Allow, HTTP 성공 내부 FAILED와 Core 유실, 기억 검수 이유, 복구 메트릭, 결과별 fingerprint, 운영 SDK integration 및 provider 설정 오류를 검증했다.
+- 전체 `.venv/bin/python -m unittest discover -s tests`: 555개, 실패 0, 기존 환경 의존 skip 7개. 격리 worktree에서는 원본 저장소의 Python 3.12 venv 실행 파일을 사용했다.
+- 새 관측 테스트 16개: 실제 메모리 transport의 이벤트/민감정보/중복, FastAPI 미처리·입력 오류, 405 Allow, HTTP 성공 내부 FAILED와 Core 유실, 기억 검수 이유, 복구 메트릭, 결과별 fingerprint, 운영 SDK integration 및 provider 설정 오류, 인증 거절 request_id를 검증했다.
 - 실제 provider 응답은 httpx.MockTransport로 대체했고 실제 Sentry/LLM 외부 전송은 하지 않았다. 기존 skip은 강제 정렬 모델/명시적 실행 옵션을 요구하는 테스트다.
 - 독립 리뷰 지적을 반영한 집중 재리뷰와 마지막 원인 분류 경계 재검토에서 추가 확정 결함이 없었다.
 
 독립 리뷰에서 OpenAI 자동 선행 전송, provider URL 결함 제외, 종료/속마음 복구 관측 누락을 확인하고 수정했다. 운영 초기화 설정을 사용하는 테스트를 별도로 추가했다.
+PR #104 리뷰에서 인증 거절 관측에 request_id가 빠지는 경로를 확인했다. 인증 검증 전 서버 UUID를 설정하고, 인증 성공 후에만 유효한 BE 식별자를 사용하며, 모든 종료 경로에서 ContextVar를 복원한다. 미인증 헤더 무시와 복원을 회귀 테스트했고 기억 검수 사유 함수의 반환 계약도 문서화했다.
 
 배포 후에는 이벤트 수뿐 아니라 피드백 FAILED·평가 Core 유실·기억/표현 실패율, 복구 메트릭, 상태 저장 실패를 함께 대조해야 한다. 이 작업은 로컬 구현·검증이며 배포나 운영 효과를 입증하지 않는다.
