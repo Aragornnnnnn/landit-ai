@@ -944,7 +944,7 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
                 response = make_client(app).post(
                     "/api/v1/conversation/inner-thought",
@@ -956,7 +956,7 @@ class InnerThoughtApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIn("workflow=scenario_inner_thought_contract_fallback", logs.output[0])
-        self.assertIn("fields=answerCoverage", logs.output[0])
+        self.assertIn("reason=contract_validation", logs.output[0])
         self.assertNotIn(ai_response["innerThought"], logs.output[0])
 
     def test_inner_thought_repairs_missing_evidence(self):
@@ -999,7 +999,7 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR"):
+        with self.assertLogs("app.common.failure_observation", level="WARNING"):
             with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
                 response = make_client(app).post(
                     "/api/v1/conversation/inner-thought",
@@ -1077,7 +1077,7 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
                 response = make_client(app).post(
                     "/api/v1/conversation/inner-thought",
@@ -1105,7 +1105,7 @@ class InnerThoughtApiTests(unittest.TestCase):
             ),
         )
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
                 response = make_client(app).post(
                     "/api/v1/conversation/inner-thought",
