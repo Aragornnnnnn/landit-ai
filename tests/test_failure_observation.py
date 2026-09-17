@@ -100,6 +100,47 @@ class FailureObservationTests(unittest.TestCase):
         self.assertEqual([x["type"] for x in event["exception"]["values"]], ["ValueError", "RuntimeError"])
         self.assertTrue(event["exception"]["values"][-1]["stacktrace"]["frames"])
 
+    def test_unhandled_fastapi_failure_is_sent_once(self):
+        app = create_app(make_settings())
+
+        @app.get("/api/test-failure")
+        def fail():
+            raise RuntimeError("secret-unhandled")
+
+        response = make_client(app, raise_server_exceptions=False).get("/api/test-failure")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertNotIn("secret-unhandled", json.dumps(self.transport.events))
+        self.assertTrue(self.transport.events[0]["tags"].get("request_id"))
+
+    def test_authenticated_contract_violation_is_distinct_from_external_request(self):
+        app = create_app(make_settings(landit_ai_internal_token="secret-auth"))
+
+        class Input(BaseModel):
+            count: int
+
+        @app.post("/api/test-contract")
+        def accept(payload: Input):
+            return {"ok": True}
+
+        client = make_client(app)
+        self.assertEqual(client.post("/api/test-contract", json={}).status_code, 401)
+        self.assertEqual(self.transport.events, [])
+        correlation = "5c8e22b5-07c0-4c93-90f5-1c023411ffec"
+        response = client.post("/api/test-contract", json={}, headers={
+            "X-Landit-Internal-Token": "secret-auth", "X-Request-Id": correlation})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(len(self.transport.events), 1)
+        self.assertEqual(self.transport.events[0]["tags"]["request_id"], correlation)
+        self.assertNotIn("secret-auth", json.dumps(self.transport.events))
+
+    def test_http_405_keeps_allow_header_without_event(self):
+        app = create_app(make_settings())
+        response = make_client(app).post("/health")
+        self.assertEqual(response.status_code, 405)
+        self.assertIn("GET", response.headers["allow"])
+        self.assertEqual(self.transport.events, [])
+
     def test_missing_result_fingerprints_separate_workflows(self):
         for workflow in ("feedback", "level_assessment"):
             observe(workflow=workflow, failure_stage="result", reason="result_missing", outcome="failed")
