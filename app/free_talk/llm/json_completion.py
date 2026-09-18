@@ -49,10 +49,13 @@ def request_json_completion(
     workflow: str = "free_talk_json_completion",
     max_attempts: int = 2,
     retry_schema_violations: bool = True,
+    model: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, object]:
-    model = _required_model(settings)
+    model = _resolved_model(settings, model)
     try:
-        client = create_openai_client(settings)
+        # timeout을 주면 SDK 재시도 없이 그 시간 안에 끝내거나 실패한다 (보조 판정용).
+        client = create_openai_client(settings, timeout=timeout_seconds)
         request = {
             "model": model,
             "messages": [
@@ -176,6 +179,13 @@ def request_json_completion(
         raise AiGenerationFailedError from exc
 
     raise AiGenerationFailedError
+
+
+def _resolved_model(settings: Settings, override: str | None) -> str:
+    """호출별 모델 지정이 있으면 그것을, 없으면 기본 OPENROUTER_MODEL을 쓴다."""
+    if override is not None and override.strip():
+        return override.strip()
+    return _required_model(settings)
 
 
 def _required_model(settings: Settings) -> str:
