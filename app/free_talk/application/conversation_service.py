@@ -2,6 +2,9 @@
 import json
 import logging
 import re
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -17,6 +20,11 @@ from app.common.inner_thought_contract import (
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
+from app.free_talk.application.correction_service import (
+    TurnCorrectionResult,
+    generate_turn_correction,
+    unavailable_turn_correction,
+)
 from app.free_talk.application.memory_context import memory_context_with_time_status
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
@@ -393,6 +401,35 @@ def generate_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
+    """속마음과 턴 교정을 병렬로 만들고 한 응답에 얹는다. 교정은 상한 시간까지만 기다린다."""
+    deadline = time.monotonic() + settings.free_talk_correction_timeout_seconds
+    # with(=shutdown(wait=True))를 쓰면 상한을 넘긴 교정 스레드를 기다리게 되므로 대기 없이 닫는다
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        correction_future = executor.submit(generate_turn_correction, payload, settings)
+        thought = _inner_thought_result(payload, settings)
+        correction = _awaited_turn_correction(correction_future, deadline, payload)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return _to_inner_thought_response(thought, correction)
+
+
+def _awaited_turn_correction(
+    future: Future[TurnCorrectionResult],
+    deadline: float,
+    payload: FreeTalkInnerThoughtRequest,
+) -> TurnCorrectionResult:
+    # 교정은 보조 판정이라 상한을 넘기면 없는 것으로 친다. 그 외 예외는 버그이므로 전파한다.
+    try:
+        return future.result(timeout=max(0.0, deadline - time.monotonic()))
+    except FuturesTimeoutError:
+        return unavailable_turn_correction(payload, "timeout")
+
+
+def _inner_thought_result(
+    payload: FreeTalkInnerThoughtRequest,
+    settings: Settings,
+) -> InnerThoughtResult:
     try:
         data = request_json_completion(
             settings=settings,
@@ -403,7 +440,7 @@ def generate_inner_thought(
             workflow="free_talk_inner_thought",
             max_attempts=1,
         )
-        return _to_inner_thought_response(parse_inner_thought(data))
+        return parse_inner_thought(data)
     except (AiResponseInvalidError, InnerThoughtContractError):
         try:
             data = request_json_completion(
@@ -415,7 +452,7 @@ def generate_inner_thought(
                 workflow="free_talk_inner_thought_repair",
                 max_attempts=1,
             )
-            return _to_inner_thought_response(parse_inner_thought(data))
+            return parse_inner_thought(data)
         except AiGenerationFailedError:
             raise
         except AiResponseInvalidError:
@@ -425,7 +462,7 @@ def generate_inner_thought(
                 message_id=payload.submittedMessageId,
                 reason="response_invalid",
             )
-            return _to_inner_thought_response(fallback_inner_thought(None))
+            return fallback_inner_thought(None)
         except InnerThoughtContractError as exc:
             report_inner_thought_fallback(
                 workflow="free_talk_inner_thought_contract_fallback",
@@ -434,15 +471,18 @@ def generate_inner_thought(
                 reason=exc.reason,
                 invalid_fields=exc.invalid_fields,
             )
-            return _to_inner_thought_response(fallback_inner_thought(data))
+            return fallback_inner_thought(data)
 
 
 def _to_inner_thought_response(
     result: InnerThoughtResult,
+    correction: TurnCorrectionResult,
 ) -> FreeTalkInnerThoughtResponse:
     return FreeTalkInnerThoughtResponse(
         innerThought=result.inner_thought,
         innerThoughtType=result.inner_thought_type,
+        reactedToPartner=correction.reacted_to_partner,
+        correction=correction.correction,
     )
 
 
