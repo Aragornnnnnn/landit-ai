@@ -192,13 +192,15 @@ def _correction_policy_section(target_locale: str, base_locale: str) -> str:
         "find clearly wrong or awkward. Never force a correction: if nothing is clearly wrong, "
         "or the only issue is spelling, capitalization, punctuation, filler words, contractions, "
         "or a speech-to-text artifact, return hasCorrection false and correction null. "
-        "originalSentence must be copied verbatim from submittedMessage. "
+        "originalSentence is exactly one sentence copied verbatim from submittedMessage: "
+        "never the whole message, never a leading backchannel such as Yeah or Oh nice, and "
+        "never a neighboring sentence. "
         f"betterSentence is that sentence fixed minimally in {target_locale}, keeping the "
         "meaning, register, and length; add no new information. "
-        f"reason is one short sentence in {base_locale} in a warm friend's voice that says in "
-        "plain words why the fix helps: no grammar jargon, no scores, no study advice, and no "
-        "mention of an app or lesson. Example shape: "
-        "어제 일이라 went로 말해야 해요. 그래야 언제 얘기인지 바로 알아들어요."
+        f"reason is one short sentence in {base_locale} in a warm friend's voice that names "
+        "the word or words you changed and says in plain words why the fix helps: no grammar "
+        "jargon, no scores, no study advice, and no mention of an app or lesson. Example "
+        "shape: 어제 일이라 went로 말해야 해요. 그래야 언제 얘기인지 바로 알아들어요."
     )
 
 
@@ -239,8 +241,9 @@ def _reaction_policy_section() -> str:
     return (
         "Reaction Policy:\n"
         "reactedToPartner is true when submittedMessage first acknowledges or answers "
-        "previousPartnerMessage (answers its question, or opens with a backchannel such as "
-        "Yeah, Oh nice, Really?) before moving on, and false when the user ignores the partner "
+        "previousPartnerMessage before moving on. Directly answering its question counts, "
+        "even without a backchannel; opening with a backchannel such as Yeah, Oh nice, or "
+        "Really? also counts. It is false only when the user ignores what the partner said "
         "and only says their own thing. When previousPartnerMessage is null, return true."
     )
 
