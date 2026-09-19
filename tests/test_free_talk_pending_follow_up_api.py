@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from app.free_talk.application.conversation_service import (
+    BASE_LOCALE_LEAK_WORKFLOW,
     PENDING_FOLLOW_UP_HEADING,
     UNVERIFIED_FOLLOW_UP_WORKFLOW,
 )
@@ -316,6 +317,89 @@ class PendingFollowUpApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_korean_words_in_a_correctly_asked_reply_are_not_a_leak(self):
+        # 리뷰에서 재현된 회귀: 사용자가 쓴 한국어 단어를 받아 준 정상 응답이 502가 되면 안 된다
+        replies = {
+            "food_name": "떡볶이 sounds amazing! By the way, how did the interview go?",
+            "place_name": "Hey! I still remember your 제주 trip. How did the interview go?",
+            "two_words": "I love 김치 찌개 too! By the way, how did the interview go?",
+        }
+        for name, ai_message in replies.items():
+            with self.subTest(name=name):
+                fake = FakeOpenAI(contents=[json.dumps(asked_turn(aiMessage=ai_message))])
+                payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+
+                with self.assertNoLogs(CONVERSATION_LOGGER, level="WARNING"):
+                    response = self._post(TURN_PATH, payload, fake)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.json()["data"]["followUpAsked"])
+                self.assertEqual(len(fake.completions.calls), 1)
+
+    def test_echoing_the_users_own_korean_sentence_is_not_a_leak(self):
+        user_sentence = "오늘 날씨가 정말 좋아요"
+        payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+        payload["conversationHistory"][-1]["content"] = f"How do I say {user_sentence} in English?"
+        reply = asked_turn(aiMessage=f"{user_sentence} is 'The weather is lovely today.' How did the interview go?")
+        fake = FakeOpenAI(contents=[json.dumps(reply)])
+
+        response = self._post(TURN_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["data"]["followUpAsked"])
+
+    def test_clean_repair_that_does_not_ask_replaces_a_leaked_first_reply(self):
+        # 리뷰에서 재현된 회귀: 깨끗한 복구 응답이 있는데도 새어 나간 첫 응답 때문에 502가 됐다
+        clean_not_asked = opening_completion(followUpAsked=False)
+        fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING), json.dumps(clean_not_asked)])
+        payload = valid_opening_payload() | {"pendingFollowUp": pending_follow_up()}
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING") as logs:
+            response = self._post(OPENING_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["aiMessage"], clean_not_asked["aiMessage"])
+        self.assertFalse(data["followUpAsked"])
+        self.assertIn(BASE_LOCALE_LEAK_WORKFLOW, logs.output[0])
+        self.assertNotIn("면접", logs.output[0])
+
+    def test_locale_comparison_ignores_case(self):
+        fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING)])
+        payload = valid_opening_payload() | {
+            "targetLocale": "kr",
+            "pendingFollowUp": pending_follow_up(),
+        }
+
+        response = self._post(OPENING_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["data"]["followUpAsked"])
+
+    def test_follow_up_repair_calls_use_their_own_timeout(self):
+        cases = {
+            OPENING_PATH: (valid_opening_payload(), opening_completion(followUpAsked=False)),
+            TURN_PATH: (valid_turn_payload(), NOT_ASKED_TURN),
+        }
+        for path, (payload, completion) in cases.items():
+            with self.subTest(path=path):
+                fake = FakeOpenAI(contents=[json.dumps(completion)])
+                app = create_app(
+                    make_settings(
+                        openrouter_api_key="test-openrouter-key",
+                        openrouter_model="openrouter-test-model",
+                        free_talk_follow_up_repair_timeout_seconds=3.5,
+                    )
+                )
+
+                with patch("app.core.openai_client.OpenAI", return_value=fake) as constructor:
+                    make_client(app).post(
+                        path, json=payload | {"pendingFollowUp": pending_follow_up()}
+                    )
+
+                timeouts = [call.kwargs.get("timeout") for call in constructor.call_args_list]
+                self.assertEqual(timeouts, [None, 3.5])
 
     def test_pasted_question_is_fine_when_both_locales_are_the_same(self):
         fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING)])

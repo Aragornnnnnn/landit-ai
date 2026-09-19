@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     free_talk_auxiliary_timeout_seconds: float = Field(
         default=20.0, gt=0.0, allow_inf_nan=False
     )
+    # 오프닝·첫 턴에서 약속한 후속 질문이 빠졌을 때 한 번 하는 복구 재호출의 SDK 타임아웃(재시도 0회).
+    # 사용자가 기다리는 경로라 짧게 잡고, 넘기면 첫 응답을 그대로 쓴다.
+    free_talk_follow_up_repair_timeout_seconds: float = Field(
+        default=8.0, gt=0.0, allow_inf_nan=False
+    )
     session_level_assessment_budget_seconds: float = Field(
         default=100.0, gt=0.0, allow_inf_nan=False
     )

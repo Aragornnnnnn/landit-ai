@@ -52,8 +52,9 @@ from app.models.free_talk import (
 
 logger = logging.getLogger(__name__)
 
-# 기준 언어 문자가 학습 언어 메시지에 새는 것을 잡는다. 지금은 문자 체계로 구분되는 KR만 다룬다.
-_BASE_LOCALE_SCRIPT_PATTERNS = {"KR": re.compile(r"[가-힣]")}
+# 기준 언어로 쓴 절이 학습 언어 메시지에 새는 것을 잡는다. 지금은 문자 체계로 구분되는 KR만 다룬다.
+# 김치·제주 같은 단어 하나는 정상 대화라 세 단어 이상 이어진 경우만 본다.
+_BASE_LOCALE_CLAUSE_PATTERNS = {"KR": re.compile(r"[가-힣]+(?:[\s,]+[가-힣]+){2,}")}
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
 _MEMORY_TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣]+")
@@ -104,17 +105,27 @@ _KOREAN_VERB_SUFFIXES = ("한다고", "합니다", "한다", "했다", "해요",
 # 후속 질문이 있을 때만 붙는 프롬프트 절 제목. 없을 때는 기존 프롬프트가 그대로 유지된다.
 PENDING_FOLLOW_UP_HEADING = "Pending Follow-up:"
 UNVERIFIED_FOLLOW_UP_WORKFLOW = "free_talk_follow_up_unverified"
+BASE_LOCALE_LEAK_WORKFLOW = "free_talk_follow_up_base_locale_leak"
 _OPENING_FOLLOW_UP_REPAIR_INSTRUCTION = (
     " Return a complete replacement JSON response. Your previous reply did not ask the "
     "pending follow-up question in targetLocale. aiMessage must be one short greeting "
     "sentence with no question followed by the pending follow-up question, written entirely "
     "in targetLocale, and followUpAsked must be true."
 )
+# 복구는 보조 시도라 어떤 식으로 실패해도 첫 응답으로 돌아간다
+_REPAIR_FAILURES = (
+    AiGenerationFailedError,
+    AiResponseInvalidError,
+    TypeError,
+    ValidationError,
+    ValueError,
+)
 _FOLLOW_UP_REPAIR_INSTRUCTION = (
     " Return a complete replacement JSON response. Your previous reply did not ask the "
-    "pending follow-up question. Unless the user's message already brought that subject up, "
-    "aiMessage must be one short reaction sentence with no question mark followed by the "
-    "pending follow-up question, and followUpAsked must be true."
+    "pending follow-up question in targetLocale. Unless the user's message already brought "
+    "that subject up, aiMessage must be one short reaction sentence with no question mark "
+    "followed by the pending follow-up question, written entirely in targetLocale with no "
+    "baseLocale words from pendingFollowUp.question, and followUpAsked must be true."
 )
 _SAFE_CLOSING_AI_MESSAGE = (
     "I really enjoyed hearing about that. Thanks for sharing!"
@@ -165,6 +176,7 @@ class _TurnOutcome:
     exit_detected: bool
     used_memory_ids: list[int]
     follow_up_asked: bool
+    leaked: bool
 
 
 class _TurnExitIntentCandidate(BaseModel):
@@ -240,7 +252,9 @@ def generate_opening(
         candidate = _OpeningCandidate.model_validate(
             _request_opening_completion(payload, settings, current_time),
         )
-        follow_up_asked = _follow_up_asked(payload, candidate)
+        follow_up_asked = _publishable_ask(payload, candidate)
+        if _leaks_base_locale(payload, candidate.aiMessage):
+            _report_base_locale_leak(payload)
         if payload.pendingFollowUp is not None and not follow_up_asked:
             candidate, follow_up_asked = _repaired_opening(
                 candidate, payload, settings, current_time,
@@ -283,6 +297,9 @@ def _request_opening_completion(
         schema_name="free_talk_opening_follow_up_repair" if is_repair else "free_talk_opening",
         workflow="free_talk_opening_follow_up_repair" if is_repair else "free_talk_opening",
         retry_schema_violations=False,
+        timeout_seconds=(
+            settings.free_talk_follow_up_repair_timeout_seconds if is_repair else None
+        ),
     )
 
 
@@ -294,23 +311,28 @@ def _repaired_opening(
 ) -> tuple[_OpeningCandidate, bool]:
     """약속한 후속 질문이 빠진 오프닝을 한 번만 다시 받는다.
 
-    복구가 실패하면 첫 응답을 쓰되, 첫 응답이 기준 언어 질문 원문을 붙여 넣은 것이면
-    학습 언어 메시지 계약을 어긴 것이라 그대로 내보내지 않는다.
+    묻는 데 성공한 복구 응답 > 깨끗한 첫 응답 > 깨끗한 복구 응답 순으로 쓴다. 둘 다 기준 언어가
+    샜을 때만 학습 언어 메시지 계약 위반으로 실패시킨다.
     """
+    clean_repaired = None
     try:
         repaired = _OpeningCandidate.model_validate(
             _request_opening_completion(
                 payload, settings, current_time, _OPENING_FOLLOW_UP_REPAIR_INSTRUCTION,
             ),
         )
-        if repaired.aiMessage.strip() and repaired.translatedMessage.strip():
+        is_complete = bool(repaired.aiMessage.strip() and repaired.translatedMessage.strip())
+        if is_complete and not _leaks_base_locale(payload, repaired.aiMessage):
             if _follow_up_asked(payload, repaired):
                 return repaired, True
-    except (AiGenerationFailedError, AiResponseInvalidError, ValidationError):
+            clean_repaired = repaired
+    except _REPAIR_FAILURES:
         pass
-    if _has_pasted_follow_up_question(payload, first.aiMessage):
-        raise ValueError("opening pasted the base-locale follow-up question")
-    return first, False
+    if not _leaks_base_locale(payload, first.aiMessage):
+        return first, False
+    if clean_repaired is not None:
+        return clean_repaired, False
+    raise ValueError("opening leaked base-locale text")
 
 
 def generate_turn(
@@ -332,6 +354,8 @@ def generate_turn(
     data = _request_turn_completion(payload, settings, current_time)
     try:
         outcome = _turn_outcome(data, payload)
+        if outcome.leaked:
+            _report_base_locale_leak(payload)
         if payload.pendingFollowUp is not None and not (
             outcome.exit_detected or outcome.follow_up_asked
         ):
@@ -353,11 +377,13 @@ def generate_turn(
 def _turn_outcome(data: dict[str, object], payload: FreeTalkTurnRequest) -> _TurnOutcome:
     candidate = _validated_turn_candidate(data, payload)
     exit_detected = _is_exit_detected(candidate, payload)
+    leaked = not exit_detected and _leaks_base_locale(payload, candidate.aiMessage)
     return _TurnOutcome(
         candidate=candidate,
         exit_detected=exit_detected,
         used_memory_ids=_turn_used_memory_ids(candidate, payload, exit_detected),
-        follow_up_asked=not exit_detected and _follow_up_asked(payload, candidate),
+        follow_up_asked=not (exit_detected or leaked) and _follow_up_asked(payload, candidate),
+        leaked=leaked,
     )
 
 
@@ -369,8 +395,10 @@ def _repaired_follow_up_outcome(
 ) -> _TurnOutcome:
     """약속한 후속 질문이 빠진 첫 턴 응답을 한 번만 다시 받는다.
 
-    복구는 보조 시도라 실패하거나 또 묻지 않았으면 첫 응답을 그대로 쓴다.
+    묻는 데 성공한 복구 응답 > 깨끗한 첫 응답 > 깨끗한 복구 응답 순으로 쓴다. 복구는 보조 시도라
+    실패해도 첫 응답을 쓰며, 둘 다 기준 언어가 샜을 때만 실패시킨다.
     """
+    clean_repaired = None
     try:
         data = request_json_completion(
             settings=settings,
@@ -385,28 +413,22 @@ def _repaired_follow_up_outcome(
             workflow="free_talk_turn_follow_up_repair",
             max_attempts=1,
             retry_schema_violations=False,
+            timeout_seconds=settings.free_talk_follow_up_repair_timeout_seconds,
         )
         repaired = _turn_outcome(data, payload)
-        if repaired.exit_detected or not repaired.follow_up_asked:
-            return _clean_first_outcome(first, payload)
         # 복구 응답이 응답 계약을 어기면(메시지 누락 등) 멀쩡한 첫 응답을 502로 만들지 않고 버린다
         _turn_response(repaired.candidate, repaired.exit_detected, repaired.used_memory_ids)
-    except (
-        AiGenerationFailedError,
-        AiResponseInvalidError,
-        TypeError,
-        ValidationError,
-        ValueError,
-    ):
-        return _clean_first_outcome(first, payload)
-    return repaired
-
-
-def _clean_first_outcome(first: _TurnOutcome, payload: FreeTalkTurnRequest) -> _TurnOutcome:
-    """복구에 실패해 첫 응답으로 돌아갈 때, 기준 언어가 샌 메시지는 그대로 내보내지 않는다."""
-    if _has_pasted_follow_up_question(payload, first.candidate.aiMessage):
-        raise ValueError("turn leaked the base-locale follow-up question")
-    return first
+        if not (repaired.exit_detected or repaired.leaked):
+            if repaired.follow_up_asked:
+                return repaired
+            clean_repaired = repaired
+    except _REPAIR_FAILURES:
+        pass
+    if not first.leaked:
+        return first
+    if clean_repaired is not None:
+        return clean_repaired
+    raise ValueError("turn leaked base-locale text")
 
 
 def _request_turn_completion(
@@ -822,6 +844,16 @@ def _title_repair_system_prompt() -> str:
     )
 
 
+def _publishable_ask(
+    payload: FreeTalkOpeningRequest | FreeTalkTurnRequest,
+    candidate: _OpeningCandidate | _TurnCandidate,
+) -> bool:
+    """후속 질문을 했고 그 메시지를 그대로 내보내도 되는지."""
+    return not _leaks_base_locale(payload, candidate.aiMessage) and _follow_up_asked(
+        payload, candidate,
+    )
+
+
 def _follow_up_asked(
     payload: FreeTalkOpeningRequest | FreeTalkTurnRequest,
     candidate: _OpeningCandidate | _TurnCandidate,
@@ -834,42 +866,56 @@ def _follow_up_asked(
     pending = payload.pendingFollowUp
     if pending is None or not candidate.followUpAsked:
         return False
-    # 기준 언어 질문 원문을 그대로 붙여 넣은 것은 학습 언어로 물은 것이 아니다
-    if _has_pasted_follow_up_question(payload, candidate.aiMessage):
-        return _unverified_follow_up(payload)
     translated = (candidate.translatedMessage or "").lower()
     tokens = _follow_up_tokens(payload)
     # 조사·어미가 달라도 잡히도록 토큰 일치가 아니라 어간 포함으로 본다 (제주 ⊂ 제주도는).
     # 질문이 너무 짧아 대조할 단어가 없으면 검증할 수 없으므로 보고를 그대로 믿는다.
     if not tokens or any(token in translated for token in tokens):
         return True
-    return _unverified_follow_up(payload)
-
-
-def _unverified_follow_up(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> bool:
     logger.warning(
         "프리톡 후속 질문을 꺼냈다는 보고를 응답에서 확인하지 못했습니다. "
         "workflow=%s sessionId=%s followUpId=%s",
         UNVERIFIED_FOLLOW_UP_WORKFLOW,
         payload.sessionId,
-        payload.pendingFollowUp.followUpId,
+        pending.followUpId,
     )
     return False
 
 
-def _has_pasted_follow_up_question(
+def _report_base_locale_leak(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> None:
+    # 메시지 본문은 남기지 않고 빈도만 셀 수 있게 식별자만 기록한다
+    logger.warning(
+        "프리톡 후속 질문이 기준 언어로 메시지에 들어가 복구를 시도합니다. "
+        "workflow=%s sessionId=%s followUpId=%s",
+        BASE_LOCALE_LEAK_WORKFLOW,
+        payload.sessionId,
+        payload.pendingFollowUp.followUpId,
+    )
+
+
+def _leaks_base_locale(
     payload: FreeTalkOpeningRequest | FreeTalkTurnRequest,
     ai_message: str | None,
 ) -> bool:
+    """후속 질문이 학습 언어가 아니라 기준 언어로 메시지에 들어갔는지 본다.
+
+    질문 원문을 붙여 넣었거나 기준 언어 절로 풀어 쓴 경우다. 사용자가 방금 쓴 말을 받아 준 것은
+    누출이 아니다.
+    """
     pending = payload.pendingFollowUp
-    # 학습 언어와 기준 언어가 같으면 질문 원문이 그대로 들어가는 것이 정상이다
-    if pending is None or not ai_message or payload.targetLocale == payload.baseLocale:
+    if pending is None or not ai_message:
+        return False
+    # 학습 언어와 기준 언어가 같으면 질문이 기준 언어로 들어가는 것이 정상이다
+    if payload.targetLocale.upper() == payload.baseLocale.upper():
         return False
     if pending.question.strip() in ai_message:
         return True
-    # 원문을 그대로 붙이지 않고 기준 언어로 풀어 쓴 경우도 학습 언어 메시지가 아니다
-    script = _BASE_LOCALE_SCRIPT_PATTERNS.get(payload.baseLocale.upper())
-    return script is not None and script.search(ai_message) is not None
+    pattern = _BASE_LOCALE_CLAUSE_PATTERNS.get(payload.baseLocale.upper())
+    if pattern is None:
+        return False
+    history = getattr(payload, "conversationHistory", [])
+    user_text = history[-1].content if history else ""
+    return any(clause not in user_text for clause in pattern.findall(ai_message))
 
 
 def _follow_up_tokens(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> set[str]:
