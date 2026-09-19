@@ -4,7 +4,14 @@ import logging
 from dataclasses import dataclass
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.core.config import Settings
 from app.free_talk.domain.correction_rules import (
@@ -45,6 +52,14 @@ class _CorrectionDraft(BaseModel):
     betterSentence: str
     reason: str
     mistakePattern: FreeTalkMistakePattern
+
+    # 공백 응답을 여기서 계약 위반으로 걸러야 뒤의 FreeTalkCorrection 생성이 요청을 실패시키지 않는다.
+    @field_validator("originalSentence", "betterSentence", "reason")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
 
 
 class _TurnCorrectionCandidate(BaseModel):

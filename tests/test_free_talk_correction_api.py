@@ -78,9 +78,11 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
             "openrouter_model": "openrouter-test-model",
         }
         settings.update(settings_overrides)
-        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai) as openai_class:
             client = make_client(create_app(make_settings(**settings)))
-            return client.post(INNER_THOUGHT_PATH, json=payload)
+            response = client.post(INNER_THOUGHT_PATH, json=payload)
+        self.openai_constructor_calls = openai_class.call_args_list
+        return response
 
     def _fake(self, correction, inner_thought=None):
         contents = [json.dumps(inner_thought or inner_thought_completion())]
@@ -172,6 +174,12 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
             "flag_mismatch": correction_completion(hasCorrection=False),
             "missing_reaction": {"hasCorrection": False, "correction": None},
             "string_bool": correction_completion(reactedToPartner="true"),
+            "blank_better_sentence": correction_completion(
+                correction={**correction_completion()["correction"], "betterSentence": "  "}
+            ),
+            "blank_reason": correction_completion(
+                correction={**correction_completion()["correction"], "reason": ""}
+            ),
         }
         for name, completion in cases.items():
             with self.subTest(case=name):
@@ -280,6 +288,13 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
 
         self.assertEqual(fake.completions.correction_calls[0]["model"], "correction-test-model")
         self.assertEqual(fake.completions.calls[0]["model"], "openrouter-test-model")
+        # 타임아웃은 create()가 아니라 SDK 클라이언트 생성자로 전달된다 (재시도 0회와 함께).
+        timeouts = [call.kwargs.get("timeout") for call in self.openai_constructor_calls]
+        self.assertEqual(sorted(timeouts, key=str), sorted([4.5, None], key=str))
+        correction_client = next(
+            call for call in self.openai_constructor_calls if call.kwargs.get("timeout") == 4.5
+        )
+        self.assertEqual(correction_client.kwargs["max_retries"], 0)
 
     def test_openapi_schema_exposes_correction_fields(self):
         app = create_app(make_settings(openrouter_api_key="k", openrouter_model="m"))
