@@ -1,5 +1,6 @@
 # 프리톡 대화 생성 API의 HTTP 계약을 검증하는 unittest 모듈
 import json
+import threading
 import unittest
 import warnings
 from datetime import UTC, datetime
@@ -7,8 +8,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import Settings
+from app.free_talk.application.correction_service import CORRECTION_POLICY_HEADING
 from app.free_talk.llm.json_completion import AiResponseInvalidError
 from app.main import create_app
+
+# 교정 응답을 지정하지 않은 테스트가 그대로 통과하도록 쓰는 픽스처 기본값(운영 동작 아님)
+NO_CORRECTION_COMPLETION = json.dumps(
+    {"reactedToPartner": True, "hasCorrection": False, "correction": None}
+)
 
 
 def make_settings(**overrides):
@@ -27,17 +34,29 @@ def make_client(app):
 
 
 class FakeCompletions:
-    def __init__(self, *, contents=None, error=None):
+    """속마음 등 본 호출은 calls·contents로, 병렬로 도는 턴 교정 호출은 correction_calls·correction_contents로 나눠 받는다."""
+
+    def __init__(self, *, contents=None, error=None, correction_contents=None):
         self.contents = list(contents or [])
+        self.correction_contents = list(correction_contents or [NO_CORRECTION_COMPLETION])
         self.error = error
         self.calls = []
+        self.correction_calls = []
+        self._lock = threading.Lock()
 
     def create(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.error is not None:
+        # 교정 호출은 다른 스레드에서 동시에 들어오므로 시스템 프롬프트 마커로 라우팅한다
+        is_correction = CORRECTION_POLICY_HEADING in kwargs["messages"][0]["content"]
+        with self._lock:
+            calls = self.correction_calls if is_correction else self.calls
+            contents = self.correction_contents if is_correction else self.contents
+            calls.append(kwargs)
+            index = len(calls) - 1
+        if self.error is not None and not is_correction:
             raise self.error
-        index = len(self.calls) - 1
-        content = self.contents[min(index, len(self.contents) - 1)]
+        content = contents[min(index, len(contents) - 1)]
+        if callable(content):
+            content = content()
         if isinstance(content, Exception):
             raise content
         return SimpleNamespace(
@@ -80,8 +99,13 @@ class FakeOpenAI:
         embedding_vectors=None,
         embedding_error=None,
         embedding_indices=None,
+        correction_contents=None,
     ):
-        self.completions = FakeCompletions(contents=contents, error=error)
+        self.completions = FakeCompletions(
+            contents=contents,
+            error=error,
+            correction_contents=correction_contents,
+        )
         self.chat = SimpleNamespace(completions=self.completions)
         self.embeddings = FakeEmbeddings(
             vectors=embedding_vectors,
@@ -378,14 +402,14 @@ class FreeTalkApiTests(unittest.TestCase):
         settings.update(overrides)
         return create_app(make_settings(**settings))
 
-    def _post(self, path, payload, fake_openai):
+    def _post(self, path, payload, fake_openai, **settings_overrides):
         # 원문 대조의 네트워크 계약은 test_memory_candidate_review에서 별도로 검사한다.
         with (
             patch("app.core.openai_client.OpenAI", return_value=fake_openai),
             patch("app.free_talk.application.memory_service.review_memory_candidates",
                   side_effect=lambda drafts, *_: drafts),
         ):
-            return make_client(self._app()).post(path, json=payload)
+            return make_client(self._app(**settings_overrides)).post(path, json=payload)
 
     def test_opening_returns_generated_message(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(opening_completion())])
@@ -1020,6 +1044,8 @@ class FreeTalkApiTests(unittest.TestCase):
             {
                 "innerThought": "친구들과 등산을 간다니 꽤 기대하고 있나 보네.",
                 "innerThoughtType": "GOOD",
+                "reactedToPartner": True,
+                "correction": None,
             },
         )
 
@@ -1157,6 +1183,8 @@ class FreeTalkApiTests(unittest.TestCase):
             {
                 "innerThought": "상대의 말을 받아들이고 있다.",
                 "innerThoughtType": "NORMAL",
+                "reactedToPartner": True,
+                "correction": None,
             },
         )
         self.assertEqual(len(fake_openai.completions.calls), 2)
