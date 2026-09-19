@@ -36,7 +36,8 @@ class _UsedExpressionDraft(BaseModel):
 class _UsedExpressionsCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    usedExpressions: list[_UsedExpressionDraft] = Field(max_length=100)
+    # 뜻이 달라 버릴 구절까지 나열하게 하므로 후보 50개 기준으로 넉넉히 둔다
+    usedExpressions: list[_UsedExpressionDraft] = Field(max_length=300)
 
 
 def find_used_expressions(
