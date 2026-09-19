@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app.free_talk.application.correction_service import (
     CORRECTION_POLICY_HEADING,
     FALLBACK_WORKFLOW,
+    MEMORY_LABEL_DROPPED_WORKFLOW,
     UNKNOWN_MEMORY_WORKFLOW,
 )
 from app.free_talk.llm.json_completion import AiGenerationFailedError
@@ -144,6 +145,7 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
                 "reason": "어제 일이라 went로 말해야 해요. 그래야 언제 얘기인지 바로 알아들어요.",
                 "mistakePattern": "TENSE",
                 "usedMemoryId": None,
+                "memoryLabel": None,
             },
         )
         self.assertEqual(len(fake.completions.calls), 1)
@@ -367,6 +369,124 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
 
         self.assertEqual(response.json()["data"]["correction"]["mistakePattern"], "ARTICLE")
 
+    def test_memory_grounded_correction_returns_the_label_with_the_memory_id(self):
+        fake = self._fake(gym_correction(usedMemoryId=9012, memoryLabel="  판교 헬스장 "))
+
+        with self.assertNoLogs(CORRECTION_LOGGER, level="WARNING"):
+            response = self._post(gym_payload(memoryContext=[GYM_MEMORY]), fake)
+
+        correction = response.json()["data"]["correction"]
+        self.assertEqual(correction["usedMemoryId"], 9012)
+        self.assertEqual(correction["memoryLabel"], "판교 헬스장")
+
+    def test_correction_without_memory_has_neither_id_nor_label(self):
+        completion = correction_completion()
+        completion["correction"] |= {"usedMemoryId": None, "memoryLabel": None}
+        fake = self._fake(completion)
+
+        with self.assertNoLogs(CORRECTION_LOGGER, level="WARNING"):
+            response = self._post(payload_with_partner_turn(memoryContext=[GYM_MEMORY]), fake)
+
+        correction = response.json()["data"]["correction"]
+        self.assertIsNone(correction["usedMemoryId"])
+        self.assertIsNone(correction["memoryLabel"])
+
+    def test_unusable_label_is_dropped_but_correction_and_memory_id_stay(self):
+        bad_labels = {
+            "blank": "   ",
+            "too_long": "판교역 근처에 새로 생긴 아주 큰 24시간 헬스장",
+            "invalid_chars": "헬스장에 다닌다.",
+            "contains_date": "9월 13일에 말한 헬스장",
+        }
+        for reason, label in bad_labels.items():
+            with self.subTest(reason=reason):
+                fake = self._fake(gym_correction(usedMemoryId=9012, memoryLabel=label))
+
+                with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
+                    response = self._post(gym_payload(memoryContext=[GYM_MEMORY]), fake)
+
+                correction = response.json()["data"]["correction"]
+                self.assertEqual(correction["betterSentence"], "And I am doing stairs at the gym.")
+                self.assertEqual(correction["usedMemoryId"], 9012)
+                self.assertIsNone(correction["memoryLabel"])
+                self.assertEqual(len(logs.output), 1)
+                self.assertIn(MEMORY_LABEL_DROPPED_WORKFLOW, logs.output[0])
+                self.assertIn(f"reason={reason}", logs.output[0])
+                self.assertIn("messageId=3004", logs.output[0])
+                # 라벨 원문과 사용자 문장은 로그에 남기지 않는다
+                self.assertNotIn("헬스장", logs.output[0])
+                self.assertNotIn("gym", logs.output[0])
+
+    def test_label_without_a_memory_id_is_dropped(self):
+        completion = correction_completion()
+        completion["correction"] |= {"usedMemoryId": None, "memoryLabel": "헬스장"}
+        fake = self._fake(completion)
+
+        with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
+            response = self._post(payload_with_partner_turn(memoryContext=[GYM_MEMORY]), fake)
+
+        correction = response.json()["data"]["correction"]
+        self.assertEqual(correction["mistakePattern"], "TENSE")
+        self.assertIsNone(correction["memoryLabel"])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("reason=without_memory_id", logs.output[0])
+        self.assertNotIn("헬스장", logs.output[0])
+
+    def test_label_follows_a_memory_id_that_was_dropped_as_unknown(self):
+        completion = correction_completion()
+        completion["correction"] |= {"usedMemoryId": 4040, "memoryLabel": "헬스장"}
+        fake = self._fake(completion)
+
+        with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
+            response = self._post(payload_with_partner_turn(memoryContext=[GYM_MEMORY]), fake)
+
+        correction = response.json()["data"]["correction"]
+        self.assertIsNone(correction["usedMemoryId"])
+        self.assertIsNone(correction["memoryLabel"])
+        # 모르는 기억 경고 하나로 충분하므로 라벨 경고를 따로 남기지 않는다
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn(UNKNOWN_MEMORY_WORKFLOW, logs.output[0])
+
+    def test_label_disappears_with_an_ungrounded_article_swap(self):
+        fake = self._fake(gym_correction(usedMemoryId=4040, memoryLabel="헬스장"))
+
+        with self.assertLogs(CORRECTION_LOGGER, level="WARNING"):
+            response = self._post(gym_payload(memoryContext=[GYM_MEMORY]), fake)
+
+        self.assertIsNone(response.json()["data"]["correction"])
+
+    def test_label_is_asked_for_only_when_the_request_carries_memories(self):
+        plain = self._fake(gym_correction())
+        with_memory = self._fake(gym_correction(usedMemoryId=9012, memoryLabel="헬스장"))
+
+        self._post(gym_payload(), plain)
+        self._post(gym_payload(memoryContext=[GYM_MEMORY]), with_memory)
+
+        # 기억이 없는 요청은 프롬프트와 스키마가 라벨 도입 전과 같아야 교정 품질 회귀가 없다
+        self.assertNotIn("memoryLabel", json.dumps(plain.completions.correction_calls[0]))
+        memory_call = with_memory.completions.correction_calls[0]
+        self.assertIn("memoryLabel", memory_call["messages"][0]["content"])
+        self.assertIn("memoryLabel", json.dumps(memory_call["response_format"]))
+        self.assertTrue(
+            memory_call["messages"][0]["content"].startswith(
+                plain.completions.correction_calls[0]["messages"][0]["content"].split(
+                    "Reaction Policy:"
+                )[0].rstrip()
+            )
+        )
+
+    def test_label_in_a_reply_to_a_request_without_memories_is_a_contract_violation(self):
+        fake = self._fake(gym_correction(memoryLabel="헬스장"))
+
+        with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
+            response = self._post(gym_payload(), fake)
+
+        # 기억 없는 요청의 스키마에는 라벨이 없다. 계약 위반이어도 속마음은 그대로 나간다.
+        data = response.json()["data"]
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(data["correction"])
+        self.assertIn("reason=contract_validation", logs.output[-1])
+
     def test_memory_reaches_only_the_correction_prompt(self):
         fake = self._fake(gym_correction(usedMemoryId=9012))
 
@@ -449,6 +569,11 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
         self.assertIn("reactedToPartner", response_fields)
         self.assertIn("correction", response_fields)
         self.assertIn("usedMemoryId", schemas["FreeTalkCorrection"]["properties"])
+        self.assertEqual(
+            schemas["FreeTalkCorrection"]["properties"]["memoryLabel"]["anyOf"],
+            [{"type": "string"}, {"type": "null"}],
+        )
+        self.assertNotIn("memoryLabel", schemas["FreeTalkCorrection"].get("required", []))
         self.assertIn("memoryContext", schemas["FreeTalkInnerThoughtRequest"]["properties"])
         self.assertEqual(
             set(schemas["FreeTalkMistakePattern"]["enum"]),
