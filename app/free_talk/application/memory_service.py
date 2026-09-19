@@ -1,7 +1,7 @@
 # 프리톡 장기기억 후보 추출과 상태 판정을 담당하는 유스케이스 모듈
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -14,6 +14,7 @@ from pydantic import (
 )
 
 from app.core.config import Settings
+from app.free_talk.application.follow_up_service import generate_follow_up_question
 from app.free_talk.application.memory_candidate_review import review_memory_candidates
 from app.free_talk.llm.embeddings import (
     EMBEDDING_DIMENSIONS,
@@ -310,12 +311,14 @@ def generate_memory_candidates(
         AiGenerationFailedError: AI/임베딩 호출 또는 모델 설정이 실패할 때.
     """
     drafts = _extract_memory_candidate_drafts(payload, settings)
-    if not drafts:
-        return MemoryCandidatesResponse(
-            extractorVersion=EXTRACTOR_VERSION,
-            candidates=[],
-        )
-    return _candidates_with_embeddings(drafts, settings)
+    candidates = _candidates_with_embeddings(drafts, settings) if drafts else []
+    return MemoryCandidatesResponse(
+        extractorVersion=EXTRACTOR_VERSION,
+        candidates=candidates,
+        followUpQuestion=generate_follow_up_question(
+            payload, candidates, settings, datetime.now(UTC),
+        ),
+    )
 
 
 def _extract_memory_candidate_drafts(
@@ -343,18 +346,14 @@ def _extract_memory_candidate_drafts(
 def _candidates_with_embeddings(
     drafts: list[MemoryCandidate],
     settings: Settings,
-) -> MemoryCandidatesResponse:
-    """검증된 후보 내용에 서버가 생성한 임베딩을 결합해 응답 계약을 완성한다."""
+) -> list[MemoryCandidate]:
+    """검증된 후보 내용에 서버가 생성한 임베딩을 결합한다."""
     contents = [draft.content.strip() for draft in drafts]
     embeddings = request_embeddings(settings=settings, texts=contents)
-    candidates = [
+    return [
         draft.model_copy(update={"embedding": embedding})
         for draft, embedding in zip(drafts, embeddings, strict=True)
     ]
-    return MemoryCandidatesResponse(
-        extractorVersion=EXTRACTOR_VERSION,
-        candidates=candidates,
-    )
 
 
 def generate_memory_resolution(
@@ -725,7 +724,11 @@ def _json_prompt(payload: BaseModel) -> str:
 
 def _candidate_user_prompt(payload: MemoryCandidatesRequest) -> str:
     """모델이 UTC 날짜를 현지 날짜로 오해하지 않도록 발화 시각의 표기를 정규화한다."""
-    data = payload.model_dump(mode="json")
+    # 후속 질문 전용 입력은 후보 추출·중복 판단에 쓰지 않으므로 추출 프롬프트에서 뺀다
+    data = payload.model_dump(
+        mode="json",
+        exclude={"existingMemories", "askedMemoryIds", "sessionEndedBy"},
+    )
     timezone = ZoneInfo(payload.timezone)
     for message, source in zip(data["conversationHistory"], payload.conversationHistory):
         message["occurredAt"] = source.occurredAt.astimezone(timezone).isoformat()
