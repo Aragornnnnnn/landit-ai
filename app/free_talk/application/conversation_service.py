@@ -847,7 +847,11 @@ def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
 
 
 def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
-    return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+    # 장기기억은 턴 교정의 근거로만 쓰고 속마음 판정에는 넘기지 않는다
+    return json.dumps(
+        payload.model_dump(mode="json", exclude={"memoryContext"}),
+        ensure_ascii=False,
+    )
 
 
 def _validated_used_memory_ids(
