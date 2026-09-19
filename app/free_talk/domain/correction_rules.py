@@ -47,3 +47,26 @@ def is_only_definite_article_swap(original: str, better: str) -> bool:
     return bool(changed) and all(
         before in _INDEFINITE_ARTICLES and after == "the" for before, after in changed
     )
+
+
+# 실측 후 조정할 초기값. 화면 태그 "{날짜} 스몰톡에서 말한 {라벨}"에 들어갈 짧은 명사구의 상한이다.
+MEMORY_LABEL_MAX_LENGTH = 20
+_LABEL_FORBIDDEN_CHARS = frozenset("\n\r!?.！？。")
+# 날짜는 백엔드가 observedAt으로 붙인다. "다음 주 면접"처럼 숫자 없는 표현은 날짜 표기가 아니다.
+_LABEL_DATE_PATTERN = re.compile(
+    r"\d{4}\s*-\s*\d{1,2}\s*-\s*\d{1,2}|\d{1,2}\s*/\s*\d{1,2}|\d+\s*[년월일]"
+)
+
+
+def memory_label_rejection(label: str) -> str | None:
+    """화면용 기억 라벨을 쓸 수 없는 이유를 돌려준다. 쓸 수 있으면 None이다."""
+    stripped = label.strip()
+    if not stripped:
+        return "blank"
+    if len(stripped) > MEMORY_LABEL_MAX_LENGTH:
+        return "too_long"
+    if any(char in _LABEL_FORBIDDEN_CHARS for char in stripped):
+        return "invalid_chars"
+    if _LABEL_DATE_PATTERN.search(stripped):
+        return "contains_date"
+    return None

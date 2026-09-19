@@ -629,6 +629,9 @@ class FreeTalkCorrection(BaseModel):
     mistakePattern: FreeTalkMistakePattern
     # 장기기억이 정답을 바꾼 교정일 때만 그 memoryContext의 기억 ID
     usedMemoryId: int | None = Field(default=None, gt=0)
+    # usedMemoryId가 있을 때만. 그 기억이 가리키는 대상을 기준 언어(baseLocale)의 짧은 명사구로.
+    # 날짜와 "스몰톡에서 말한" 같은 틀 문구는 백엔드가 붙인다.
+    memoryLabel: str | None = None
 
     @field_validator("originalSentence", "betterSentence", "reason")
     @classmethod
