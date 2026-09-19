@@ -1,6 +1,8 @@
 # 다음 스몰톡 후속 질문의 후보 검증과 우선순위 선택을 담당하는 순수 규칙 모듈
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import date
 
 from app.models.free_talk import FollowUpTriggerType, MemoryType
 
@@ -12,7 +14,16 @@ _PRIORITY = {
     if trigger != FollowUpTriggerType.NONE
 }
 EXPIRED = "EXPIRED"
+# 추출 규칙이 상대 시간 표현을 달력 날짜로 바꿔 content에 남기므로 날짜를 그대로 읽을 수 있다
+PASSED = "PASSED"
+UPCOMING = "UPCOMING"
+NOT_SCHEDULED = "NOT_SCHEDULED"
+UNKNOWN = "UNKNOWN"
 _FORBIDDEN_MARKS = ("!", "！")
+_CONTENT_DATE_PATTERNS = (
+    re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})"),
+    re.compile(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일"),
+)
 
 
 @dataclass(frozen=True)
@@ -23,10 +34,16 @@ class AskableMemory:
     memory_type: MemoryType
     temporal_status: str
     has_valid_to: bool
+    scheduled_date_status: str = UNKNOWN
 
     @property
-    def is_expired_event(self) -> bool:
-        return self.memory_type == MemoryType.EVENT and self.temporal_status == EXPIRED
+    def is_past_event(self) -> bool:
+        """예정됐던 일정이 지나갔다고 서버가 확정할 수 있는 기억."""
+        if self.memory_type != MemoryType.EVENT:
+            return False
+        if self.has_valid_to:
+            return self.temporal_status == EXPIRED
+        return self.scheduled_date_status == PASSED
 
 
 @dataclass(frozen=True)
@@ -40,11 +57,36 @@ class FollowUpOption:
     invite: str
 
 
+def scheduled_date_status(content: str, observed_on: date | None, today: date) -> str:
+    """validTo가 없는 일정의 content 날짜로 예정 일정이 지났는지 판단한다.
+
+    말할 당시 이미 지난 날짜면 예정이 아니라 끝난 일을 전한 것이다. 날짜를 못 읽으면 판단하지 않는다.
+    """
+    dates = _content_dates(content)
+    if not dates or observed_on is None:
+        return UNKNOWN
+    latest = max(dates)
+    if latest <= observed_on:
+        return NOT_SCHEDULED
+    return PASSED if latest < today else UPCOMING
+
+
+def _content_dates(content: str) -> list[date]:
+    dates = []
+    for pattern in _CONTENT_DATE_PATTERNS:
+        for year, month, day in pattern.findall(content):
+            try:
+                dates.append(date(int(year), int(month), int(day)))
+            except ValueError:
+                continue
+    return dates
+
+
 def memories_for_prompt(memories: Iterable[AskableMemory]) -> list[AskableMemory]:
-    """유효기간이 지난 일정이 있으면 그것만 남겨 고민·목표보다 먼저 뽑히도록 강제한다."""
+    """지나간 예정 일정이 있으면 그것만 남겨 고민·목표보다 먼저 뽑히도록 강제한다."""
     askable = list(memories)
-    expired_events = [memory for memory in askable if memory.is_expired_event]
-    return expired_events or askable
+    past_events = [memory for memory in askable if memory.is_past_event]
+    return past_events or askable
 
 
 def select_follow_up(
@@ -105,7 +147,9 @@ def _is_valid_memory_source(option: FollowUpOption, memory: AskableMemory | None
 
 
 def _may_be_past_event(memory: AskableMemory) -> bool:
-    """validTo가 있으면 서버 계산을 믿고, 없는 일정만 모델의 날짜 판단을 받아들인다."""
+    """서버가 판단할 수 있으면 서버 계산만 믿고, 날짜를 못 읽은 일정만 모델 판단을 받아들인다."""
     if memory.memory_type != MemoryType.EVENT:
         return False
-    return memory.is_expired_event or not memory.has_valid_to
+    if memory.is_past_event:
+        return True
+    return not memory.has_valid_to and memory.scheduled_date_status == UNKNOWN

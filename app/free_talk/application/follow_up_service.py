@@ -12,6 +12,7 @@ from app.free_talk.domain.follow_up_rules import (
     AskableMemory,
     FollowUpOption,
     memories_for_prompt,
+    scheduled_date_status,
     select_follow_up,
 )
 from app.free_talk.llm.json_completion import (
@@ -148,6 +149,7 @@ def _askable_memories(
             memory_type=memory.memoryType,
             temporal_status=_temporal_status(memory, payload.timezone, current_time),
             has_valid_to=memory.validTo is not None,
+            scheduled_date_status=_scheduled_date_status(memory, payload.timezone, current_time),
         )
         for memory in payload.existingMemories
         if memory.memoryId not in asked
@@ -160,15 +162,35 @@ def _temporal_status(memory: MemoryContext, timezone_name: str, current_time: da
     )
 
 
+def _scheduled_date_status(
+    memory: MemoryContext,
+    timezone_name: str,
+    current_time: datetime,
+) -> str:
+    timezone = ZoneInfo(timezone_name)
+    observed_at = memory.observedAt or memory.validFrom
+    if observed_at is not None and observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone)
+    return scheduled_date_status(
+        memory.content,
+        None if observed_at is None else observed_at.astimezone(timezone).date(),
+        current_time.astimezone(timezone).date(),
+    )
+
+
 def _prompt_memories(
     payload: MemoryCandidatesRequest,
     visible: list[AskableMemory],
 ) -> list[dict[str, object]]:
-    statuses = {memory.memory_id: memory.temporal_status for memory in visible}
+    visible_by_id = {memory.memory_id: memory for memory in visible}
     return [
-        memory.model_dump(mode="json") | {"temporalStatus": statuses[memory.memoryId]}
+        memory.model_dump(mode="json")
+        | {
+            "temporalStatus": visible_by_id[memory.memoryId].temporal_status,
+            "scheduledEventPassed": visible_by_id[memory.memoryId].is_past_event,
+        }
         for memory in payload.existingMemories
-        if memory.memoryId in statuses
+        if memory.memoryId in visible_by_id
     ]
 
 
@@ -235,9 +257,10 @@ def _follow_up_policy_section(timezone_name: str, current_time: datetime) -> str
         "message clearly stops mid-story. Ground it only in a newCandidates entry.\n"
         "PAST_EVENT: a planned event whose date has now passed, so you can ask how it went. "
         "Ground it only in an existingMemories entry with memoryType EVENT. It qualifies when "
-        "temporalStatus is EXPIRED, or when validTo is null and the calendar date written in "
-        "content is earlier than the current instant. An event that is still upcoming never "
-        "qualifies.\n"
+        "scheduledEventPassed is true; always propose those. When scheduledEventPassed is "
+        "false it qualifies only if content clearly describes something that was planned for "
+        "a calendar date earlier than the current instant. An event that is still upcoming, "
+        "or something that had already happened when the user mentioned it, never qualifies.\n"
         "CONCERN: something the user is worried or undecided about.\n"
         "GOAL: something the user is working toward.\n"
         "MOOD: how the user was feeling.\n"

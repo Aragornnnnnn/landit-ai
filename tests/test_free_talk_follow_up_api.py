@@ -1,6 +1,7 @@
 # 장기기억 후보 응답에 얹는 다음 스몰톡 후속 질문의 규칙과 HTTP 계약을 검증하는 unittest 모듈
 import json
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 from app.free_talk.application.follow_up_service import (
@@ -13,6 +14,7 @@ from app.free_talk.domain.follow_up_rules import (
     AskableMemory,
     FollowUpOption,
     memories_for_prompt,
+    scheduled_date_status,
     select_follow_up,
 )
 from app.free_talk.llm.json_completion import AiGenerationFailedError
@@ -104,10 +106,9 @@ class FollowUpQuestionApiTests(unittest.TestCase):
                 option("PAST_EVENT", "저번에 제주도 간다고 했지? 어땠어?", memoryId=8990),
             )
         )
-        # 게이팅이 없어도 정렬만으로 보장되는지 보려고 지난 일정의 validTo를 비운다
-        payload = valid_memory_candidates_payload(
-            existingMemories=[JOB_WORRY, JEJU_TRIP | {"validTo": None}],
-        )
+        # 서버가 날짜를 읽을 수 없어 게이팅이 걸리지 않아도 정렬만으로 보장되는지 본다
+        undated_trip = JEJU_TRIP | {"validTo": None, "content": "추석 연휴에 제주도 여행을 간다"}
+        payload = valid_memory_candidates_payload(existingMemories=[JOB_WORRY, undated_trip])
 
         response = self._post(payload, fake)
 
@@ -136,6 +137,29 @@ class FollowUpQuestionApiTests(unittest.TestCase):
         # 숨긴 기억으로 만든 질문은 받아들이지 않는다
         self.assertEqual(response.json()["data"]["followUpQuestion"], NONE_QUESTION)
         self.assertIn("reason=no_valid_option", logs.output[-1])
+
+    def test_scheduled_date_in_content_gates_when_valid_to_is_missing(self):
+        fake = self._fake(options(option("PAST_EVENT", memoryId=8990)))
+        payload = valid_memory_candidates_payload(
+            existingMemories=[JOB_WORRY, JEJU_TRIP | {"validTo": None}],
+        )
+
+        response = self._post(payload, fake)
+
+        prompt_memories = self._follow_up_prompt(fake)["existingMemories"]
+        self.assertEqual([item["memoryId"] for item in prompt_memories], [8990])
+        self.assertTrue(prompt_memories[0]["scheduledEventPassed"])
+        self.assertEqual(response.json()["data"]["followUpQuestion"]["triggerType"], "PAST_EVENT")
+
+    def test_something_already_over_when_mentioned_is_not_a_past_event(self):
+        watched = memory(7001, "EVENT", "사용자는 2020-08-30에 코미디 영화를 봤다")
+        fake = self._fake(options(option("PAST_EVENT", memoryId=7001)), candidates=False)
+
+        with self.assertLogs(FOLLOW_UP_LOGGER, level="WARNING"):
+            response = self._post(valid_memory_candidates_payload(existingMemories=[watched]), fake)
+
+        self.assertFalse(self._follow_up_prompt(fake)["existingMemories"][0]["scheduledEventPassed"])
+        self.assertEqual(response.json()["data"]["followUpQuestion"], NONE_QUESTION)
 
     def test_asked_memories_are_never_shown_or_selected(self):
         fake = self._fake(
@@ -361,11 +385,51 @@ class FollowUpRulesTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIsNone(select_follow_up([item], memories, candidate_count=1))
 
-    def test_event_without_valid_to_may_be_judged_past_by_the_model(self):
+    def test_event_without_valid_to_or_readable_date_may_be_judged_past_by_the_model(self):
         memories = [askable(1, MemoryType.EVENT, "WITHIN_TIME_BOUNDS", has_valid_to=False)]
         item = proposed(FollowUpTriggerType.PAST_EVENT, memory_id=1)
 
         self.assertIs(select_follow_up([item], memories, candidate_count=0), item)
+
+    def test_server_date_verdict_overrides_the_model_for_events_without_valid_to(self):
+        item = proposed(FollowUpTriggerType.PAST_EVENT, memory_id=1)
+        verdicts = {"PASSED": True, "UPCOMING": False, "NOT_SCHEDULED": False}
+        for status, accepted in verdicts.items():
+            with self.subTest(status=status):
+                memories = [AskableMemory(1, MemoryType.EVENT, "WITHIN_TIME_BOUNDS", False, status)]
+
+                chosen = select_follow_up([item], memories, candidate_count=0)
+
+                self.assertEqual(chosen is item, accepted)
+                self.assertEqual(memories_for_prompt(memories)[0].is_past_event, accepted)
+
+    def test_valid_to_wins_over_the_content_date(self):
+        still_valid = AskableMemory(1, MemoryType.EVENT, "WITHIN_TIME_BOUNDS", True, "PASSED")
+
+        self.assertFalse(still_valid.is_past_event)
+
+    def test_scheduled_date_status_reads_calendar_dates_from_content(self):
+        observed, today = date(2026, 9, 1), date(2026, 9, 19)
+        cases = {
+            "사용자는 2026-09-12에 제주도 여행을 간다": "PASSED",
+            "사용자는 2026년 9월 12일에 제주도 여행을 간다": "PASSED",
+            "사용자는 2026-09-19에 면접이 있다": "UPCOMING",
+            "사용자는 2026-10-03부터 2026-10-07까지 오사카에 간다": "UPCOMING",
+            "사용자는 2026-09-03부터 2026-09-07까지 오사카에 간다": "PASSED",
+            "사용자는 2026-08-30에 코미디 영화를 봤다": "NOT_SCHEDULED",
+            "사용자는 2026-09-01에 마라톤에서 우승했다": "NOT_SCHEDULED",
+            "사용자는 추석 연휴에 제주도에 간다": "UNKNOWN",
+            "사용자는 2026-13-45에 무언가를 한다": "UNKNOWN",
+        }
+        for content, expected in cases.items():
+            with self.subTest(content=content):
+                self.assertEqual(scheduled_date_status(content, observed, today), expected)
+
+    def test_scheduled_date_status_needs_an_observation_date(self):
+        self.assertEqual(
+            scheduled_date_status("2026-09-12에 여행을 간다", None, date(2026, 9, 19)),
+            "UNKNOWN",
+        )
 
 
 if __name__ == "__main__":
