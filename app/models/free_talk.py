@@ -55,6 +55,18 @@ class MemoryOperation(StrEnum):
     IGNORE = "IGNORE"
 
 
+class FollowUpTriggerType(StrEnum):
+    """다음 스몰톡 후속 질문의 계기. 선언 순서가 곧 선택 우선순위이며 NONE은 질문 없음이다."""
+
+    CUT_OFF = "CUT_OFF"
+    PAST_EVENT = "PAST_EVENT"
+    CONCERN = "CONCERN"
+    GOAL = "GOAL"
+    MOOD = "MOOD"
+    HOBBY = "HOBBY"
+    NONE = "NONE"
+
+
 class FreeTalkMistakePattern(StrEnum):
     """턴별 교정에서 고른 문장의 대표 실수 유형. 세션을 가로질러 비교하므로 고정 목록이다."""
 
@@ -126,6 +138,10 @@ class MemoryCandidatesRequest(BaseModel):
     baseLocale: str
     timezone: str
     conversationHistory: list[MemoryConversationHistoryMessage] = Field(min_length=1)
+    # 아래 셋은 후속 질문 생성에만 쓰고 후보 추출·중복 판단에는 쓰지 않는다
+    existingMemories: list["MemoryContext"] = Field(default_factory=list, max_length=20)
+    askedMemoryIds: list[int] = Field(default_factory=list)
+    sessionEndedBy: FreeTalkClosingReason | None = None
 
     @field_validator("targetLocale", "baseLocale", "timezone")
     @classmethod
@@ -140,6 +156,11 @@ class MemoryCandidatesRequest(BaseModel):
         except ZoneInfoNotFoundError as exc:
             raise ValueError("timezone must be a supported IANA timezone") from exc
         return value
+
+    @field_validator("askedMemoryIds")
+    @classmethod
+    def asked_memory_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        return _validate_unique_positive_ids(value)
 
     @model_validator(mode="after")
     def history_must_contain_user_message(self) -> Self:
@@ -205,11 +226,40 @@ class MemoryCandidate(BaseModel):
         return self
 
 
+class FollowUpQuestion(BaseModel):
+    """다음 스몰톡에서 캐릭터가 이어 물을 질문. 근거는 기존 기억이나 이번 후보 중 하나뿐이다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    memoryId: int | None = Field(default=None, gt=0)
+    candidateIndex: int | None = Field(default=None, ge=0)
+    triggerType: FollowUpTriggerType
+    question: str
+    invite: str
+
+    @field_validator("question", "invite")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @model_validator(mode="after")
+    def source_must_match_trigger(self) -> Self:
+        has_memory = self.memoryId is not None
+        has_candidate = self.candidateIndex is not None
+        if self.triggerType == FollowUpTriggerType.NONE:
+            if has_memory or has_candidate:
+                raise ValueError("NONE follow-up must not reference a memory")
+        elif has_memory == has_candidate:
+            raise ValueError("follow-up requires exactly one of memoryId and candidateIndex")
+        return self
+
+
 class MemoryCandidatesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     extractorVersion: str
     candidates: list[MemoryCandidate] = Field(max_length=5)
+    followUpQuestion: FollowUpQuestion
 
     @field_validator("extractorVersion")
     @classmethod
@@ -429,8 +479,32 @@ class MemoryContext(BaseModel):
         return _validate_not_blank(value)
 
 
+class PendingFollowUp(BaseModel):
+    """지난 스몰톡이 끝날 때 만들어 두고 아직 묻지 않은 후속 질문."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    followUpId: int = Field(gt=0)
+    memoryId: int | None = Field(default=None, gt=0)
+    triggerType: FollowUpTriggerType
+    question: str
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("triggerType")
+    @classmethod
+    def trigger_type_must_be_askable(cls, value: FollowUpTriggerType) -> FollowUpTriggerType:
+        if value == FollowUpTriggerType.NONE:
+            raise ValueError("pending follow-up requires an askable trigger type")
+        return value
+
+
 class FreeTalkOpeningRequest(FreeTalkContext):
     memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
+    pendingFollowUp: PendingFollowUp | None = None
 
     @model_validator(mode="after")
     def topic_must_be_complete(self) -> Self:
@@ -450,6 +524,8 @@ class FreeTalkOpeningResponse(BaseModel):
     translatedMessage: str
     emotion: Emotion | None
     usedMemoryIds: list[int] = Field(default_factory=list, max_length=3)
+    followUpAsked: bool = False
+    followUpId: int | None = Field(default=None, gt=0)
 
     @field_validator("usedMemoryIds")
     @classmethod
@@ -469,6 +545,7 @@ class FreeTalkTurnRequest(FreeTalkContext):
     isFirstUserTurn: bool
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
     memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
+    pendingFollowUp: PendingFollowUp | None = None
 
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
@@ -481,6 +558,13 @@ class FreeTalkTurnRequest(FreeTalkContext):
             raise ValueError("submitted message must match latest user history")
         return self
 
+    @model_validator(mode="after")
+    def pending_follow_up_requires_first_user_turn(self) -> Self:
+        """오프닝이 없는 USER_FIRST 세션의 첫 턴만 후속 질문을 꺼낼 수 있다."""
+        if self.pendingFollowUp is not None and not self.isFirstUserTurn:
+            raise ValueError("pending follow-up is only allowed on the first user turn")
+        return self
+
 
 class FreeTalkTurnResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -491,6 +575,8 @@ class FreeTalkTurnResponse(BaseModel):
     translatedMessage: str | None
     emotion: Emotion | None
     usedMemoryIds: list[int] = Field(default_factory=list, max_length=3)
+    followUpAsked: bool = False
+    followUpId: int | None = Field(default=None, gt=0)
 
     @field_validator("inferredTitle", "aiMessage", "translatedMessage")
     @classmethod
@@ -517,6 +603,8 @@ class FreeTalkInnerThoughtRequest(FreeTalkContext):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
+    # 턴 교정의 근거로만 쓰고 속마음 판정에는 넘기지 않는다
+    memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
@@ -539,6 +627,8 @@ class FreeTalkCorrection(BaseModel):
     betterSentence: str
     reason: str
     mistakePattern: FreeTalkMistakePattern
+    # 장기기억이 정답을 바꾼 교정일 때만 그 memoryContext의 기억 ID
+    usedMemoryId: int | None = Field(default=None, gt=0)
 
     @field_validator("originalSentence", "betterSentence", "reason")
     @classmethod
@@ -617,17 +707,42 @@ class ExistingExpression(BaseModel):
         return _validate_not_blank(value)
 
 
+class LearnedExpression(BaseModel):
+    """백엔드가 추린, 사용자가 이전에 학습 완료한 표현 후보."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expressionId: int = Field(gt=0)
+    targetExpressionText: str
+    baseExpressionMeaningText: str
+
+    @field_validator("targetExpressionText", "baseExpressionMeaningText")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
 class ExpressionRecommendationsRequest(BaseModel):
     sessionId: int = Field(gt=0)
     targetLocale: str
     baseLocale: str
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
     existingExpressions: list[ExistingExpression]
+    learnedExpressions: list[LearnedExpression] = Field(default_factory=list, max_length=50)
 
     @field_validator("targetLocale", "baseLocale")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
+
+    @field_validator("learnedExpressions")
+    @classmethod
+    def learned_expression_ids_must_be_unique(
+        cls,
+        value: list[LearnedExpression],
+    ) -> list[LearnedExpression]:
+        _validate_unique_positive_ids([expression.expressionId for expression in value])
+        return value
 
 
 class ExpressionRecommendation(BaseModel):
@@ -648,10 +763,26 @@ class ExpressionRecommendation(BaseModel):
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
 
+class UsedExpression(BaseModel):
+    """이번 대화에서 실제로 쓴 학습 표현. matchedText는 해당 USER 메시지 원문의 일부여야 한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expressionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    matchedText: str
+
+    @field_validator("matchedText")
+    @classmethod
+    def matched_text_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
 class ExpressionRecommendationsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recommendations: list[ExpressionRecommendation] = Field(min_length=1, max_length=3)
+    usedExpressions: list[UsedExpression] = Field(default_factory=list)
 
 
 class ConversationEmbeddingsRequest(BaseModel):

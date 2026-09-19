@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app.free_talk.application.correction_service import (
     CORRECTION_POLICY_HEADING,
     FALLBACK_WORKFLOW,
+    UNKNOWN_MEMORY_WORKFLOW,
 )
 from app.free_talk.llm.json_completion import AiGenerationFailedError
 from app.main import create_app
@@ -36,6 +37,36 @@ def correction_completion(**overrides):
     }
     result.update(overrides)
     return result
+
+
+GYM_MEMORY = {
+    "memoryId": 9012,
+    "memoryType": "EPISODE",
+    "content": "판교에 있는 헬스장에 다닌다",
+    "validFrom": "2026-09-13T20:10:00+09:00",
+    "validTo": None,
+    "observedAt": "2026-09-13T20:10:00+09:00",
+}
+
+
+def gym_correction(**overrides):
+    correction = {
+        "originalSentence": "And I am doing stairs at a gym.",
+        "betterSentence": "And I am doing stairs at the gym.",
+        "reason": "저번에 말한 그 헬스장이면 the gym이라고 해요. 둘 다 아는 곳이니까요.",
+        "mistakePattern": "ARTICLE",
+        "usedMemoryId": None,
+    }
+    correction.update(overrides)
+    return correction_completion(correction=correction)
+
+
+def gym_payload(**overrides):
+    payload = payload_with_partner_turn(**overrides)
+    payload["conversationHistory"][-1]["content"] = (
+        "Yes. I'm doing solid cardio session. And I am doing stairs at a gym."
+    )
+    return payload
 
 
 def payload_with_partner_turn(**overrides):
@@ -112,6 +143,7 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
                 "betterSentence": "I went to the gym yesterday with my friend.",
                 "reason": "어제 일이라 went로 말해야 해요. 그래야 언제 얘기인지 바로 알아들어요.",
                 "mistakePattern": "TENSE",
+                "usedMemoryId": None,
             },
         )
         self.assertEqual(len(fake.completions.calls), 1)
@@ -273,8 +305,120 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
                 "baseLocale": "KR",
                 "previousPartnerMessage": "That sounds fun! Did you do anything yesterday?",
                 "submittedMessage": "Yeah! I go to gym yesterday with my friend. It was tiring.",
+                "memoryContext": [],
             },
         )
+
+    def test_memory_grounded_correction_returns_the_used_memory_id(self):
+        fake = self._fake(gym_correction(usedMemoryId=9012))
+
+        response = self._post(gym_payload(memoryContext=[GYM_MEMORY]), fake)
+
+        correction = response.json()["data"]["correction"]
+        self.assertEqual(correction["originalSentence"], "And I am doing stairs at a gym.")
+        self.assertEqual(correction["betterSentence"], "And I am doing stairs at the gym.")
+        self.assertEqual(correction["mistakePattern"], "ARTICLE")
+        self.assertEqual(correction["usedMemoryId"], 9012)
+
+    def test_memory_id_outside_the_request_is_dropped_but_correction_stays(self):
+        completion = correction_completion()
+        completion["correction"]["usedMemoryId"] = 4040
+        fake = self._fake(completion)
+
+        with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
+            response = self._post(payload_with_partner_turn(memoryContext=[GYM_MEMORY]), fake)
+
+        correction = response.json()["data"]["correction"]
+        self.assertEqual(correction["mistakePattern"], "TENSE")
+        self.assertIsNone(correction["usedMemoryId"])
+        self.assertIn(UNKNOWN_MEMORY_WORKFLOW, logs.output[-1])
+        self.assertNotIn("gym", logs.output[-1])
+
+    def test_article_swap_without_a_grounding_memory_is_not_a_correction(self):
+        cases = {
+            "no_memory": (gym_correction(), []),
+            "memory_not_cited": (gym_correction(), [GYM_MEMORY]),
+            "unknown_memory_cited": (gym_correction(usedMemoryId=4040), [GYM_MEMORY]),
+        }
+        for name, (completion, memory_context) in cases.items():
+            with self.subTest(name=name):
+                fake = self._fake(completion)
+
+                response = self._post(gym_payload(memoryContext=memory_context), fake)
+
+                data = response.json()["data"]
+                self.assertIsNone(data["correction"])
+                # 교정만 버리고 반응 판정은 그대로 둔다
+                self.assertTrue(data["reactedToPartner"])
+
+    def test_article_fix_that_adds_a_missing_word_is_kept_without_memory(self):
+        completion = correction_completion(
+            correction={
+                "originalSentence": "I go to gym yesterday with my friend.",
+                "betterSentence": "I go to the gym yesterday with my friend.",
+                "reason": "gym 앞에 the가 빠졌어요.",
+                "mistakePattern": "ARTICLE",
+                "usedMemoryId": None,
+            }
+        )
+        fake = self._fake(completion)
+
+        response = self._post(payload_with_partner_turn(), fake)
+
+        self.assertEqual(response.json()["data"]["correction"]["mistakePattern"], "ARTICLE")
+
+    def test_memory_reaches_only_the_correction_prompt(self):
+        fake = self._fake(gym_correction(usedMemoryId=9012))
+
+        self._post(gym_payload(memoryContext=[GYM_MEMORY]), fake)
+
+        correction_call = fake.completions.correction_calls[0]
+        self.assertIn("Memory Grounding:", correction_call["messages"][0]["content"])
+        correction_prompt = json.loads(correction_call["messages"][1]["content"])
+        self.assertEqual(
+            correction_prompt["memoryContext"],
+            [
+                {
+                    "memoryId": 9012,
+                    "content": "판교에 있는 헬스장에 다닌다",
+                    "observedAt": "2026-09-13T20:10:00+09:00",
+                }
+            ],
+        )
+        # 속마음 판정에는 기억을 넘기지 않는다
+        inner_thought_prompt = json.loads(fake.completions.calls[0]["messages"][1]["content"])
+        self.assertNotIn("memoryContext", inner_thought_prompt)
+        self.assertNotIn("판교", fake.completions.calls[0]["messages"][1]["content"])
+
+    def test_inner_thought_prompt_is_unchanged_by_memory_context(self):
+        plain = self._fake(gym_correction())
+        with_memory = self._fake(gym_correction())
+
+        self._post(gym_payload(), plain)
+        self._post(gym_payload(memoryContext=[GYM_MEMORY]), with_memory)
+
+        self.assertEqual(
+            plain.completions.calls[0]["messages"],
+            with_memory.completions.calls[0]["messages"],
+        )
+
+    def test_prompt_forbids_guessing_shared_knowledge_without_memory(self):
+        fake = self._fake(gym_correction())
+
+        self._post(gym_payload(), fake)
+
+        system_prompt = fake.completions.correction_calls[0]["messages"][0]["content"]
+        self.assertIn("'at a gym' is then correct as it stands", system_prompt)
+        self.assertNotIn("(a place both know)", system_prompt)
+
+    def test_rejects_more_than_three_memories(self):
+        memories = [GYM_MEMORY | {"memoryId": index} for index in range(1, 5)]
+        fake = self._fake(gym_correction())
+
+        response = self._post(gym_payload(memoryContext=memories), fake)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_REQUEST")
 
     def test_correction_call_uses_its_own_model_and_timeout(self):
         fake = self._fake(correction_completion())
@@ -304,6 +448,8 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
         response_fields = schemas["FreeTalkInnerThoughtResponse"]["properties"]
         self.assertIn("reactedToPartner", response_fields)
         self.assertIn("correction", response_fields)
+        self.assertIn("usedMemoryId", schemas["FreeTalkCorrection"]["properties"])
+        self.assertIn("memoryContext", schemas["FreeTalkInnerThoughtRequest"]["properties"])
         self.assertEqual(
             set(schemas["FreeTalkMistakePattern"]["enum"]),
             {pattern.value for pattern in FreeTalkMistakePattern},
