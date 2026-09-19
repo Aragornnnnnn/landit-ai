@@ -45,6 +45,7 @@ from app.models.free_talk import (
     FreeTalkTurnResponse,
     Emotion,
     MemoryContext,
+    PendingFollowUp,
 )
 
 
@@ -97,6 +98,8 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "로",
 )
 _KOREAN_VERB_SUFFIXES = ("한다고", "합니다", "한다", "했다", "해요", "하다")
+# 후속 질문이 있을 때만 붙는 프롬프트 절 제목. 없을 때는 기존 프롬프트가 그대로 유지된다.
+PENDING_FOLLOW_UP_HEADING = "Pending Follow-up:"
 _SAFE_CLOSING_AI_MESSAGE = (
     "I really enjoyed hearing about that. Thanks for sharing!"
 )
@@ -125,6 +128,7 @@ class _OpeningCandidate(BaseModel):
     translatedMessage: str
     emotion: object | None = None
     usedMemoryIds: list[int] = Field(default_factory=list, max_length=3)
+    followUpAsked: bool = False
 
 
 class _TurnCandidate(BaseModel):
@@ -134,6 +138,7 @@ class _TurnCandidate(BaseModel):
     translatedMessage: str | None = None
     emotion: object | None = None
     usedMemoryIds: list[int] = Field(default_factory=list, max_length=3)
+    followUpAsked: bool = False
 
 
 class _TurnExitIntentCandidate(BaseModel):
@@ -164,6 +169,14 @@ class _TurnStructuredOutput(BaseModel):
     translatedMessage: str | None
     emotion: Emotion | None
     usedMemoryIds: list[int] = Field(max_length=3)
+
+
+class _OpeningWithFollowUpStructuredOutput(_OpeningStructuredOutput):
+    followUpAsked: bool
+
+
+class _TurnWithFollowUpStructuredOutput(_TurnStructuredOutput):
+    followUpAsked: bool
 
 
 class _ClosingStructuredOutput(BaseModel):
@@ -201,24 +214,32 @@ def generate_opening(
         settings=settings,
         system_prompt=_opening_system_prompt(
             payload.characterId, payload.timezone, current_time,
-        ),
+        ) + _opening_follow_up_policy(payload.pendingFollowUp),
         user_prompt=_memory_user_prompt(payload, current_time),
-        response_model=_OpeningStructuredOutput,
+        response_model=(
+            _OpeningStructuredOutput
+            if payload.pendingFollowUp is None
+            else _OpeningWithFollowUpStructuredOutput
+        ),
         schema_name="free_talk_opening",
         workflow="free_talk_opening",
         retry_schema_violations=False,
     )
     try:
         candidate = _OpeningCandidate.model_validate(data)
+        follow_up_asked = _follow_up_asked(payload.pendingFollowUp, candidate.followUpAsked)
+        used_memory_ids = _validated_used_memory_ids(
+            candidate.usedMemoryIds,
+            payload.memoryContext,
+            candidate.translatedMessage,
+        )
         return FreeTalkOpeningResponse(
             aiMessage=candidate.aiMessage,
             translatedMessage=candidate.translatedMessage,
             emotion=None,
-            usedMemoryIds=_validated_used_memory_ids(
-                candidate.usedMemoryIds,
-                payload.memoryContext,
-                candidate.translatedMessage,
-            ),
+            usedMemoryIds=_with_follow_up_memory(used_memory_ids, payload, follow_up_asked),
+            followUpAsked=follow_up_asked,
+            followUpId=_follow_up_id(payload.pendingFollowUp),
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
@@ -244,7 +265,19 @@ def generate_turn(
         candidate = _validated_turn_candidate(data, payload)
         exit_detected = _is_exit_detected(candidate, payload)
         used_memory_ids = _turn_used_memory_ids(candidate, payload, exit_detected)
-        return _turn_response(candidate, exit_detected, used_memory_ids)
+        follow_up_asked = not exit_detected and _follow_up_asked(
+            payload.pendingFollowUp, candidate.followUpAsked,
+        )
+        return _turn_response(
+            candidate,
+            exit_detected,
+            _with_follow_up_memory(used_memory_ids, payload, follow_up_asked),
+        ).model_copy(
+            update={
+                "followUpAsked": follow_up_asked,
+                "followUpId": _follow_up_id(payload.pendingFollowUp),
+            },
+        )
     except (TypeError, ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
 
@@ -256,6 +289,12 @@ def _request_turn_completion(
     """CONTINUE 응답에 메시지가 없으면 같은 요청을 복구 계약으로 한 번 재호출한다."""
     current_time = datetime.now(UTC)
     user_prompt = _memory_user_prompt(payload, current_time)
+    follow_up_policy = _turn_follow_up_policy(payload.pendingFollowUp)
+    response_model = (
+        _TurnStructuredOutput
+        if payload.pendingFollowUp is None
+        else _TurnWithFollowUpStructuredOutput
+    )
     data = request_json_completion(
         settings=settings,
         system_prompt=_turn_system_prompt(
@@ -263,9 +302,9 @@ def _request_turn_completion(
             payload.characterId,
             payload.timezone,
             current_time,
-        ),
+        ) + follow_up_policy,
         user_prompt=user_prompt,
-        response_model=_TurnStructuredOutput,
+        response_model=response_model,
         schema_name="free_talk_turn",
         workflow="free_talk_turn",
         retry_schema_violations=False,
@@ -280,9 +319,9 @@ def _request_turn_completion(
                 payload.characterId,
                 payload.timezone,
                 current_time,
-            ),
+            ) + follow_up_policy,
             user_prompt=user_prompt,
-            response_model=_TurnStructuredOutput,
+            response_model=response_model,
             schema_name="free_talk_turn_repair",
             workflow="free_talk_turn_repair",
             retry_schema_violations=False,
@@ -656,6 +695,73 @@ def _title_repair_system_prompt() -> str:
     )
 
 
+def _follow_up_asked(pending: PendingFollowUp | None, model_reported: bool) -> bool:
+    """후속 질문 입력이 없었으면 모델이 뭐라고 하든 묻지 않은 것이다."""
+    return pending is not None and model_reported
+
+
+def _with_follow_up_memory(
+    used_memory_ids: list[int],
+    payload: FreeTalkOpeningRequest | FreeTalkTurnRequest,
+    follow_up_asked: bool,
+) -> list[int]:
+    """후속 질문을 꺼냈으면 그 근거 기억은 쓴 것이다.
+
+    짧은 질문은 단어 겹침 검증을 통과하기 어려워 요청 값으로 확정한다.
+    """
+    pending = payload.pendingFollowUp
+    context_ids = {memory.memoryId for memory in payload.memoryContext}
+    if (
+        not follow_up_asked
+        or pending is None
+        or pending.memoryId not in context_ids
+        or pending.memoryId in used_memory_ids
+    ):
+        return used_memory_ids
+    return [pending.memoryId, *used_memory_ids][:3]
+
+
+def _follow_up_id(pending: PendingFollowUp | None) -> int | None:
+    # 식별자는 모델을 거치지 않고 서버가 입력값을 그대로 돌려준다
+    return None if pending is None else pending.followUpId
+
+
+def _pending_follow_up_policy(pending: PendingFollowUp | None, placement: str) -> str:
+    if pending is None:
+        return ""
+    return (
+        f" {PENDING_FOLLOW_UP_HEADING} pendingFollowUp.question is a question you promised "
+        "the user last time that you would ask. Ask it in this message: carry its meaning "
+        "into natural targetLocale wording in your own voice instead of translating it word "
+        f"for word. {placement} It is the only question in this message; do not add a "
+        "separate topic question. When it is unrelated to the topic or to what the user just "
+        "said, bridge once with a casual by-the-way; when it is related, ask it inside that "
+        "flow. If pendingFollowUp.memoryId matches a memoryContext entry, apply that "
+        "memory's temporalStatus rules and include its ID in usedMemoryIds when you use a "
+        "distinctive detail. Do not presuppose how things turned out. Set followUpAsked to "
+        "true only when aiMessage really asks it; set it to false when asking would clash "
+        "badly with the conversation."
+    )
+
+
+def _opening_follow_up_policy(pending: PendingFollowUp | None) -> str:
+    return _pending_follow_up_policy(
+        pending,
+        "Open with a short greeting sentence first and ask it by the second sentence; never "
+        "start the message with the question.",
+    )
+
+
+def _turn_follow_up_policy(pending: PendingFollowUp | None) -> str:
+    return _pending_follow_up_policy(
+        pending,
+        "First react briefly to what the user just said, then ask it; never ignore the "
+        "user's message. If the user already brought that subject up themselves, do not ask "
+        "it again and set followUpAsked to false. When userExitIntentDetected is true, set "
+        "followUpAsked to false.",
+    )
+
+
 def _memory_system_policy(timezone_name: str, current_time: datetime) -> str:
     reference_time = current_time.astimezone(ZoneInfo(timezone_name)).isoformat()
     return (
@@ -726,6 +832,9 @@ def _memory_user_prompt(
     current_time: datetime,
 ) -> str:
     data = payload.model_dump(mode="json")
+    # 후속 질문이 없는 요청은 기존 프롬프트와 바이트 단위로 같아야 품질 회귀가 없다
+    if data.get("pendingFollowUp") is None:
+        data.pop("pendingFollowUp", None)
     data["memoryContext"] = [
         memory_context_with_time_status(memory, payload.timezone, current_time)
         for memory in payload.memoryContext
