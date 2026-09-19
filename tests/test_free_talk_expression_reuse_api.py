@@ -67,11 +67,17 @@ def reuse_payload(**overrides):
     return payload
 
 
-def used(*items):
+def used(*items, same_meaning=True):
     return json.dumps(
         {
             "usedExpressions": [
-                {"expressionId": expression_id, "messageId": message_id, "matchedText": text}
+                {
+                    "expressionId": expression_id,
+                    "messageId": message_id,
+                    "matchedText": text,
+                    "sentenceMeaning": "what the sentence says",
+                    "sameMeaning": same_meaning,
+                }
                 for expression_id, message_id, text in items
             ],
         }
@@ -163,6 +169,24 @@ class ExpressionReuseApiTests(unittest.TestCase):
             [item["expressionId"] for item in response.json()["data"]["usedExpressions"]],
             [73, 87],
         )
+
+    def test_words_used_with_another_meaning_are_not_counted_or_logged_as_dropped(self):
+        # 실제 호출 사례: "I ate a piece of cake"는 관용구 piece of cake(쉬운 일)를 쓴 것이 아니다
+        fake = self._fake(used((73, 55020, "working out"), same_meaning=False))
+
+        with self.assertNoLogs(REUSE_LOGGER, level="WARNING"):
+            response = self._post(reuse_payload(), fake)
+
+        self.assertEqual(response.json()["data"]["usedExpressions"], [])
+
+    def test_reuse_prompt_asks_for_the_sentence_meaning_before_the_verdict(self):
+        fake = self._fake()
+
+        self._post(reuse_payload(), fake)
+
+        system_prompt = fake.completions.reuse_calls[0]["messages"][0]["content"]
+        self.assertLess(system_prompt.index("sentenceMeaning"), system_prompt.index("sameMeaning"))
+        self.assertIn("baseExpressionMeaningText", system_prompt)
 
     def test_missing_or_empty_learned_expressions_skips_the_reuse_call(self):
         for payload in (

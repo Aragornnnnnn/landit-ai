@@ -28,6 +28,9 @@ class _UsedExpressionDraft(BaseModel):
     expressionId: int
     messageId: int
     matchedText: str
+    # 판정 전에 문장의 뜻을 먼저 쓰게 해 글자만 같은 경우를 모델 스스로 걸러 내게 한다
+    sentenceMeaning: str
+    sameMeaning: bool = Field(strict=True)
 
 
 class _UsedExpressionsCandidate(BaseModel):
@@ -79,9 +82,11 @@ def _verified_used_expressions(
     candidate: _UsedExpressionsCandidate,
     payload: ExpressionRecommendationsRequest,
 ) -> list[UsedExpression]:
+    # 뜻이 다르다고 모델이 스스로 판정한 항목은 주장이 아니므로 원문 검증 탈락 집계에도 넣지 않는다
     claims = [
         ReuseClaim(draft.expressionId, draft.messageId, draft.matchedText)
         for draft in candidate.usedExpressions
+        if draft.sameMeaning
     ]
     verified = verified_reuse_claims(
         claims,
@@ -149,11 +154,15 @@ def _reuse_system_prompt() -> str:
                 "coffee -> grab a quick coffee), a contraction (be down for -> I'm down for), or "
                 "a recognizable but ungrammatical attempt (I down for anything). It does not "
                 "count when only individual words overlap by chance and the meaning differs: "
-                "'go to the store' is not the expression 'my go-to'. It also does not count "
-                "when the same words are meant literally instead of with the expression's "
-                "meaning: 'the cat is on the fence' is not the idiom 'on the fence' (undecided), "
-                "and 'a flu shot' is not 'give it a shot'. Use baseExpressionMeaningText to check "
-                "the meaning. When you are not sure, leave it out. Never report an expressionId that is not in learnedExpressions and "
+                "'go to the store' is not the expression 'my go-to'. The same words in the same "
+                "order still do not count when the sentence means something else: many "
+                "expressions are figurative, and a sentence that is literally about the physical "
+                "things, places, or movements those words name is not a use of the expression. "
+                "So judge by meaning, in two steps, for every span whose words match an "
+                "expression: first write sentenceMeaning, a short plain paraphrase of what that "
+                "user sentence actually says; then set sameMeaning to true only if that "
+                "paraphrase expresses the sense given in baseExpressionMeaningText, and false "
+                "otherwise. When you are not sure, set it to false. Never report an expressionId that is not in learnedExpressions and "
                 "never report a messageId that is not in userMessages. Report one entry per "
                 "expression per message, even if the message uses it twice. matchedText is the "
                 "exact span copied verbatim from that message's content that realizes the "
@@ -165,8 +174,11 @@ def _reuse_system_prompt() -> str:
                 "Output Schema:\n"
                 "Return ONLY valid JSON shaped as "
                 '{"usedExpressions":[{"expressionId":101,"messageId":55029,'
-                '"matchedText":"grab a quick coffee"}]}. Return an empty usedExpressions array '
-                "when nothing was used. Never return text outside the JSON object."
+                '"matchedText":"grab a quick coffee","sentenceMeaning":"asks to go get coffee '
+                'together","sameMeaning":true}]}. List every span whose words match an '
+                "expression, including the ones you mark sameMeaning false. Return an empty "
+                "usedExpressions array when no words match. Never return text outside the JSON "
+                "object."
             ),
         ]
     )
