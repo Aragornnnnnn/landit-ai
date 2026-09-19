@@ -4,7 +4,10 @@ import re
 import unittest
 from unittest.mock import patch
 
-from app.free_talk.application.conversation_service import PENDING_FOLLOW_UP_HEADING
+from app.free_talk.application.conversation_service import (
+    PENDING_FOLLOW_UP_HEADING,
+    UNVERIFIED_FOLLOW_UP_WORKFLOW,
+)
 from app.main import create_app
 from tests.test_free_talk_api import (
     FakeOpenAI,
@@ -18,6 +21,7 @@ from tests.test_free_talk_api import (
 
 OPENING_PATH = "/api/v1/free-talk/opening"
 TURN_PATH = "/api/v1/free-talk/turn"
+CONVERSATION_LOGGER = "app.free_talk.application.conversation_service"
 INTERVIEW_MEMORY = {
     "memoryId": 9020,
     "memoryType": "EVENT",
@@ -40,21 +44,29 @@ def pending_follow_up(**overrides):
 
 
 def asked_opening(**overrides):
-    return opening_completion(
-        aiMessage="Hey! Good to see you again. So, how did the interview go?",
-        translatedMessage="안녕! 다시 봐서 반가워. 그래서, 면접은 어떻게 됐어?",
-        followUpAsked=True,
-        **overrides,
-    )
+    defaults = {
+        "aiMessage": "Hey! Good to see you again. So, how did the interview go?",
+        "translatedMessage": "안녕! 다시 봐서 반가워. 그래서, 면접은 어떻게 됐어?",
+        "followUpAsked": True,
+    }
+    return opening_completion(**(defaults | overrides))
 
 
 def asked_turn(**overrides):
-    return normal_turn_completion(
-        aiMessage="That sounds fun! Oh, by the way, how did the interview go?",
-        translatedMessage="재밌겠다! 아, 그나저나 면접은 어떻게 됐어?",
-        followUpAsked=True,
-        **overrides,
-    )
+    defaults = {
+        "aiMessage": "That sounds fun! Oh, by the way, how did the interview go?",
+        "translatedMessage": "재밌겠다! 아, 그나저나 면접은 어떻게 됐어?",
+        "followUpAsked": True,
+    }
+    return normal_turn_completion(**(defaults | overrides))
+
+
+# 모델이 자기 질문을 하고도 true라고 보고한 실제 호출 사례
+NOT_ASKED_TURN = normal_turn_completion(
+    aiMessage="That sounds fun! Is it a full-day hike or a shorter trail?",
+    translatedMessage="재밌겠다! 하루 종일 걷는 코스야, 아니면 짧은 코스야?",
+    followUpAsked=True,
+)
 
 
 def without_clock(system_prompt):
@@ -118,6 +130,109 @@ class PendingFollowUpApiTests(unittest.TestCase):
                 data = self._post(TURN_PATH, payload, fake).json()["data"]
 
                 self.assertEqual(data["usedMemoryIds"], [])
+
+    def test_claimed_ask_is_rejected_when_the_message_asks_something_else(self):
+        # 모델이 자기 질문을 하고도 true라고 보고한 실제 호출 사례
+        completion = normal_turn_completion(
+            aiMessage="That sounds fun! Is it a full-day hike or a shorter trail?",
+            translatedMessage="재밌겠다! 하루 종일 걷는 코스야, 아니면 짧은 코스야?",
+            followUpAsked=True,
+            usedMemoryIds=[9020],
+        )
+        fake = FakeOpenAI(contents=[json.dumps(completion)])
+        payload = valid_turn_payload(
+            memoryContext=[INTERVIEW_MEMORY],
+            pendingFollowUp=pending_follow_up(),
+        )
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING") as logs:
+            data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertFalse(data["followUpAsked"])
+        self.assertEqual(data["followUpId"], 501)
+        self.assertEqual(data["usedMemoryIds"], [])
+        self.assertIn(UNVERIFIED_FOLLOW_UP_WORKFLOW, logs.output[-1])
+        self.assertIn("followUpId=501", logs.output[-1])
+        self.assertNotIn("hike", logs.output[-1])
+
+    def test_missing_follow_up_is_repaired_once_on_the_first_turn(self):
+        fake = FakeOpenAI(contents=[json.dumps(NOT_ASKED_TURN), json.dumps(asked_turn())])
+        payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING"):
+            data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertIn("interview", data["aiMessage"])
+        self.assertEqual(len(fake.completions.calls), 2)
+        repair_prompt = fake.completions.calls[1]["messages"][0]["content"]
+        self.assertIn("did not ask the pending follow-up question", repair_prompt)
+        self.assertIn(PENDING_FOLLOW_UP_HEADING, repair_prompt)
+
+    def test_repair_that_fails_or_still_skips_keeps_the_first_reply(self):
+        second_replies = {
+            "still_not_asked": json.dumps(NOT_ASKED_TURN | {"aiMessage": "Second try?"}),
+            "exit_flipped": json.dumps(asked_turn(userExitIntentDetected=True)),
+            "invalid_json": "not json",
+            "call_failed": RuntimeError("boom"),
+        }
+        for name, second in second_replies.items():
+            with self.subTest(name=name):
+                fake = FakeOpenAI(contents=[json.dumps(NOT_ASKED_TURN), second])
+                payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+
+                response = self._post(TURN_PATH, payload, fake)
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()["data"]
+                self.assertEqual(data["aiMessage"], NOT_ASKED_TURN["aiMessage"])
+                self.assertFalse(data["followUpAsked"])
+                self.assertFalse(data["userExitIntentDetected"])
+                self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_no_repair_when_asked_when_exiting_or_without_pending_follow_up(self):
+        cases = {
+            "asked": (asked_turn(), pending_follow_up()),
+            "exit": (asked_turn(userExitIntentDetected=True), pending_follow_up()),
+            "no_pending": (NOT_ASKED_TURN, None),
+        }
+        for name, (completion, pending) in cases.items():
+            with self.subTest(name=name):
+                fake = FakeOpenAI(contents=[json.dumps(completion)])
+                payload = valid_turn_payload()
+                if pending is not None:
+                    payload["pendingFollowUp"] = pending
+
+                self._post(TURN_PATH, payload, fake)
+
+                self.assertEqual(len(fake.completions.calls), 1)
+
+    def test_ask_is_verified_even_when_particles_and_endings_differ(self):
+        # 실제 호출 사례: 질문은 "제주도 … 어땠어?", 번역문은 "제주도는 어땠어요?"
+        completion = asked_turn(translatedMessage="좋네요. 제주도는 어땠어요?")
+        fake = FakeOpenAI(contents=[json.dumps(completion)])
+        payload = valid_turn_payload(
+            pendingFollowUp=pending_follow_up(
+                memoryId=None, question="지난주에 제주도 간다고 했지? 어땠어?"
+            ),
+        )
+
+        data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertEqual(len(fake.completions.calls), 1)
+
+    def test_ask_is_verified_by_memory_wording_when_the_question_is_paraphrased(self):
+        completion = asked_turn(translatedMessage="재밌겠다! 아, 그나저나 화요일 그건 잘 봤어?")
+        fake = FakeOpenAI(contents=[json.dumps(completion)])
+        payload = valid_turn_payload(
+            memoryContext=[INTERVIEW_MEMORY],
+            pendingFollowUp=pending_follow_up(),
+        )
+
+        data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
 
     def test_opening_reports_when_the_question_could_not_be_asked(self):
         fake = FakeOpenAI(contents=[json.dumps(opening_completion(followUpAsked=False))])
