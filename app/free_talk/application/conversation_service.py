@@ -102,6 +102,12 @@ _KOREAN_VERB_SUFFIXES = ("한다고", "합니다", "한다", "했다", "해요",
 # 후속 질문이 있을 때만 붙는 프롬프트 절 제목. 없을 때는 기존 프롬프트가 그대로 유지된다.
 PENDING_FOLLOW_UP_HEADING = "Pending Follow-up:"
 UNVERIFIED_FOLLOW_UP_WORKFLOW = "free_talk_follow_up_unverified"
+_OPENING_FOLLOW_UP_REPAIR_INSTRUCTION = (
+    " Return a complete replacement JSON response. Your previous reply did not ask the "
+    "pending follow-up question in targetLocale. aiMessage must be one short greeting "
+    "sentence with no question followed by the pending follow-up question, written entirely "
+    "in targetLocale, and followUpAsked must be true."
+)
 _FOLLOW_UP_REPAIR_INSTRUCTION = (
     " Return a complete replacement JSON response. Your previous reply did not ask the "
     "pending follow-up question. Unless the user's message already brought that subject up, "
@@ -228,24 +234,15 @@ def generate_opening(
         AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
     """
     current_time = datetime.now(UTC)
-    data = request_json_completion(
-        settings=settings,
-        system_prompt=_opening_system_prompt(
-            payload.characterId, payload.timezone, current_time,
-        ) + _opening_follow_up_policy(payload.pendingFollowUp),
-        user_prompt=_memory_user_prompt(payload, current_time),
-        response_model=(
-            _OpeningStructuredOutput
-            if payload.pendingFollowUp is None
-            else _OpeningWithFollowUpStructuredOutput
-        ),
-        schema_name="free_talk_opening",
-        workflow="free_talk_opening",
-        retry_schema_violations=False,
-    )
     try:
-        candidate = _OpeningCandidate.model_validate(data)
+        candidate = _OpeningCandidate.model_validate(
+            _request_opening_completion(payload, settings, current_time),
+        )
         follow_up_asked = _follow_up_asked(payload, candidate)
+        if payload.pendingFollowUp is not None and not follow_up_asked:
+            candidate, follow_up_asked = _repaired_opening(
+                candidate, payload, settings, current_time,
+            )
         used_memory_ids = _validated_used_memory_ids(
             candidate.usedMemoryIds,
             payload.memoryContext,
@@ -261,6 +258,57 @@ def generate_opening(
         )
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
+
+
+def _request_opening_completion(
+    payload: FreeTalkOpeningRequest,
+    settings: Settings,
+    current_time: datetime,
+    repair_instruction: str = "",
+) -> dict[str, object]:
+    is_repair = bool(repair_instruction)
+    return request_json_completion(
+        settings=settings,
+        system_prompt=_opening_system_prompt(payload.characterId, payload.timezone, current_time)
+        + _opening_follow_up_policy(payload.pendingFollowUp)
+        + repair_instruction,
+        user_prompt=_memory_user_prompt(payload, current_time),
+        response_model=(
+            _OpeningStructuredOutput
+            if payload.pendingFollowUp is None
+            else _OpeningWithFollowUpStructuredOutput
+        ),
+        schema_name="free_talk_opening_follow_up_repair" if is_repair else "free_talk_opening",
+        workflow="free_talk_opening_follow_up_repair" if is_repair else "free_talk_opening",
+        retry_schema_violations=False,
+    )
+
+
+def _repaired_opening(
+    first: _OpeningCandidate,
+    payload: FreeTalkOpeningRequest,
+    settings: Settings,
+    current_time: datetime,
+) -> tuple[_OpeningCandidate, bool]:
+    """약속한 후속 질문이 빠진 오프닝을 한 번만 다시 받는다.
+
+    복구가 실패하면 첫 응답을 쓰되, 첫 응답이 기준 언어 질문 원문을 붙여 넣은 것이면
+    학습 언어 메시지 계약을 어긴 것이라 그대로 내보내지 않는다.
+    """
+    try:
+        repaired = _OpeningCandidate.model_validate(
+            _request_opening_completion(
+                payload, settings, current_time, _OPENING_FOLLOW_UP_REPAIR_INSTRUCTION,
+            ),
+        )
+        if repaired.aiMessage.strip() and repaired.translatedMessage.strip():
+            if _follow_up_asked(payload, repaired):
+                return repaired, True
+    except (AiGenerationFailedError, AiResponseInvalidError, ValidationError):
+        pass
+    if _has_pasted_follow_up_question(payload, first.aiMessage):
+        raise ValueError("opening pasted the base-locale follow-up question")
+    return first, False
 
 
 def generate_turn(
@@ -337,6 +385,10 @@ def _repaired_follow_up_outcome(
             retry_schema_violations=False,
         )
         repaired = _turn_outcome(data, payload)
+        if repaired.exit_detected or not repaired.follow_up_asked:
+            return first
+        # 복구 응답이 응답 계약을 어기면(메시지 누락 등) 멀쩡한 첫 응답을 502로 만들지 않고 버린다
+        _turn_response(repaired.candidate, repaired.exit_detected, repaired.used_memory_ids)
     except (
         AiGenerationFailedError,
         AiResponseInvalidError,
@@ -344,8 +396,6 @@ def _repaired_follow_up_outcome(
         ValidationError,
         ValueError,
     ):
-        return first
-    if repaired.exit_detected or not repaired.follow_up_asked:
         return first
     return repaired
 
@@ -775,18 +825,38 @@ def _follow_up_asked(
     pending = payload.pendingFollowUp
     if pending is None or not candidate.followUpAsked:
         return False
+    # 기준 언어 질문 원문을 그대로 붙여 넣은 것은 학습 언어로 물은 것이 아니다
+    if _has_pasted_follow_up_question(payload, candidate.aiMessage):
+        return _unverified_follow_up(payload)
     translated = (candidate.translatedMessage or "").lower()
-    # 조사·어미가 달라도 잡히도록 토큰 일치가 아니라 어간 포함으로 본다 (제주 ⊂ 제주도는)
-    if any(token in translated for token in _follow_up_tokens(payload)):
+    tokens = _follow_up_tokens(payload)
+    # 조사·어미가 달라도 잡히도록 토큰 일치가 아니라 어간 포함으로 본다 (제주 ⊂ 제주도는).
+    # 질문이 너무 짧아 대조할 단어가 없으면 검증할 수 없으므로 보고를 그대로 믿는다.
+    if not tokens or any(token in translated for token in tokens):
         return True
+    return _unverified_follow_up(payload)
+
+
+def _unverified_follow_up(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> bool:
     logger.warning(
-        "프리톡 후속 질문을 꺼냈다는 보고를 번역문에서 확인하지 못했습니다. "
+        "프리톡 후속 질문을 꺼냈다는 보고를 응답에서 확인하지 못했습니다. "
         "workflow=%s sessionId=%s followUpId=%s",
         UNVERIFIED_FOLLOW_UP_WORKFLOW,
         payload.sessionId,
-        pending.followUpId,
+        payload.pendingFollowUp.followUpId,
     )
     return False
+
+
+def _has_pasted_follow_up_question(
+    payload: FreeTalkOpeningRequest | FreeTalkTurnRequest,
+    ai_message: str | None,
+) -> bool:
+    pending = payload.pendingFollowUp
+    # 학습 언어와 기준 언어가 같으면 질문 원문이 그대로 들어가는 것이 정상이다
+    if pending is None or not ai_message or payload.targetLocale == payload.baseLocale:
+        return False
+    return pending.question.strip() in ai_message
 
 
 def _follow_up_tokens(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> set[str]:
@@ -828,7 +898,7 @@ def _pending_follow_up_policy(pending: PendingFollowUp | None, placement: str) -
     if pending is None:
         return ""
     return (
-        f" {PENDING_FOLLOW_UP_HEADING} pendingFollowUp.question is a question you promised "
+        f"\n\n{PENDING_FOLLOW_UP_HEADING}\npendingFollowUp.question is a question you promised "
         "the user last time that you would ask. Ask it in this message: carry its meaning "
         "into natural targetLocale wording in your own voice instead of translating it word "
         "for word. aiMessage must be written entirely in targetLocale: never paste "
@@ -839,7 +909,8 @@ def _pending_follow_up_policy(pending: PendingFollowUp | None, placement: str) -
         "inside that flow. Asking how something went, or whether it happened, is always "
         "allowed even when the memory is EXPIRED or its date has passed: that is asking, not "
         "assuming. Just do not state an outcome as fact. If pendingFollowUp.memoryId matches "
-        "a memoryContext entry, include its ID in usedMemoryIds. translatedMessage stays the "
+        "a memoryContext entry, include its ID in usedMemoryIds. Return followUpAsked in "
+        "the JSON along with the other fields. translatedMessage stays the "
         "baseLocale translation of the whole aiMessage, this question included. "
         "followUpAsked reports what aiMessage actually contains: "
         "true only when aiMessage asks this question, false when aiMessage asks something "

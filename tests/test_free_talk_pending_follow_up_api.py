@@ -69,6 +69,13 @@ NOT_ASKED_TURN = normal_turn_completion(
 )
 
 
+PASTED_OPENING = opening_completion(
+    aiMessage="Hey! 저번에 말한 면접 준비, 어떻게 됐어?",
+    translatedMessage="안녕! 저번에 말한 면접 준비, 어떻게 됐어?",
+    followUpAsked=True,
+)
+
+
 def without_clock(system_prompt):
     """시스템 프롬프트에 박히는 현재 시각은 호출마다 달라 비교에서 가린다."""
     return re.sub(r"\d{4}-\d{2}-\d{2}T[0-9:.]+[+-]\d{2}:\d{2}", "<now>", system_prompt)
@@ -175,6 +182,8 @@ class PendingFollowUpApiTests(unittest.TestCase):
             "exit_flipped": json.dumps(asked_turn(userExitIntentDetected=True)),
             "invalid_json": "not json",
             "call_failed": RuntimeError("boom"),
+            # 질문은 했다고 하지만 메시지가 비어 응답 계약을 어기는 복구 응답
+            "missing_message": json.dumps(asked_turn(aiMessage=None)),
         }
         for name, second in second_replies.items():
             with self.subTest(name=name):
@@ -207,6 +216,17 @@ class PendingFollowUpApiTests(unittest.TestCase):
 
                 self.assertEqual(len(fake.completions.calls), 1)
 
+    def test_question_too_short_to_verify_trusts_the_report_without_repair(self):
+        fake = FakeOpenAI(contents=[json.dumps(NOT_ASKED_TURN)])
+        payload = valid_turn_payload(
+            pendingFollowUp=pending_follow_up(memoryId=None, question="왜?"),
+        )
+
+        data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertEqual(len(fake.completions.calls), 1)
+
     def test_ask_is_verified_even_when_particles_and_endings_differ(self):
         # 실제 호출 사례: 질문은 "제주도 … 어땠어?", 번역문은 "제주도는 어땠어요?"
         completion = asked_turn(translatedMessage="좋네요. 제주도는 어땠어요?")
@@ -233,6 +253,69 @@ class PendingFollowUpApiTests(unittest.TestCase):
         data = self._post(TURN_PATH, payload, fake).json()["data"]
 
         self.assertTrue(data["followUpAsked"])
+
+    def test_opening_that_pastes_the_base_locale_question_is_repaired(self):
+        # 실제 호출 사례: 모델이 한국어 질문 원문을 aiMessage에 붙여 넣고 true라고 보고했다
+        fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING), json.dumps(asked_opening())])
+        payload = valid_opening_payload() | {"pendingFollowUp": pending_follow_up()}
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING"):
+            response = self._post(OPENING_PATH, payload, fake)
+
+        data = response.json()["data"]
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(data["followUpAsked"])
+        self.assertNotIn("면접", data["aiMessage"])
+        self.assertEqual(len(fake.completions.calls), 2)
+        self.assertIn("entirely in targetLocale", fake.completions.calls[1]["messages"][0]["content"])
+
+    def test_opening_still_pasting_after_repair_is_an_invalid_ai_response(self):
+        fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING)])
+        payload = valid_opening_payload() | {"pendingFollowUp": pending_follow_up()}
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING"):
+            response = self._post(OPENING_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_opening_repair_failure_keeps_a_clean_first_opening(self):
+        clean_but_not_asked = opening_completion(followUpAsked=False)
+        for name, second in {"invalid_json": "not json", "call_failed": RuntimeError("boom")}.items():
+            with self.subTest(name=name):
+                fake = FakeOpenAI(contents=[json.dumps(clean_but_not_asked), second])
+                payload = valid_opening_payload() | {"pendingFollowUp": pending_follow_up()}
+
+                response = self._post(OPENING_PATH, payload, fake)
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()["data"]
+                self.assertEqual(data["aiMessage"], clean_but_not_asked["aiMessage"])
+                self.assertFalse(data["followUpAsked"])
+
+    def test_pasted_question_is_fine_when_both_locales_are_the_same(self):
+        fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING)])
+        payload = valid_opening_payload() | {
+            "targetLocale": "KR",
+            "pendingFollowUp": pending_follow_up(),
+        }
+
+        data = self._post(OPENING_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertEqual(len(fake.completions.calls), 1)
+
+    def test_turn_that_pastes_the_base_locale_question_goes_through_repair(self):
+        pasted_turn = asked_turn(aiMessage="That sounds fun! 저번에 말한 면접 준비, 어떻게 됐어?")
+        fake = FakeOpenAI(contents=[json.dumps(pasted_turn), json.dumps(asked_turn())])
+        payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING"):
+            data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertNotIn("면접", data["aiMessage"])
 
     def test_opening_reports_when_the_question_could_not_be_asked(self):
         fake = FakeOpenAI(contents=[json.dumps(opening_completion(followUpAsked=False))])
