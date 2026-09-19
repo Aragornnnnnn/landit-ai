@@ -52,6 +52,8 @@ from app.models.free_talk import (
 
 logger = logging.getLogger(__name__)
 
+# 기준 언어 문자가 학습 언어 메시지에 새는 것을 잡는다. 지금은 문자 체계로 구분되는 KR만 다룬다.
+_BASE_LOCALE_SCRIPT_PATTERNS = {"KR": re.compile(r"[가-힣]")}
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
 _MEMORY_TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣]+")
@@ -386,7 +388,7 @@ def _repaired_follow_up_outcome(
         )
         repaired = _turn_outcome(data, payload)
         if repaired.exit_detected or not repaired.follow_up_asked:
-            return first
+            return _clean_first_outcome(first, payload)
         # 복구 응답이 응답 계약을 어기면(메시지 누락 등) 멀쩡한 첫 응답을 502로 만들지 않고 버린다
         _turn_response(repaired.candidate, repaired.exit_detected, repaired.used_memory_ids)
     except (
@@ -396,8 +398,15 @@ def _repaired_follow_up_outcome(
         ValidationError,
         ValueError,
     ):
-        return first
+        return _clean_first_outcome(first, payload)
     return repaired
+
+
+def _clean_first_outcome(first: _TurnOutcome, payload: FreeTalkTurnRequest) -> _TurnOutcome:
+    """복구에 실패해 첫 응답으로 돌아갈 때, 기준 언어가 샌 메시지는 그대로 내보내지 않는다."""
+    if _has_pasted_follow_up_question(payload, first.candidate.aiMessage):
+        raise ValueError("turn leaked the base-locale follow-up question")
+    return first
 
 
 def _request_turn_completion(
@@ -856,7 +865,11 @@ def _has_pasted_follow_up_question(
     # 학습 언어와 기준 언어가 같으면 질문 원문이 그대로 들어가는 것이 정상이다
     if pending is None or not ai_message or payload.targetLocale == payload.baseLocale:
         return False
-    return pending.question.strip() in ai_message
+    if pending.question.strip() in ai_message:
+        return True
+    # 원문을 그대로 붙이지 않고 기준 언어로 풀어 쓴 경우도 학습 언어 메시지가 아니다
+    script = _BASE_LOCALE_SCRIPT_PATTERNS.get(payload.baseLocale.upper())
+    return script is not None and script.search(ai_message) is not None
 
 
 def _follow_up_tokens(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> set[str]:

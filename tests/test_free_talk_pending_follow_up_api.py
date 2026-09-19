@@ -294,6 +294,29 @@ class PendingFollowUpApiTests(unittest.TestCase):
                 self.assertEqual(data["aiMessage"], clean_but_not_asked["aiMessage"])
                 self.assertFalse(data["followUpAsked"])
 
+    def test_base_locale_paraphrase_in_the_message_is_treated_like_a_paste(self):
+        # 실제 호출 사례: 원문을 그대로 붙이지 않고 한국어로 풀어 써서 붙여넣기 검사를 빠져나갔다
+        leaked = asked_turn(aiMessage="That sounds cosy. 면접 준비는 지금은 좀 나아졌나요?")
+        fake = FakeOpenAI(contents=[json.dumps(leaked), json.dumps(asked_turn())])
+        payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING"):
+            data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertEqual(data["aiMessage"], asked_turn()["aiMessage"])
+
+    def test_turn_still_leaking_after_repair_is_an_invalid_ai_response(self):
+        leaked = asked_turn(aiMessage="That sounds cosy. 면접 준비는 지금은 좀 나아졌나요?")
+        fake = FakeOpenAI(contents=[json.dumps(leaked)])
+        payload = valid_turn_payload(pendingFollowUp=pending_follow_up())
+
+        with self.assertLogs(CONVERSATION_LOGGER, level="WARNING"):
+            response = self._post(TURN_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
     def test_pasted_question_is_fine_when_both_locales_are_the_same(self):
         fake = FakeOpenAI(contents=[json.dumps(PASTED_OPENING)])
         payload = valid_opening_payload() | {
