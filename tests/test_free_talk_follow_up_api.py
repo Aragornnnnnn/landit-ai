@@ -246,6 +246,33 @@ class FollowUpQuestionApiTests(unittest.TestCase):
                 self.assertIn(FALLBACK_WORKFLOW, logs.output[-1])
                 self.assertIn(f"reason={reason}", logs.output[-1])
 
+    def test_follow_up_call_is_bounded_by_the_auxiliary_timeout_without_retries(self):
+        fake = self._fake("not json")
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                free_talk_auxiliary_timeout_seconds=7.5,
+            )
+        )
+
+        with (
+            patch("app.core.openai_client.OpenAI", return_value=fake) as constructor,
+            patch(
+                "app.free_talk.application.memory_service.review_memory_candidates",
+                side_effect=lambda drafts, *_: drafts,
+            ),
+            self.assertLogs(FOLLOW_UP_LOGGER, level="WARNING"),
+        ):
+            make_client(app).post(
+                MEMORY_CANDIDATES_PATH,
+                json=valid_memory_candidates_payload(existingMemories=[GUITAR]),
+            )
+
+        self.assertEqual(len(fake.completions.follow_up_calls), 1)
+        timeouts = [call.kwargs.get("timeout") for call in constructor.call_args_list]
+        self.assertIn(7.5, timeouts)
+
     def test_extraction_prompt_is_unchanged_by_follow_up_inputs(self):
         plain = self._fake()
         extended = self._fake()

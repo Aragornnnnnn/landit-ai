@@ -213,6 +213,27 @@ class ExpressionReuseApiTests(unittest.TestCase):
         self.assertEqual(len(user_prompt["learnedExpressions"]), 3)
         self.assertNotIn("existingExpressions", user_prompt)
 
+    def test_reuse_call_is_bounded_by_the_auxiliary_timeout_without_retries(self):
+        fake = self._fake("not json")
+        app = create_app(
+            make_settings(
+                openrouter_api_key="test-openrouter-key",
+                openrouter_model="openrouter-test-model",
+                free_talk_auxiliary_timeout_seconds=7.5,
+            )
+        )
+
+        with (
+            patch("app.core.openai_client.OpenAI", return_value=fake) as constructor,
+            self.assertLogs(REUSE_LOGGER, level="WARNING"),
+        ):
+            make_client(app).post(RECOMMENDATIONS_PATH, json=reuse_payload())
+
+        # 형식이 깨진 응답에도 재시도하지 않는다
+        self.assertEqual(len(fake.completions.reuse_calls), 1)
+        timeouts = [call.kwargs.get("timeout") for call in constructor.call_args_list]
+        self.assertIn(7.5, timeouts)
+
     def test_recommendation_prompt_does_not_receive_learned_expressions(self):
         fake = self._fake()
 

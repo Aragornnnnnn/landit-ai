@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     )
     # 비우면 OPENROUTER_MODEL을 그대로 쓴다. 교정만 더 빠르거나 싼 모델로 분리할 때 설정한다.
     free_talk_correction_model: str | None = None
+    # 표현 재사용 판정·후속 질문 같은 잡 보조 호출의 SDK 타임아웃(재시도 0회).
+    # 보조 결과라 상한을 넘기면 빈 값으로 내려가고 이미 계산한 본 응답은 그대로 반환한다.
+    free_talk_auxiliary_timeout_seconds: float = Field(
+        default=20.0, gt=0.0, allow_inf_nan=False
+    )
     session_level_assessment_budget_seconds: float = Field(
         default=100.0, gt=0.0, allow_inf_nan=False
     )

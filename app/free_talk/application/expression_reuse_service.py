@@ -51,6 +51,8 @@ def find_used_expressions(
             response_model=_UsedExpressionsCandidate,
             schema_name="free_talk_expression_reuse",
             workflow="free_talk_expression_reuse",
+            max_attempts=1,
+            timeout_seconds=settings.free_talk_auxiliary_timeout_seconds,
         )
         candidate = _UsedExpressionsCandidate.model_validate(data)
     except AiGenerationFailedError:

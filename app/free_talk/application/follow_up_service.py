@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # 테스트 fake와 로그가 후속 질문 호출을 구분하는 마커. 프롬프트 섹션 제목과 같아야 한다.
 FOLLOW_UP_POLICY_HEADING = "Follow-up Policy:"
 FALLBACK_WORKFLOW = "free_talk_follow_up_fallback"
+# 명세서가 정한 고정 문구다. 기준 언어가 KR인 현재 서비스만 가정하며 baseLocale을 따라가지 않는다.
 DEFAULT_QUESTION = "다음엔 요즘 빠져 있는 거 얘기해줘."
 DEFAULT_INVITE = "기억해둘게."
 _CHARACTER_NAMES = {"chloe": "Chloe", "marco": "Marco", "teddy": "Teddy"}
@@ -85,6 +86,8 @@ def generate_follow_up_question(
             response_model=_FollowUpOptionsCandidate,
             schema_name="free_talk_follow_up",
             workflow="free_talk_follow_up",
+            max_attempts=1,
+            timeout_seconds=settings.free_talk_auxiliary_timeout_seconds,
         )
         drafts = _FollowUpOptionsCandidate.model_validate(data).options
     except AiGenerationFailedError:
@@ -234,7 +237,8 @@ def _follow_up_system_prompt(payload: MemoryCandidatesRequest, current_time: dat
 
 
 def _role_section(payload: MemoryCandidatesRequest) -> str:
-    name = _CHARACTER_NAMES[payload.characterId.value]
+    # 캐릭터가 늘어도 보조 호출이 후보 반환을 깨뜨리지 않도록 이름을 못 찾으면 ID를 그대로 쓴다
+    name = _CHARACTER_NAMES.get(payload.characterId.value, payload.characterId.value)
     return (
         "Role:\n"
         f"You are {name}, a friend who just finished a casual chat with the user and is "
