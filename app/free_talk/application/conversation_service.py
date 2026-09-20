@@ -25,6 +25,7 @@ from app.free_talk.application.correction_service import (
     TurnCorrectionResult,
     generate_turn_correction,
     unavailable_turn_correction,
+    unexpected_turn_correction,
 )
 from app.free_talk.application.memory_context import memory_context_with_time_status
 from app.free_talk.llm.json_completion import (
@@ -596,7 +597,7 @@ def generate_inner_thought(
     # with(=shutdown(wait=True))를 쓰면 상한을 넘긴 교정 스레드를 기다리게 되므로 대기 없이 닫는다
     executor = ThreadPoolExecutor(max_workers=1)
     try:
-        correction_future = executor.submit(generate_turn_correction, payload, settings)
+        correction_future = _submitted_turn_correction(executor, payload, settings)
         thought = _inner_thought_result(payload, settings)
         correction = _awaited_turn_correction(correction_future, deadline, payload)
     finally:
@@ -604,16 +605,33 @@ def generate_inner_thought(
     return _to_inner_thought_response(thought, correction)
 
 
+def _submitted_turn_correction(
+    executor: ThreadPoolExecutor,
+    payload: FreeTalkInnerThoughtRequest,
+    settings: Settings,
+) -> Future[TurnCorrectionResult]:
+    # 스레드를 띄우지 못해도 속마음은 나가야 한다. 실패를 future에 담아 기다리는 쪽에서 한 번에 처리한다.
+    try:
+        return executor.submit(generate_turn_correction, payload, settings)
+    except Exception as exc:  # noqa: BLE001
+        failed: Future[TurnCorrectionResult] = Future()
+        failed.set_exception(exc)
+        return failed
+
+
 def _awaited_turn_correction(
     future: Future[TurnCorrectionResult],
     deadline: float,
     payload: FreeTalkInnerThoughtRequest,
 ) -> TurnCorrectionResult:
-    # 교정은 보조 판정이라 상한을 넘기면 없는 것으로 친다. 그 외 예외는 버그이므로 전파한다.
+    # 교정은 보조 판정이라 상한을 넘기면 없는 것으로 친다. 그 외 예외는 버그지만 속마음 응답은 지키고,
+    # 버그는 로그로 드러낸다. generate_turn_correction이 스스로 막지 못한 예외에 대한 이중 방어다.
     try:
         return future.result(timeout=max(0.0, deadline - time.monotonic()))
     except FuturesTimeoutError:
         return unavailable_turn_correction(payload, "timeout")
+    except Exception as exc:  # noqa: BLE001
+        return unexpected_turn_correction(payload, exc)
 
 
 def _inner_thought_result(

@@ -1,6 +1,7 @@
 # 프리톡 사용자 턴의 어색한 문장 교정과 상대 반응 여부를 판정하는 유스케이스 모듈
 import json
 import logging
+import traceback
 from dataclasses import dataclass
 from typing import Self
 
@@ -53,6 +54,8 @@ MEMORY_LABEL_DROPPED_WORKFLOW = "free_talk_correction_memory_label_dropped"
 SPAN_DROPPED_WORKFLOW = "free_talk_correction_span_dropped"
 WATCH_PATTERN_FILTERED_WORKFLOW = "free_talk_watch_pattern_filtered"
 PATTERN_USAGE_DROPPED_WORKFLOW = "free_talk_pattern_usage_dropped"
+# 예기치 못한 예외 로그에 남기는 호출 위치 수. 발생 지점에서 가까운 쪽부터 센다.
+_STACK_FRAMES = 6
 
 
 @dataclass(frozen=True)
@@ -192,7 +195,11 @@ def generate_turn_correction(
         return unavailable_turn_correction(
             payload, "contract_validation", _invalid_field_names(exc)
         )
-    return _validated_result(candidate, payload, watch_patterns)
+    # 교정은 보조 판정이다. 후처리의 버그가 속마음 응답까지 실패시키지 않도록 막고, 버그는 로그로 드러낸다.
+    try:
+        return _validated_result(candidate, payload, watch_patterns)
+    except Exception as exc:  # noqa: BLE001
+        return unexpected_turn_correction(payload, exc)
 
 
 def _watch_patterns(payload: FreeTalkInnerThoughtRequest) -> list[str]:
@@ -230,6 +237,29 @@ def unavailable_turn_correction(
         payload.sessionId,
         payload.submittedMessageId,
         ",".join(invalid_fields),
+    )
+    return TurnCorrectionResult(reacted_to_partner=None, correction=None)
+
+
+def unexpected_turn_correction(
+    payload: FreeTalkInnerThoughtRequest,
+    error: BaseException,
+) -> TurnCorrectionResult:
+    """예기치 못한 예외를 판정 없음으로 내리되, 고칠 수 있도록 예외 타입과 발생 위치를 남긴다.
+
+    예외 메시지는 남기지 않는다. 정규식 오류나 검증 오류의 메시지에는 입력값, 곧 사용자 발화가 들어간다.
+    같은 이유로 exc_info도 쓰지 않는다(트레이스백 끝에 메시지가 붙는다).
+    """
+    frames = traceback.extract_tb(error.__traceback__)[-_STACK_FRAMES:]
+    logger.error(
+        "프리톡 턴 교정 판정 중 예기치 못한 예외가 나 판정 없음으로 내립니다. workflow=%s reason=%s "
+        "sessionId=%s messageId=%s exceptionType=%s stack=%s",
+        FALLBACK_WORKFLOW,
+        "unexpected_error",
+        payload.sessionId,
+        payload.submittedMessageId,
+        type(error).__name__,
+        ">".join(f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}" for frame in frames),
     )
     return TurnCorrectionResult(reacted_to_partner=None, correction=None)
 
