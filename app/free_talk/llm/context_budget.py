@@ -25,3 +25,37 @@ def estimate_request_tokens(system: str, user: str, response_format: dict) -> in
         {"role": "user", "content": user},
     ], "response_format": response_format}, ensure_ascii=False)
     return (len(serialized.encode("utf-8")) + 3) // 4 + 512
+
+
+def fit_context(
+    payload: ContextRequest,
+    budget: int,
+    request_size: Callable[[ContextRequest], int],
+) -> ContextRequest:
+    """기존 정책은 그대로 두고 초과 요청만 원문 경계를 따라 복사·축소한다."""
+    if payload.contextPolicyVersion is None or request_size(payload) <= budget:
+        return payload
+    history = payload.conversationHistory
+    protected = next((i for i in range(len(history) - 2, -1, -1)
+                      if history[i].role == "AI"), len(history) - 1)
+    boundaries = sorted({0, protected} | {
+        i + 1 for i in range(protected) if history[i].role == "AI"
+    })
+
+    def candidate(index: int) -> ContextRequest:
+        return payload.model_copy(update={
+            "conversationHistory": history[boundaries[index]:],
+            "sessionSummary": None,
+            "historyIncomplete": True,
+        })
+
+    if request_size(candidate(len(boundaries) - 1)) > budget:
+        raise AiContextTooLargeError("free-talk context exceeds token budget")
+    low, high = 0, len(boundaries) - 1
+    while low < high:
+        middle = (low + high) // 2
+        if request_size(candidate(middle)) <= budget:
+            high = middle
+        else:
+            low = middle + 1
+    return candidate(low)
