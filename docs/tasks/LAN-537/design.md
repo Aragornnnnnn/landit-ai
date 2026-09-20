@@ -77,6 +77,17 @@ LAN-518과 같다. 교정 판정은 속마음 응답을 실패시키지 않는�
 `reactedToPartner`, `correction`, `patternUsages`가 모두 null이다. 지켜볼 패턴이 있는 요청인데 모델 응답에 사용례 목록만 빠졌으면
 교정은 그대로 내리고 `patternUsages`만 null이다.
 
+**예기치 못한 예외도 속마음 응답을 실패시키지 않는다.** LAN-537로 교정 후처리(구절 검증, 사용례 검증, 교정과 사용례 맞춤)가 크게 늘었는데,
+기존에는 타임아웃 외의 예외를 "버그이므로 전파"해 교정 쪽 예외 하나가 속마음까지 500으로 만들었고 BE는 둘 다 FAILED로 확정했다. 이제
+`generate_turn_correction`이 `_validated_result`의 예외를, `_awaited_turn_correction`이 future에 담긴 예외(스레드를 띄우지 못한 경우
+포함)를 잡아 `reason=unexpected_error`의 판정 없음으로 내린다. 버그를 숨기지 않도록 ERROR 로그에 workflow, reason, sessionId,
+messageId, 예외 타입, 발생 위치(`파일:줄:함수`, 최근 6개)를 남긴다. **예외 메시지와 `exc_info`는 남기지 않는다**: 정규식 오류나 검증
+오류의 메시지에는 입력값, 곧 사용자 발화가 들어가고, 트레이스백 끝에도 그 메시지가 붙기 때문이다. 응답 모양은 그대로라 단독 배포가 가능하다.
+
+범위 밖: 속마음 호출이 실패(`AiGenerationFailedError`, 503)했을 때 성공한 교정을 살려 내리는 일은 하지 않았다. 응답 계약 변경
+(`innerThought` nullable)과 BE 수정이 필요하고, 두 호출이 같은 제공자로 동시에 나가 함께 실패하는 경우가 대부분일 것으로 본다. 운영
+로그에서 `workflow=free_talk_inner_thought` 생성 실패 빈도를 확인한 뒤 결정한다.
+
 ## 5. 백엔드 전달 사항
 
 1. **BE가 `watchPatterns`로 보내도 되는 패턴은 아래 9종이다.** 이 밖의 패턴은 BE가 보내기 전에 거른다. 그래도 오면 서버가 거르고
