@@ -68,6 +68,14 @@ class SpanTests(unittest.TestCase):
             "home",
         )
 
+    def test_words_that_differ_only_in_case_are_different_spans(self):
+        sentence = "They stayed late, so I bought they coffee."
+        self.assertEqual(locate_span(sentence, "they"), "they")
+        self.assertEqual(locate_span(sentence, "They"), "They")
+        # 대소문자까지 같은 자리가 없을 때만 대소문자를 무시하고, 그때 둘 이상이면 모호하다
+        self.assertEqual(span_rejection(sentence, "THEY"), "ambiguous")
+        self.assertEqual(span_rejection("I go and go.", "go"), "ambiguous")
+
     def test_blank_and_regex_metacharacters(self):
         self.assertEqual(span_rejection(SENTENCE, "  "), "blank")
         self.assertEqual(locate_span("It cost $5 (really).", "$5 (really)"), "$5 (really)")
@@ -130,6 +138,30 @@ class VerifiedUsageClaimTests(unittest.TestCase):
             UsageClaim("ARTICLE", "I took taxi.", "taxi", False),
         ]
         self.assertEqual(verified_usage_claims(claims, ["ARTICLE"], submitted), claims[1:])
+
+    def test_correct_pronoun_usage_must_show_a_third_person_pronoun(self):
+        submitted = "My sister is a nurse. She works nights and I see her often. I met he once."
+        first = "My sister is a nurse."
+        second = "She works nights and I see her often."
+        claims = [
+            UsageClaim("PRONOUN", first, "My sister", True),
+            UsageClaim("PRONOUN", second, "I", True),
+            UsageClaim("PRONOUN", second, "She", True),
+            UsageClaim("PRONOUN", second, "see her", True),
+            UsageClaim("PRONOUN", "I met he once.", "met he", False),
+        ]
+        self.assertEqual(verified_usage_claims(claims, ["PRONOUN"], submitted), claims[2:])
+
+    def test_correct_verb_form_usage_must_show_the_verb_chain(self):
+        submitted = "He owns a cafe. I want to run and I enjoy carving wood."
+        second = "I want to run and I enjoy carving wood."
+        claims = [
+            UsageClaim("VERB_FORM", "He owns a cafe.", "owns", True),
+            UsageClaim("VERB_FORM", second, "to run", True),
+            UsageClaim("VERB_FORM", second, "carving", True),
+            UsageClaim("VERB_FORM", "He owns a cafe.", "owns", False),
+        ]
+        self.assertEqual(verified_usage_claims(claims, ["VERB_FORM"], submitted), claims[1:])
 
     def test_same_place_claimed_twice_collapses_to_one(self):
         claims = [

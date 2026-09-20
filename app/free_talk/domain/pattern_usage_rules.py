@@ -27,6 +27,14 @@ WATCHABLE_PATTERNS = frozenset(
 
 
 _ARTICLES = frozenset({"a", "an", "the"})
+# 학습자가 실제로 헷갈리는 것은 3인칭의 성별과 격이다. 1·2인칭까지 세면 문장마다 I가 "맞게 쓴 대명사"가 된다.
+_THIRD_PERSON_PRONOUNS = frozenset(
+    {
+        "he", "she", "it", "they", "him", "her", "them", "his", "hers", "its", "their", "theirs",
+        "himself", "herself", "itself", "themselves",
+    }
+)  # fmt: skip
+_FORM_WORDS = {"ARTICLE": _ARTICLES, "PRONOUN": _THIRD_PERSON_PRONOUNS}
 
 
 @dataclass(frozen=True)
@@ -68,14 +76,22 @@ def _overlap(first: tuple[int, int] | None, second: tuple[int, int] | None) -> b
 
 
 def _shows_the_form(claim: "UsageClaim", span: str) -> bool:
-    """맞게 쓴 관사는 구절 안에 관사가 보여야 한다.
+    """맞게 썼다는 주장은 구절 안에 그 패턴의 형태가 보여야 한다.
 
-    모델이 my boss처럼 관사가 필요 없는 명사를 "맞게 쓴 관사"로 세는 일이 실측에서 남았고, 이런 오판은
-    카드의 "세 번 다 맞았어요"를 부풀린다. 틀린 쪽은 관사가 빠진 자리라 구절에 관사가 없는 것이 정상이다.
+    모델이 my boss를 "맞게 쓴 관사"로, My sister를 "맞게 쓴 대명사"로 세는 일이 실측에서 남았고, 이런 오판은
+    카드의 "세 번 다 맞았어요"를 부풀린다. 틀린 쪽은 단어가 빠졌거나 다른 단어가 들어간 자리라 제한하지 않는다.
     """
-    if claim.pattern != "ARTICLE" or not claim.correct:
+    if not claim.correct:
         return True
-    return any(word.lower() in _ARTICLES for word in span.split())
+    words = span.split()
+    if claim.pattern == "VERB_FORM":
+        # 동사 형태는 앞 동사에 이어지는 두 번째 동사의 모양이다. has, visit처럼 혼자 선 본동사 한 단어는
+        # 그 사슬이 보이지 않는다(실측에서 시제가 틀린 본동사를 맞은 동사 형태로 센 오판이 있었다).
+        return len(words) > 1 or words[0].lower().endswith("ing")
+    form_words = _FORM_WORDS.get(claim.pattern)
+    if form_words is None:
+        return True
+    return any(word.lower().strip(".,!?;:\"") in form_words for word in words)
 
 
 def verified_usage_claims(
