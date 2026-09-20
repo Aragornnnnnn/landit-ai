@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.core.openai_client import create_async_openai_client
 from app.core.structured_output import json_schema_response_format
+from app.free_talk.llm.context_budget import estimate_request_tokens
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
     AiResponseInvalidError,
@@ -53,7 +54,10 @@ async def generate_context_summary(
         AiGenerationFailedError: provider 호출 또는 deadline이 실패할 때.
     """
     user_prompt = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
-    if _estimate_tokens(_SUMMARY_SYSTEM_PROMPT + user_prompt) > settings.free_talk_context_input_budget_tokens:
+    response_format = json_schema_response_format(
+        SessionSummaryContent, name="free_talk_session_summary",
+    )
+    if estimate_request_tokens(_SUMMARY_SYSTEM_PROMPT, user_prompt, response_format) > settings.free_talk_context_input_budget_tokens:
         raise SummaryInputTooLargeError("summary input exceeds token budget")
 
     try:
@@ -70,10 +74,7 @@ async def generate_context_summary(
                 ],
                 temperature=0,
                 max_completion_tokens=settings.free_talk_summary_max_tokens,
-                response_format=json_schema_response_format(
-                    SessionSummaryContent,
-                    name="free_talk_session_summary",
-                ),
+                response_format=response_format,
             )
     except SummaryInputTooLargeError:
         raise
@@ -99,11 +100,6 @@ def _required_model(settings: Settings) -> str:
     if settings.openrouter_model is None or not settings.openrouter_model.strip():
         raise AiGenerationFailedError("OPENROUTER_MODEL is required.")
     return settings.openrouter_model
-
-
-def _estimate_tokens(value: str) -> int:
-    """모델별 tokenizer가 없어도 보수적으로 입력 크기를 제한한다."""
-    return max(1, (len(value.encode("utf-8")) + 3) // 4)
 
 
 def _validate_summary_references(
