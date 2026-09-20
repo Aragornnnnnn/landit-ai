@@ -126,11 +126,21 @@ def reconciled_with_correction(
     """내려가는 교정이 지켜볼 패턴이면 그 틀린 구절이 틀린 사용례로 한 번 들어가게 맞춘다.
 
     같은 자리를 맞았다고 하거나 다른 구절 범위로 또 틀렸다고 한 주장은 교정과 어긋나므로 뺀다.
+    교정이 지켜보지 않는 패턴이면 그 자리를 지켜보는 패턴으로 틀렸다고 한 주장을 뺀다.
     """
     usages = list(usages)
-    if wrong_span is None or pattern not in set(watch_patterns):
+    if wrong_span is None:
         return usages
     place = place_in(submitted, sentence, wrong_span)
+    if pattern not in set(watch_patterns):
+        # 그 자리의 실수는 다른 패턴으로 판정됐다. 지켜보는 패턴으로 또 틀렸다고 세면 주어-동사 불일치가
+        # "아직 헷갈리는 과거형"으로 나간다(실측에서 지켜보는 패턴 쪽으로 끌려가는 오판이 있었다).
+        return [
+            usage
+            for usage in usages
+            if usage.correct
+            or not _overlap(place_in(submitted, usage.sentence, usage.span), place)
+        ]
     kept = [
         usage
         for usage in usages

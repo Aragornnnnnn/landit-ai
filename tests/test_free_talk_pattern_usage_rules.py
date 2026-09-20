@@ -118,7 +118,25 @@ class ReconcileTests(unittest.TestCase):
             ],
         )
 
-    def test_unwatched_pattern_or_missing_span_changes_nothing(self):
+    def test_mistake_of_another_pattern_is_not_a_wrong_usage_of_the_watched_one(self):
+        sentence = "She cook every evening."
+        usages = [
+            UsageClaim("TENSE", sentence, "cook", False),
+            UsageClaim("TENSE", "It was tiring.", "was", True),
+        ]
+
+        reconciled = reconciled_with_correction(
+            usages,
+            ["TENSE"],
+            f"{sentence} It was tiring.",
+            pattern="SUBJECT_VERB_AGREEMENT",
+            sentence=sentence,
+            wrong_span="cook",
+        )
+
+        self.assertEqual(reconciled, usages[1:])
+
+    def test_unwatched_pattern_elsewhere_or_missing_span_changes_nothing(self):
         usages = [UsageClaim("TENSE", SENTENCE, "go", True)]
         for pattern, span in (("ARTICLE", "gym"), ("TENSE", None)):
             with self.subTest(pattern=pattern, span=span):
