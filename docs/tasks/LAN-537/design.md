@@ -25,7 +25,10 @@
   단어를 지운 교정은 `betterSpan`이 null이다.
 - 서버 검증(`correction_rules.span_rejection`): **단어 경계 기준으로 문장 안에 정확히 한 번** 나와야 한다. 대소문자·공백 차이는
   허용하고 원문 조각으로 교체한다. 화면은 구절 문자열로 위치를 다시 찾으므로 두 번 나오는 구절(`ambiguous`)은 어느 쪽을 칠할지 알 수
-  없어 버린다. `going` 안의 `go`, `don't` 안의 `don`은 일치로 보지 않는다(`not_found`).
+  없어 버린다. `going` 안의 `go`, `don't` 안의 `don`은 일치로 보지 않는다(`not_found`). iOS 키보드가 기본으로 넣는 **둥근
+  아포스트로피(`don’t`, U+2019)도 곧은 것과 똑같이 단어 글자**로 본다. 모델이 옮겨 적으며 아포스트로피 모양을 바꿔도(`don’t` ↔ `don't`)
+  같은 글자로 보고 찾으며, 돌려주는 값은 항상 원문 조각이다. 같은 규칙을 `locate_original_sentence`에도 적용했다: 모양이 다르다는
+  이유로 문장을 못 찾으면 `original_not_substring`으로 판정 전체를 잃기 때문이다.
 - 구절이 나빠도 교정은 그대로 두고 **구절만 null로** 내린다. `workflow=free_talk_correction_span_dropped reason= field=` 경고를
   남기며, 구절 원문은 로그에 쓰지 않는다.
 - 프롬프트는 기존 절을 건드리지 않고 출력 직전의 `Highlight Spans:` 절로 둔다. LAN-521에서 표기 규칙을 판단 절에 섞었을 때 기억
