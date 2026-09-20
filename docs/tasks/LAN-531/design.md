@@ -281,8 +281,16 @@ develop 통합 검증 → 운영 AI 호환 버전 → BE 추가 스키마·기�
 - 요약 실행기는 동시 2개·대기 8개로 분리했다. 포화 시 작업을 거부하며 호출자에서 실행하지 않는다. Executor 타입의 bean을 추가하지 않아 기존 `applicationTaskExecutor` 자동 구성이 유지된다. 일반 AI timeout과 요약 전용 timeout은 분리된 상태다.
 - 세션의 물리 삭제는 FK cascade로 요약을 함께 제거한다. 탈퇴·중단·완료 후에는 새 요약을 저장하지 않는다. 탈퇴 시 원문 세션을 보존하는 기존 흐름을 이번 작업에서 변경하지 않는다.
 
-검증은 합성 입력과 mock provider로 수행한다. AI 전체 unittest와 선택 필드의 OpenAPI 호환성을 확인했다. BE의 회귀 테스트·Spotless·Checkstyle 및 전체 `check`를 수행했다. 로컬 HTTP 서버에서 요약 timeout, 일반 대화 대기 시간, 400 오류 전달을 확인했다. 전용 로컬 PostgreSQL에서 V112 적용·Instant 왕복·트랜잭션 중 전진하는 DB 시각·동시 행 잠금·FK cascade를 검증했다.
+검증은 합성 입력과 mock provider로 수행한다. AI 전체 unittest와 선택 필드의 OpenAPI 호환성을 확인했다. BE의 회귀 테스트·Spotless·Checkstyle 및 전체 `check`를 수행했다. 로컬 HTTP 서버에서 요약 timeout, 일반 대화 대기 시간, 400 오류 전달을 확인했다. 전용 로컬 PostgreSQL에서 요약 migration 적용·Instant 왕복·트랜잭션 중 전진하는 DB 시각·동시 행 잠금·FK cascade를 검증했다.
 
 PostgreSQL 검증은 임시 클러스터의 `127.0.0.1:55431/postgres`, 사용자 `landit_test`, 스키마 `lan531`만 사용한다. 클러스터를 준비한 뒤 `LAN531_TEST_POSTGRES=true ./gradlew test --tests '*FreeTalkContextPostgresTests'`로 실행한다. 플래그가 없으면 해당 테스트는 스킵된다. 운영 연결 설정이나 사용자 원문을 읽지 않는다.
 
 입력 토큰 수는 현재 UTF-8 바이트 기반 추정치다. 모델 tokenizer 검증과 실제 `usage.prompt_tokens` 대조, 반복 요약의 실제 LLM 품질 및 총 비용 비교는 수행하지 않았다. 따라서 테스트 통과를 운영 품질이나 비용 절감의 입증으로 사용하지 않는다. 기능의 운영 활성화·push·PR·배포는 이번 리뷰 보완에 포함하지 않는다.
+
+## 기준 브랜치와 migration 번호 확인 (2026-09-20)
+
+- 원격 조회 기준 AI는 `origin/develop`의 `f247bfe`, BE는 `5346aae7f`에서 시작했다. 양쪽 모두 최신 develop 커밋을 포함한다.
+- BE의 열린 PR 전체(#202, #203, #204, #205)의 변경 파일을 확인했다. #202와 #203에는 migration 변경이 없다. [#204](https://github.com/Aragornnnnnn/landit-be/pull/204)가 V112를, 그 위에 쌓인 [#205](https://github.com/Aragornnnnnn/landit-be/pull/205)가 V113을 추가한다. 현재 develop의 마지막 버전은 V111이다.
+- LAN-531의 미배포 migration을 `V114__add_free_talk_context_summary.sql`로 옮기고 PostgreSQL 테스트 참조를 함께 변경했다. SQL 내용은 그대로다. 공용+PostgreSQL, 공용+H2 각각에 열린 PR의 추가 파일을 합쳐 버전 중복이 없음을 확인했다.
+- #204의 V112 → #205의 V113 → LAN-531의 V114 순으로 병합·적용한다. 병합 직전에 develop과 열린 PR 전체의 버전 점유를 다시 확인한다. 이번 확인에서는 운영 DB migration 이력을 조회하거나 변경하지 않았다.
+- V114 기준 `LAN531_TEST_POSTGRES=true ./gradlew --offline clean check --console=plain`을 통과했다. 전체 1,378개, 실패·오류 0개, 환경 조건 skip 9개이며 PostgreSQL 검증 3개가 포함된다. 최초 PostgreSQL 테스트의 연결 실패는 임시 서버를 테스트 포트(55431)로 재시작한 뒤 해소했다.
