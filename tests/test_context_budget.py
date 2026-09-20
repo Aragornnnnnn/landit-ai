@@ -47,6 +47,36 @@ class ContextBudgetTests(unittest.TestCase):
             with self.subTest(model=type(request).__name__):
                 self.assertIs(_ensure_context_budget(request, Settings(_env_file=None)), request)
 
+    def test_overflow_drops_old_complete_units_and_stale_summary(self):
+        summary = {"revision": 1, "coveredThroughSequence": 3, "content": {
+            "topic": "Old topic", "userStatements": [], "openThreads": [],
+            "interactionContext": []}}
+        for request in self.requests(conversationHistory=self.history(),
+                                     contextPolicyVersion="v1", sessionSummary=summary):
+            with self.subTest(model=type(request).__name__):
+                result = _ensure_context_budget(request, Settings(_env_file=None))
+                self.assertLess(len(result.conversationHistory), len(request.conversationHistory))
+                self.assertEqual(result.conversationHistory[-2:], request.conversationHistory[-2:])
+                self.assertEqual(result.conversationHistory[0].role, "USER")
+                self.assertTrue(result.historyIncomplete)
+                self.assertIsNone(result.sessionSummary)
+                self.assertIsNotNone(request.sessionSummary)
+                self.assertEqual(len(request.conversationHistory), 21)
+
+    def test_oversized_latest_pair_rejects_without_truncating_text(self):
+        history = self.history()[-2:]
+        history[0]["content"] = "x" * 40000
+        for request in self.requests(conversationHistory=history, contextPolicyVersion="v1"):
+            with self.subTest(model=type(request).__name__), self.assertRaises(AiContextTooLargeError):
+                _ensure_context_budget(request, Settings(_env_file=None))
+
+    def test_budget_includes_system_and_response_schema(self):
+        payload = valid_turn_payload(contextPolicyVersion="v1")
+        payload["conversationHistory"][0]["content"] = "word " * 5750
+        request = FreeTalkTurnRequest.model_validate(payload)
+        with self.assertRaises(AiContextTooLargeError):
+            _ensure_context_budget(request, Settings(_env_file=None), datetime.now(UTC))
+
     def test_short_policy_input_keeps_summary_and_original(self):
         for request in self.requests(contextPolicyVersion="v1"):
             self.assertIs(_ensure_context_budget(request, Settings(_env_file=None)), request)
