@@ -54,8 +54,9 @@ MEMORY_LABEL_DROPPED_WORKFLOW = "free_talk_correction_memory_label_dropped"
 SPAN_DROPPED_WORKFLOW = "free_talk_correction_span_dropped"
 WATCH_PATTERN_FILTERED_WORKFLOW = "free_talk_watch_pattern_filtered"
 PATTERN_USAGE_DROPPED_WORKFLOW = "free_talk_pattern_usage_dropped"
-# 예기치 못한 예외 로그에 남기는 호출 위치 수. 발생 지점에서 가까운 쪽부터 센다.
-_STACK_FRAMES = 6
+# 예기치 못한 예외 로그에 남기는 우리 코드의 호출 위치 수. 발생 지점에서 가까운 쪽부터 센다.
+_STACK_FRAMES = 5
+_OWN_CODE_MARKER = "/app/"
 
 
 @dataclass(frozen=True)
@@ -250,7 +251,11 @@ def unexpected_turn_correction(
     예외 메시지는 남기지 않는다. 정규식 오류나 검증 오류의 메시지에는 입력값, 곧 사용자 발화가 들어간다.
     같은 이유로 exc_info도 쓰지 않는다(트레이스백 끝에 메시지가 붙는다).
     """
-    frames = traceback.extract_tb(error.__traceback__)[-_STACK_FRAMES:]
+    frames = traceback.extract_tb(error.__traceback__)
+    # 라이브러리 깊숙이에서 난 예외는 마지막 위치들이 전부 라이브러리 안이다. 고칠 곳은 우리 코드이므로
+    # 우리 코드의 위치를 남기고, 실제로 난 지점을 하나 덧붙인다.
+    own = [frame for frame in frames if _OWN_CODE_MARKER in frame.filename][-_STACK_FRAMES:]
+    located = own + [frame for frame in frames[-1:] if frame not in own]
     logger.error(
         "프리톡 턴 교정 판정 중 예기치 못한 예외가 나 판정 없음으로 내립니다. workflow=%s reason=%s "
         "sessionId=%s messageId=%s exceptionType=%s stack=%s",
@@ -258,8 +263,10 @@ def unexpected_turn_correction(
         "unexpected_error",
         payload.sessionId,
         payload.submittedMessageId,
-        type(error).__name__,
-        ">".join(f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}" for frame in frames),
+        f"{type(error).__module__}.{type(error).__qualname__}",
+        ">".join(
+            f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}" for frame in located
+        ),
     )
     return TurnCorrectionResult(reacted_to_partner=None, correction=None)
 

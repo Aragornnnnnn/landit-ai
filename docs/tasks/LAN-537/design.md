@@ -81,7 +81,7 @@ LAN-518과 같다. 교정 판정은 속마음 응답을 실패시키지 않는�
 기존에는 타임아웃 외의 예외를 "버그이므로 전파"해 교정 쪽 예외 하나가 속마음까지 500으로 만들었고 BE는 둘 다 FAILED로 확정했다. 이제
 `generate_turn_correction`이 `_validated_result`의 예외를, `_awaited_turn_correction`이 future에 담긴 예외(스레드를 띄우지 못한 경우
 포함)를 잡아 `reason=unexpected_error`의 판정 없음으로 내린다. 버그를 숨기지 않도록 ERROR 로그에 workflow, reason, sessionId,
-messageId, 예외 타입, 발생 위치(`파일:줄:함수`, 최근 6개)를 남긴다. **예외 메시지와 `exc_info`는 남기지 않는다**: 정규식 오류나 검증
+messageId, 예외 타입(`re.error`처럼 모듈까지), 발생 위치(`파일:줄:함수`, 우리 코드의 최근 5개와 실제로 난 지점)를 남긴다. **예외 메시지와 `exc_info`는 남기지 않는다**: 정규식 오류나 검증
 오류의 메시지에는 입력값, 곧 사용자 발화가 들어가고, 트레이스백 끝에도 그 메시지가 붙기 때문이다. 응답 모양은 그대로라 단독 배포가 가능하다.
 
 범위 밖: 속마음 호출이 실패(`AiGenerationFailedError`, 503)했을 때 성공한 교정을 살려 내리는 일은 하지 않았다. 응답 계약 변경

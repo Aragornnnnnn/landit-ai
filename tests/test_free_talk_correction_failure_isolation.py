@@ -1,5 +1,6 @@
 # 턴 교정의 예기치 못한 예외가 속마음 응답을 실패시키지 않는지 검증하는 unittest 모듈
 import json
+import re
 import unittest
 from unittest.mock import patch
 
@@ -72,8 +73,23 @@ class CorrectionFailureIsolationTests(unittest.TestCase):
             response = self._post(payload_with_partner_turn(watchPatterns=["TENSE"]))
 
         self.assert_inner_thought_survives(response, logs)
-        self.assertIn("exceptionType=ValueError", logs.output[0])
+        self.assertIn("exceptionType=builtins.ValueError", logs.output[0])
         # 고칠 수 있도록 어디서 났는지는 남긴다
+        self.assertIn("correction_service.py:", logs.output[0])
+
+    def test_exception_deep_inside_a_library_still_points_at_our_code(self):
+        def broken_rule(*args, **kwargs):
+            # 메시지에 입력값이 들어가는 실제 라이브러리 예외
+            re.compile("(" + args[1].conversationHistory[-1].content)
+
+        with (
+            patch(f"{CORRECTION_SERVICE}._validated_result", side_effect=broken_rule),
+            self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs,
+        ):
+            response = self._post()
+
+        self.assert_inner_thought_survives(response, logs)
+        self.assertIn("exceptionType=re.error", logs.output[0])
         self.assertIn("correction_service.py:", logs.output[0])
 
     def test_exception_escaping_the_correction_call_does_not_fail_the_inner_thought(self):
@@ -84,7 +100,7 @@ class CorrectionFailureIsolationTests(unittest.TestCase):
             response = self._post()
 
         self.assert_inner_thought_survives(response, logs)
-        self.assertIn("exceptionType=ValueError", logs.output[0])
+        self.assertIn("exceptionType=builtins.ValueError", logs.output[0])
 
     def test_failing_to_start_the_correction_thread_does_not_fail_the_inner_thought(self):
         with (
@@ -94,7 +110,7 @@ class CorrectionFailureIsolationTests(unittest.TestCase):
             response = self._post()
 
         self.assert_inner_thought_survives(response, logs)
-        self.assertIn("exceptionType=RuntimeError", logs.output[0])
+        self.assertIn("exceptionType=builtins.RuntimeError", logs.output[0])
 
 
 if __name__ == "__main__":
