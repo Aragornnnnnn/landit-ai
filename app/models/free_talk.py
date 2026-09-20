@@ -568,16 +568,13 @@ class FreeTalkOpeningResponse(BaseModel):
         return _validate_not_blank(value)
 
 
-class FreeTalkTurnRequest(FreeTalkContext):
+class FreeTalkTurnRequest(FreeTalkContext, FreeTalkContextWindow):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     responseMode: FreeTalkResponseMode
     isFirstUserTurn: bool
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
     memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
-    contextPolicyVersion: Literal["v1"] | None = None
-    sessionSummary: SessionSummary | None = None
-    historyIncomplete: bool = False
 
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
@@ -622,13 +619,10 @@ class FreeTalkTurnResponse(BaseModel):
         return self
 
 
-class FreeTalkInnerThoughtRequest(FreeTalkContext):
+class FreeTalkInnerThoughtRequest(FreeTalkContext, FreeTalkContextWindow):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
-    contextPolicyVersion: Literal["v1"] | None = None
-    sessionSummary: SessionSummary | None = None
-    historyIncomplete: bool = False
 
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
@@ -654,15 +648,12 @@ class FreeTalkInnerThoughtResponse(BaseModel):
         return _validate_not_blank(value)
 
 
-class FreeTalkClosingRequest(FreeTalkContext):
+class FreeTalkClosingRequest(FreeTalkContext, FreeTalkContextWindow):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     closingReason: FreeTalkClosingReason
     titleGenerationRequired: bool = False
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
-    contextPolicyVersion: Literal["v1"] | None = None
-    sessionSummary: SessionSummary | None = None
-    historyIncomplete: bool = False
 
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
