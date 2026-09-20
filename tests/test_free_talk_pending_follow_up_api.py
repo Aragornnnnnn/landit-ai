@@ -377,6 +377,23 @@ class PendingFollowUpApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["data"]["followUpAsked"])
 
+    def test_repair_calls_are_not_retried_on_malformed_json(self):
+        # 복구는 8초 상한의 보조 시도다. 형식이 깨진 응답에 재시도하면 사용자가 그만큼 더 기다린다.
+        cases = {
+            OPENING_PATH: (valid_opening_payload(), opening_completion(followUpAsked=False)),
+            TURN_PATH: (valid_turn_payload(), NOT_ASKED_TURN),
+        }
+        for path, (payload, completion) in cases.items():
+            with self.subTest(path=path):
+                fake = FakeOpenAI(contents=[json.dumps(completion), "not json"])
+
+                response = self._post(
+                    path, payload | {"pendingFollowUp": pending_follow_up()}, fake
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(fake.completions.calls), 2)
+
     def test_follow_up_repair_calls_use_their_own_timeout(self):
         cases = {
             OPENING_PATH: (valid_opening_payload(), opening_completion(followUpAsked=False)),

@@ -296,6 +296,8 @@ def _request_opening_completion(
         ),
         schema_name="free_talk_opening_follow_up_repair" if is_repair else "free_talk_opening",
         workflow="free_talk_opening_follow_up_repair" if is_repair else "free_talk_opening",
+        # 복구는 사용자가 기다리는 경로의 보조 시도라 첫 턴 복구와 같이 재시도하지 않는다
+        max_attempts=1 if is_repair else 2,
         retry_schema_violations=False,
         timeout_seconds=(
             settings.free_talk_follow_up_repair_timeout_seconds if is_repair else None
