@@ -1,7 +1,11 @@
 # 강조 구절과 실수 패턴 사용례의 원문 대조·교정 조정 규칙을 검증하는 unittest 모듈
 import unittest
 
-from app.free_talk.domain.correction_rules import locate_span, span_rejection
+from app.free_talk.domain.correction_rules import (
+    locate_span,
+    span_rejection,
+    word_after_insertion,
+)
 from app.free_talk.domain.pattern_usage_rules import (
     UsageClaim,
     effective_watch_patterns,
@@ -36,6 +40,25 @@ class SpanTests(unittest.TestCase):
     def test_blank_and_regex_metacharacters(self):
         self.assertEqual(span_rejection(SENTENCE, "  "), "blank")
         self.assertEqual(locate_span("It cost $5 (really).", "$5 (really)"), "$5 (really)")
+
+
+class WordAfterInsertionTests(unittest.TestCase):
+    def test_single_insertion_points_at_the_next_word(self):
+        self.assertEqual(
+            word_after_insertion("I bought new laptop.", "I bought a new laptop."), "new"
+        )
+        self.assertEqual(word_after_insertion("Went home early.", "I went home early."), "Went")
+
+    def test_anything_but_one_clean_insertion_gives_nothing(self):
+        cases = {
+            "replacement": ("I go home.", "I went home."),
+            "two_insertions": ("I bought laptop at store.", "I bought a laptop at the store."),
+            "insertion_at_the_end": ("I listen to", "I listen to music"),
+            "next_word_not_unique": ("I saw dog and dog ran.", "I saw a dog and dog ran."),
+        }
+        for name, (original, better) in cases.items():
+            with self.subTest(name):
+                self.assertIsNone(word_after_insertion(original, better))
 
 
 class WatchPatternTests(unittest.TestCase):
@@ -136,9 +159,21 @@ class ReconcileTests(unittest.TestCase):
 
         self.assertEqual(reconciled, usages[1:])
 
+    def test_watched_correction_without_a_place_needs_an_agreeing_usage(self):
+        agreeing = [UsageClaim("TENSE", SENTENCE, "go", False)]
+        disagreeing = [UsageClaim("TENSE", SENTENCE, "go", True)]
+        kwargs = dict(pattern="TENSE", sentence=SENTENCE, wrong_span=None)
+
+        self.assertEqual(
+            reconciled_with_correction(agreeing, ["TENSE"], SUBMITTED, **kwargs), agreeing
+        )
+        # 교정은 틀렸다는데 목록은 맞았다거나 아무 말이 없으면 목록을 믿을 수 없다
+        self.assertIsNone(reconciled_with_correction(disagreeing, ["TENSE"], SUBMITTED, **kwargs))
+        self.assertIsNone(reconciled_with_correction([], ["TENSE"], SUBMITTED, **kwargs))
+
     def test_unwatched_pattern_elsewhere_or_missing_span_changes_nothing(self):
         usages = [UsageClaim("TENSE", SENTENCE, "go", True)]
-        for pattern, span in (("ARTICLE", "gym"), ("TENSE", None)):
+        for pattern, span in (("ARTICLE", "gym"), ("ARTICLE", None)):
             with self.subTest(pattern=pattern, span=span):
                 self.assertEqual(
                     reconciled_with_correction(

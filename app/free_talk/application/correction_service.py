@@ -21,6 +21,7 @@ from app.free_talk.domain.correction_rules import (
     locate_span,
     memory_label_rejection,
     span_rejection,
+    word_after_insertion,
 )
 from app.free_talk.domain.pattern_usage_rules import (
     UsageClaim,
@@ -276,7 +277,8 @@ def _validated_result(
             submitted,
             pattern=correction.mistakePattern,
             sentence=original,
-            wrong_span=wrong_span,
+            # 단어를 채워 넣은 교정은 틀린 구절이 없다. 사용례에서는 빈자리 바로 뒤 단어로 그 자리를 가리킨다.
+            wrong_span=wrong_span or word_after_insertion(original, better),
         )
     return _result(reacted, correction, usages)
 
@@ -328,7 +330,8 @@ def _verified_usages(
 ) -> list[UsageClaim] | None:
     """지켜볼 패턴이 없으면 판정하지 않은 것이므로 None이다. 원문 검증에서 빠진 항목은 항목만 버린다."""
     sentences: list[_WatchedSentenceDraft] | None = getattr(candidate, "watchedSentences", None)
-    if not watch_patterns or sentences is None:
+    # 문장 항목이 하나도 없으면 모델이 문장을 훑지 않은 것이라 "없음"이 아니라 "판정 안 됨"이다
+    if not watch_patterns or not sentences:
         return None
     drafts = [
         UsageClaim(usage.pattern, sentence.sentence, usage.span, usage.correct)

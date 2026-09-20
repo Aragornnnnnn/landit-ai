@@ -122,15 +122,26 @@ def reconciled_with_correction(
     pattern: str,
     sentence: str,
     wrong_span: str | None,
-) -> list[UsageClaim]:
+) -> list[UsageClaim] | None:
     """내려가는 교정이 지켜볼 패턴이면 그 틀린 구절이 틀린 사용례로 한 번 들어가게 맞춘다.
 
     같은 자리를 맞았다고 하거나 다른 구절 범위로 또 틀렸다고 한 주장은 교정과 어긋나므로 뺀다.
     교정이 지켜보지 않는 패턴이면 그 자리를 지켜보는 패턴으로 틀렸다고 한 주장을 뺀다.
+    교정의 자리를 알 수 없으면(wrong_span None) 그 문장에 같은 패턴의 틀린 사용례가 있을 때만 그대로
+    두고, 없으면 교정과 어긋난 목록일 수 있으므로 "판정 안 됨"(None)으로 돌려준다.
     """
     usages = list(usages)
     if wrong_span is None:
-        return usages
+        if pattern not in set(watch_patterns):
+            return usages
+        sentence_place = place_in(submitted, sentence, None)
+        agrees = any(
+            usage.pattern == pattern
+            and not usage.correct
+            and _overlap(place_in(submitted, usage.sentence, usage.span), sentence_place)
+            for usage in usages
+        )
+        return usages if agrees else None
     place = place_in(submitted, sentence, wrong_span)
     if pattern not in set(watch_patterns):
         # 그 자리의 실수는 다른 패턴으로 판정됐다. 지켜보는 패턴으로 또 틀렸다고 세면 주어-동사 불일치가

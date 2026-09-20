@@ -1,5 +1,6 @@
 # 프리톡 턴 교정 결과를 원문과 대조하는 순수 규칙 모듈
 import re
+from difflib import SequenceMatcher
 
 
 def locate_original_sentence(content: str, candidate: str) -> str | None:
@@ -62,6 +63,32 @@ def span_range_in(sentence: str, candidate: str) -> tuple[int, int] | None:
     if len(matches) != 1:
         return None
     return matches[0].start(), matches[0].end()
+
+
+_EDGE_PUNCTUATION = ".,!?;:\"()"
+
+
+def word_after_insertion(original: str, better: str) -> str | None:
+    """단어를 채워 넣기만 한 교정에서 빈자리 바로 뒤 단어를 원문 조각으로 돌려준다.
+
+    바뀐 곳이 삽입 하나뿐이고 그 뒤 단어가 문장에서 유일할 때만 돌려준다. 빠진 단어에는 짚을 글자가
+    없으므로, 그 자리를 가리킬 때 이 단어를 쓴다.
+    """
+    original_words = [word.strip(_EDGE_PUNCTUATION) for word in original.split()]
+    better_words = [word.strip(_EDGE_PUNCTUATION) for word in better.split()]
+    changes = [
+        opcode
+        for opcode in SequenceMatcher(
+            None,
+            [word.lower() for word in original_words],
+            [word.lower() for word in better_words],
+            autojunk=False,
+        ).get_opcodes()
+        if opcode[0] != "equal"
+    ]
+    if len(changes) != 1 or changes[0][0] != "insert" or changes[0][1] >= len(original_words):
+        return None
+    return locate_span(original, original_words[changes[0][1]])
 
 
 def is_effective_correction(original: str, better: str) -> bool:

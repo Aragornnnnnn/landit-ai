@@ -30,6 +30,10 @@ GYM_SENTENCE = "I go to gym yesterday with my friend."
 TIRING_SENTENCE = "It was tiring."
 
 
+# 모델이 문장을 훑었지만 짚을 자리가 없었던 응답
+NOTHING_WATCHED = [{"sentence": TIRING_SENTENCE, "usages": []}]
+
+
 def usage(pattern, sentence, span, correct):
     return {"pattern": pattern, "sentence": sentence, "span": span, "correct": correct}
 
@@ -157,6 +161,54 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         self.assertEqual(watched["patternUsages"], [])
         self.assertIsNone(plain["patternUsages"])
 
+    def test_reply_that_walked_no_sentence_is_not_judged(self):
+        # 문장 항목이 하나도 없으면 "등장하지 않음"이 아니라 "판정 안 됨"이다
+        data = self._data(
+            payload_with_partner_turn(watchPatterns=["TENSE"]),
+            {
+                "reactedToPartner": True,
+                "hasCorrection": False,
+                "correction": None,
+                "watchedSentences": [],
+            },
+        )
+
+        self.assertIsNone(data["patternUsages"])
+
+    def test_watch_patterns_never_reach_the_inner_thought_prompt(self):
+        plain = self._fake(correction_completion())
+        watched = self._fake(correction_completion(watchedSentences=NOTHING_WATCHED))
+
+        self._post(payload_with_partner_turn(), plain)
+        self._post(payload_with_partner_turn(watchPatterns=["TENSE"]), watched)
+
+        # 속마음 판정은 지켜볼 패턴과 무관하다. 필드가 기본값으로 끼어드는 것도 막는다.
+        self.assertEqual(
+            plain.completions.calls[0]["messages"], watched.completions.calls[0]["messages"]
+        )
+        self.assertNotIn("watchPatterns", json.dumps(plain.completions.calls[0]))
+
+    def test_added_word_correction_is_counted_at_the_word_after_the_gap(self):
+        payload = payload_with_partner_turn(watchPatterns=["ARTICLE"])
+        payload["conversationHistory"][-1]["content"] = "Yeah! I bought new laptop. It was cheap."
+        sentence = "I bought new laptop."
+        completion = correction_completion(
+            correction={
+                "originalSentence": sentence,
+                "betterSentence": "I bought a new laptop.",
+                "reason": "하나를 샀으니 a를 붙여요. 그래야 자연스러워요.",
+                "mistakePattern": "ARTICLE",
+                "wrongSpan": None,
+                "betterSpan": "a",
+            },
+            watchedSentences=by_sentence(usage("ARTICLE", sentence, "new laptop", True)),
+        )
+
+        data = self._data(payload, completion)
+
+        self.assertIsNone(data["correction"]["wrongSpan"])
+        self.assertEqual(data["patternUsages"], [usage("ARTICLE", sentence, "new", False)])
+
     def test_failed_judgment_returns_null_usages(self):
         with self.assertLogs(CORRECTION_LOGGER, level="WARNING"):
             data = self._data(
@@ -217,7 +269,7 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         self.assertNotIn("Watched Patterns:", json.dumps(calls[0]))
 
     def test_uncountable_watch_patterns_are_filtered_with_a_trace(self):
-        completion = correction_completion(watchedSentences=[])
+        completion = correction_completion(watchedSentences=NOTHING_WATCHED)
         fake = self._fake(completion)
 
         with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
@@ -230,7 +282,7 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
 
     def test_watch_section_is_appended_after_the_unchanged_prompt(self):
         plain = self._fake(correction_completion())
-        watched = self._fake(correction_completion(watchedSentences=[]))
+        watched = self._fake(correction_completion(watchedSentences=NOTHING_WATCHED))
 
         self._post(payload_with_partner_turn(), plain)
         self._post(payload_with_partner_turn(watchPatterns=["TENSE"]), watched)
@@ -247,7 +299,9 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         completion = gym_correction(
             usedMemoryId=9012, memoryLabel="헬스장", wrongSpan="a gym", betterSpan="the gym"
         )
-        completion["watchedSentences"] = []
+        completion["watchedSentences"] = [
+            {"sentence": "And I am doing stairs at a gym.", "usages": []}
+        ]
         fake = self._fake(completion)
 
         response = self._post(
