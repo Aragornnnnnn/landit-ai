@@ -21,6 +21,49 @@ def locate_original_sentence(content: str, candidate: str) -> str | None:
     return content[match.start() : match.end()]
 
 
+def _span_matches(sentence: str, candidate: str) -> list[re.Match[str]]:
+    words = candidate.split()
+    if not words:
+        return []
+    # don't 안의 don처럼 단어 일부만 걸리지 않도록 아포스트로피도 단어 글자로 본다
+    pattern = re.compile(
+        r"(?<![\w'])" + r"\s+".join(re.escape(word) for word in words) + r"(?![\w'])",
+        re.IGNORECASE,
+    )
+    return list(pattern.finditer(sentence))
+
+
+def span_rejection(sentence: str, candidate: str) -> str | None:
+    """강조 구절을 쓸 수 없는 이유를 돌려준다. 쓸 수 있으면 None이다.
+
+    화면은 구절 문자열로 위치를 다시 찾으므로, 단어 경계 기준으로 문장 안에 정확히 한 번 나와야 한다.
+    """
+    if not candidate.strip():
+        return "blank"
+    matches = _span_matches(sentence, candidate)
+    if not matches:
+        return "not_found"
+    if len(matches) > 1:
+        return "ambiguous"
+    return None
+
+
+def locate_span(sentence: str, candidate: str) -> str | None:
+    """강조 구절을 문장 원문 그대로의 조각으로 돌려준다. 쓸 수 없으면 None이다."""
+    span_range = span_range_in(sentence, candidate)
+    if span_range is None:
+        return None
+    return sentence[span_range[0] : span_range[1]]
+
+
+def span_range_in(sentence: str, candidate: str) -> tuple[int, int] | None:
+    """강조 구절이 문장 안에서 차지하는 [시작, 끝) 위치. 정확히 한 번 나올 때만 돌려준다."""
+    matches = _span_matches(sentence, candidate)
+    if len(matches) != 1:
+        return None
+    return matches[0].start(), matches[0].end()
+
+
 def is_effective_correction(original: str, better: str) -> bool:
     """원문과 교정문이 실제로 다를 때만 교정으로 인정한다."""
     return original.strip() != better.strip()
