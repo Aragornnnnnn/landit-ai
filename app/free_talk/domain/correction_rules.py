@@ -37,13 +37,17 @@ def _span_matches(sentence: str, candidate: str) -> list[re.Match[str]]:
         return []
     # don't 안의 don, well-known 안의 well처럼 단어 일부만 걸리지 않도록 아포스트로피(곧은 것과 둥근 것)와
     # 하이픈도 단어 글자로 본다
-    pattern = re.compile(
+    source = (
         rf"(?<![\w{_APOSTROPHES}-])"
         + r"\s+".join(_word_pattern(word) for word in words)
-        + rf"(?![\w{_APOSTROPHES}-])",
-        re.IGNORECASE,
+        + rf"(?![\w{_APOSTROPHES}-])"
     )
-    return list(pattern.finditer(sentence))
+    # 화면은 구절 문자열로 위치를 다시 찾는다. They와 they처럼 대소문자가 다른 단어는 서로 다른 구절이므로,
+    # 대소문자까지 같은 자리가 하나면 그 자리로 본다. 없을 때만 대소문자를 무시한다(모델이 바꿔 적은 경우).
+    exact = list(re.finditer(source, sentence))
+    if exact:
+        return exact
+    return list(re.finditer(source, sentence, re.IGNORECASE))
 
 
 def span_rejection(sentence: str, candidate: str) -> str | None:
