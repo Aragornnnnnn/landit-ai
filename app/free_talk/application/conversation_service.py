@@ -742,6 +742,23 @@ def _ensure_context_budget(
         raise AiContextTooLargeError("free-talk context exceeds token budget")
 
 
+def _context_budget_contracts(payload, now: datetime):
+    """후속 repair도 동일한 원문 윈도우 안에서 예산을 지키도록 검사한다."""
+    if isinstance(payload, FreeTalkClosingRequest):
+        return [
+            (_closing_system_prompt(payload.characterId, payload.titleGenerationRequired),
+             _ClosingStructuredOutput, "free_talk_closing"),
+            (_title_repair_system_prompt(), _TitleCandidate, "free_talk_title_repair"),
+        ]
+    if isinstance(payload, FreeTalkInnerThoughtRequest):
+        return [(_inner_thought_repair_system_prompt(payload.characterId),
+                 InnerThoughtCandidate, "free_talk_inner_thought_repair")]
+    system = _turn_system_prompt(payload.responseMode, payload.characterId, payload.timezone, now)
+    if payload.responseMode == FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED:
+        system = _continue_turn_repair_system_prompt(payload.characterId, payload.timezone, now)
+    return [(system, _TurnStructuredOutput, "free_talk_turn_repair")]
+
+
 def _validated_used_memory_ids(
     used_memory_ids: list[int],
     memory_context: list[MemoryContext],
