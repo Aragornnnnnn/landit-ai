@@ -22,7 +22,8 @@
 - 서버 검증(`domain/expression_reuse_rules.py`)은 항목 단위로 버린다: 목록 밖 ID, USER 메시지가 아닌 ID,
   원문에 없는 `matchedText`. 포함 검사는 LAN-518의 `locate_original_sentence`를 재사용하며(대소문자·공백 무시)
   `matchedText`를 원문 조각으로 교체한다. 같은 표현·같은 메시지는 한 건.
-- 재사용 판정과 후속 질문 호출은 재시도 없이 `free_talk_auxiliary_timeout_seconds`(기본 20초) 안에서만 돈다. 이미 계산한
+- 재사용 판정과 후속 질문 호출은 재시도 없이 `free_talk_auxiliary_timeout_seconds`(기본 10초) 안에서만 돈다. 본 처리 뒤에 도는 호출이라 백엔드의
+  `LANDIT_AI_REQUEST_TIMEOUT`(기본 60초) 예산을 남기려고 짧게 잡았다. holdout에서 이 호출들은 평균 1.4초 안팎이었다. 이미 계산한
   추천·후보 응답을 보조 호출이 오래 붙잡지 않게 하기 위함이다.
 - 완료 기준 측정: 검증에서 버린 수를 `workflow=free_talk_expression_reuse_dropped dropped= total=`로 남긴다.
 
@@ -56,8 +57,8 @@
 | --- | --- | --- |
 | `PASSED` | 가장 늦은 날짜가 관찰일보다 뒤이고 오늘보다 앞 | 지나간 예정 일정. 게이팅 대상이며 PAST_EVENT 허용 |
 | `UPCOMING` | 가장 늦은 날짜가 오늘 이후 | PAST_EVENT 거부 |
-| `NOT_SCHEDULED` | 가장 늦은 날짜가 관찰일 이전 ("9월 7일에 영화를 봤다") | 말할 때 이미 끝난 일이라 PAST_EVENT 거부 |
-| `UNKNOWN` | 날짜를 못 읽었거나 관찰일을 모름 | 모델이 PAST_EVENT를 붙이면 받아들인다. 정렬은 서버가 한다 |
+| `NOT_SCHEDULED` | 가장 늦은 날짜가 관찰일보다 앞 ("9월 7일에 영화를 봤다") | 말할 때 이미 끝난 일이라 PAST_EVENT 거부 |
+| `UNKNOWN` | 날짜를 못 읽었거나, 관찰일을 모르거나, 관찰일과 같은 날짜 (그날 끝난 일인지 저녁에 있을 일인지 날짜만으로 알 수 없다) | 모델이 PAST_EVENT를 붙이면 받아들인다. 정렬은 서버가 한다 |
 
 `validTo`가 있으면 항상 `validTo`가 우선한다. 관찰일은 `observedAt`, 없으면 `validFrom`이며 요청 시간대 기준 날짜로 비교한다.
 영어 등 다른 표기(`September 23, 2026`)는 `UNKNOWN`으로 떨어진다. `content`가 기준 언어(KR)로 저장되는 현재는 해당이 없다.
