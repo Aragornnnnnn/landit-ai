@@ -25,6 +25,12 @@ class LocateOriginalSentenceTests(unittest.TestCase):
             "I go to  gym yesterday with my friend.",
         )
 
+    def test_apostrophe_shape_does_not_matter_and_the_original_slice_is_returned(self):
+        content = "Yeah. I don’t like it. It’s too sweet."
+        self.assertEqual(
+            locate_original_sentence(content, "I don't like it."), "I don’t like it."
+        )
+
     def test_missing_sentence_returns_none(self):
         content = "I went to the gym yesterday."
         self.assertIsNone(locate_original_sentence(content, "I go to gym yesterday."))

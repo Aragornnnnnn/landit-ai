@@ -3,6 +3,15 @@ import re
 from difflib import SequenceMatcher
 
 
+# iOS 키보드는 기본으로 둥근 아포스트로피(’)를 넣고, 모델은 옮겨 적으며 곧은 것(')으로 바꾸기도 한다.
+_APOSTROPHES = "'’"
+
+
+def _word_pattern(word: str) -> str:
+    """단어 하나를 정규식으로 바꾼다. 곧은 아포스트로피와 둥근 아포스트로피는 같은 글자로 본다."""
+    return re.escape(word).replace("’", "'").replace("'", f"[{_APOSTROPHES}]")
+
+
 def locate_original_sentence(content: str, candidate: str) -> str | None:
     """모델이 고른 문장을 제출 원문 안에서 찾아 원문 그대로의 조각을 돌려준다.
 
@@ -15,7 +24,7 @@ def locate_original_sentence(content: str, candidate: str) -> str | None:
     if stripped in content:
         return stripped
     words = stripped.split()
-    pattern = re.compile(r"\s+".join(re.escape(word) for word in words), re.IGNORECASE)
+    pattern = re.compile(r"\s+".join(_word_pattern(word) for word in words), re.IGNORECASE)
     match = pattern.search(content)
     if match is None:
         return None
@@ -26,9 +35,12 @@ def _span_matches(sentence: str, candidate: str) -> list[re.Match[str]]:
     words = candidate.split()
     if not words:
         return []
-    # don't 안의 don, well-known 안의 well처럼 단어 일부만 걸리지 않도록 아포스트로피와 하이픈도 단어 글자로 본다
+    # don't 안의 don, well-known 안의 well처럼 단어 일부만 걸리지 않도록 아포스트로피(곧은 것과 둥근 것)와
+    # 하이픈도 단어 글자로 본다
     pattern = re.compile(
-        r"(?<![\w'-])" + r"\s+".join(re.escape(word) for word in words) + r"(?![\w'-])",
+        rf"(?<![\w{_APOSTROPHES}-])"
+        + r"\s+".join(_word_pattern(word) for word in words)
+        + rf"(?![\w{_APOSTROPHES}-])",
         re.IGNORECASE,
     )
     return list(pattern.finditer(sentence))
@@ -65,7 +77,8 @@ def span_range_in(sentence: str, candidate: str) -> tuple[int, int] | None:
     return matches[0].start(), matches[0].end()
 
 
-_EDGE_PUNCTUATION = ".,!?;:\"()"
+# 여는 둥근 따옴표와 큰따옴표는 단어 글자가 아니다. 닫는 작은따옴표(’)는 아포스트로피와 같은 글자라 떼지 않는다.
+_EDGE_PUNCTUATION = ".,!?;:\"()“”‘"
 
 
 def word_after_insertion(original: str, better: str) -> str | None:

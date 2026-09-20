@@ -37,6 +37,37 @@ class SpanTests(unittest.TestCase):
         self.assertEqual(span_rejection("She is a well-known chef.", "well"), "not_found")
         self.assertIsNone(span_rejection("She is a well-known chef.", "well-known"))
 
+    def test_part_of_a_curly_apostrophe_contraction_is_not_a_span(self):
+        # iOS 키보드는 기본으로 둥근 아포스트로피(’)를 넣는다
+        cases = (
+            ("I don’t like it.", "don"),
+            ("It’s my friend’s car.", "It"),
+            ("It’s my friend’s car.", "friend"),
+            ("I don't like it.", "don"),
+        )
+        for sentence, part in cases:
+            with self.subTest(sentence=sentence, part=part):
+                self.assertEqual(span_rejection(sentence, part), "not_found")
+
+    def test_whole_contraction_is_a_span_with_either_apostrophe(self):
+        # 모델이 옮겨 적으며 아포스트로피 모양을 바꿔도 원문 조각 그대로 돌려준다
+        self.assertEqual(locate_span("I don’t like it.", "don’t"), "don’t")
+        self.assertEqual(locate_span("I don’t like it.", "don't"), "don’t")
+        self.assertEqual(locate_span("I don't like it.", "don’t"), "don't")
+
+    def test_mixed_apostrophes_in_one_sentence_behave_the_same(self):
+        sentence = "I don’t know why it isn't working."
+        self.assertEqual(locate_span(sentence, "isn’t"), "isn't")
+        self.assertEqual(locate_span(sentence, "don't know"), "don’t know")
+        self.assertEqual(span_rejection(sentence, "isn"), "not_found")
+        self.assertEqual(span_rejection("I don’t and you don't.", "don't"), "ambiguous")
+
+    def test_insertion_next_to_curly_quotes_points_at_the_bare_word(self):
+        self.assertEqual(
+            word_after_insertion("She said “go home” now.", "She said “go back home” now."),
+            "home",
+        )
+
     def test_blank_and_regex_metacharacters(self):
         self.assertEqual(span_rejection(SENTENCE, "  "), "blank")
         self.assertEqual(locate_span("It cost $5 (really).", "$5 (really)"), "$5 (really)")
