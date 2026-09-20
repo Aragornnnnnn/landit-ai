@@ -8,6 +8,8 @@ class ErrorCode(str, Enum):
     MESSAGE_FEEDBACK_NOT_READY = "MESSAGE_FEEDBACK_NOT_READY"
     AI_RESPONSE_INVALID = "AI_RESPONSE_INVALID"
     AI_GENERATION_FAILED = "AI_GENERATION_FAILED"
+    FREE_TALK_CONTEXT_TOO_LARGE = "FREE_TALK_CONTEXT_TOO_LARGE"
+    FREE_TALK_SUMMARY_INPUT_TOO_LARGE = "FREE_TALK_SUMMARY_INPUT_TOO_LARGE"
     INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
 
     @property
@@ -18,6 +20,8 @@ class ErrorCode(str, Enum):
             ErrorCode.MESSAGE_FEEDBACK_NOT_READY: "메시지별 피드백이 아직 준비되지 않았습니다.",
             ErrorCode.AI_RESPONSE_INVALID: "AI 응답 형식이 올바르지 않습니다.",
             ErrorCode.AI_GENERATION_FAILED: "AI 응답 생성에 실패했습니다.",
+            ErrorCode.FREE_TALK_CONTEXT_TOO_LARGE: "대화가 너무 길어 처리할 수 없습니다.",
+            ErrorCode.FREE_TALK_SUMMARY_INPUT_TOO_LARGE: "요약할 대화가 너무 깁니다.",
             ErrorCode.INTERNAL_SERVER_ERROR: "서버 내부 오류가 발생했습니다.",
         }
         return messages[self]

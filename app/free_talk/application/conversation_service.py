@@ -42,6 +42,10 @@ from app.models.free_talk import (
 
 logger = logging.getLogger(__name__)
 
+
+class AiContextTooLargeError(Exception):
+    """프리톡 생성 입력이 설정된 모델 문맥 예산을 초과했을 때 발생한다."""
+
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
 _MEMORY_TOKEN_PATTERN = re.compile(r"[0-9A-Za-z가-힣]+")
@@ -231,7 +235,9 @@ def generate_turn(
         AiResponseInvalidError: AI 응답 또는 사용 기억 ID가 계약을 위반할 때.
         AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
     """
-    data = _request_turn_completion(payload, settings)
+    current_time = datetime.now(UTC)
+    _ensure_context_budget(payload, settings, current_time=current_time)
+    data = _request_turn_completion(payload, settings, current_time)
     try:
         candidate = _validated_turn_candidate(data, payload)
         exit_detected = _is_exit_detected(candidate, payload)
@@ -244,9 +250,10 @@ def generate_turn(
 def _request_turn_completion(
     payload: FreeTalkTurnRequest,
     settings: Settings,
+    current_time: datetime | None = None,
 ) -> dict[str, object]:
     """CONTINUE 응답에 메시지가 없으면 같은 요청을 복구 계약으로 한 번 재호출한다."""
-    current_time = datetime.now(UTC)
+    current_time = current_time or datetime.now(UTC)
     user_prompt = _memory_user_prompt(payload, current_time)
     data = request_json_completion(
         settings=settings,
@@ -341,6 +348,7 @@ def generate_closing(
     payload: FreeTalkClosingRequest,
     settings: Settings,
 ) -> FreeTalkClosingResponse:
+    _ensure_context_budget(payload, settings)
     data = request_json_completion(
         settings=settings,
         system_prompt=_closing_system_prompt(
@@ -393,6 +401,7 @@ def generate_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
+    _ensure_context_budget(payload, settings)
     try:
         data = request_json_completion(
             settings=settings,
@@ -559,6 +568,7 @@ def _turn_system_prompt(
         "follow-up question. Do not repeat the same reaction or empathy in different words. "
         "Make translatedMessage a concise equivalent without adding details. "
         + _memory_system_policy(timezone_name, current_time)
+        + _context_window_policy()
         + "Return inferredTitle as null."
     )
 
@@ -604,15 +614,18 @@ def _closing_system_prompt(
         "Briefly acknowledge the conversation without summarizing it or repeating the same "
         "sentiment. Make translatedMessage a concise equivalent without adding details. "
         "Return aiMessage, translatedMessage, and inferredTitle. "
+        + _context_window_policy()
         + title_instruction
     )
 
 
 def _title_repair_system_prompt() -> str:
     return (
-        "Return only JSON with inferredTitle. Infer a concise title from the full conversation. "
+        "Return only JSON with inferredTitle. Infer a concise title from the supplied conversation "
+        "and session summary. "
         "The title must be 1 to 30 characters, contain at least one Korean or English letter, "
         "and use only Korean letters, English letters, digits, spaces, middle dots, or hyphens."
+        + _context_window_policy()
     )
 
 
@@ -657,6 +670,16 @@ def _memory_system_policy(timezone_name: str, current_time: datetime) -> str:
     )
 
 
+def _context_window_policy() -> str:
+    return (
+        " The payload may contain a sessionSummary and a bounded conversationHistory. "
+        "Treat current original messages as authoritative over the summary. "
+        "If historyIncomplete is true, do not invent missing prior details or assume that "
+        "the summary covers omitted messages. Preserve explicit corrections, negations, dates, "
+        "and plans from the current original messages."
+    )
+
+
 def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
     return "\n\n".join(
         [
@@ -669,6 +692,7 @@ def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
                 '"relationshipTone":"NEUTRAL","directedAttack":false}. '
                 "innerThought must be Korean. Never return text outside the JSON object."
             ),
+            _context_window_policy(),
         ]
     )
 
@@ -699,6 +723,23 @@ def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
 
 def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
     return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _ensure_context_budget(
+    payload: FreeTalkTurnRequest | FreeTalkInnerThoughtRequest | FreeTalkClosingRequest,
+    settings: Settings,
+    current_time: datetime | None = None,
+) -> None:
+    """현재 요청의 직렬화된 프롬프트가 최소 여유분을 남기는지 검사한다."""
+    if isinstance(payload, FreeTalkClosingRequest):
+        prompt = _closing_user_prompt(payload)
+    elif isinstance(payload, FreeTalkInnerThoughtRequest):
+        prompt = _inner_thought_user_prompt(payload)
+    else:
+        prompt = _memory_user_prompt(payload, current_time or datetime.now(UTC))
+    estimated_tokens = (len(prompt.encode("utf-8")) + 3) // 4
+    if estimated_tokens + 512 > settings.free_talk_context_input_budget_tokens:
+        raise AiContextTooLargeError("free-talk context exceeds token budget")
 
 
 def _validated_used_memory_ids(
