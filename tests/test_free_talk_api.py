@@ -1080,6 +1080,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 "innerThoughtType": "GOOD",
                 "reactedToPartner": True,
                 "correction": None,
+                "patternUsages": None,
             },
         )
 
@@ -1219,6 +1220,7 @@ class FreeTalkApiTests(unittest.TestCase):
                 "innerThoughtType": "NORMAL",
                 "reactedToPartner": True,
                 "correction": None,
+                "patternUsages": None,
             },
         )
         self.assertEqual(len(fake_openai.completions.calls), 2)

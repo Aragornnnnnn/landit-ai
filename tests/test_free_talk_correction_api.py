@@ -34,6 +34,8 @@ def correction_completion(**overrides):
             "betterSentence": "I went to the gym yesterday with my friend.",
             "reason": "어제 일이라 went로 말해야 해요. 그래야 언제 얘기인지 바로 알아들어요.",
             "mistakePattern": "TENSE",
+            "wrongSpan": "go",
+            "betterSpan": "went",
         },
     }
     result.update(overrides)
@@ -146,8 +148,11 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
                 "mistakePattern": "TENSE",
                 "usedMemoryId": None,
                 "memoryLabel": None,
+                "wrongSpan": "go",
+                "betterSpan": "went",
             },
         )
+        self.assertIsNone(data["patternUsages"])
         self.assertEqual(len(fake.completions.calls), 1)
         self.assertEqual(len(fake.completions.correction_calls), 1)
 

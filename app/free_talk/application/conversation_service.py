@@ -673,6 +673,7 @@ def _to_inner_thought_response(
         innerThoughtType=result.inner_thought_type,
         reactedToPartner=correction.reacted_to_partner,
         correction=correction.correction,
+        patternUsages=correction.pattern_usages,
     )
 
 

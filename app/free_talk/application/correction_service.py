@@ -18,7 +18,16 @@ from app.free_talk.domain.correction_rules import (
     is_effective_correction,
     is_only_definite_article_swap,
     locate_original_sentence,
+    locate_span,
     memory_label_rejection,
+    span_rejection,
+)
+from app.free_talk.domain.pattern_usage_rules import (
+    UsageClaim,
+    effective_watch_patterns,
+    reconciled_with_correction,
+    verified_usage_claims,
+    without_dropped_correction,
 )
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
@@ -29,6 +38,7 @@ from app.models.free_talk import (
     FreeTalkCorrection,
     FreeTalkInnerThoughtRequest,
     FreeTalkMistakePattern,
+    FreeTalkPatternUsage,
 )
 
 
@@ -39,14 +49,21 @@ CORRECTION_POLICY_HEADING = "Correction Policy:"
 FALLBACK_WORKFLOW = "free_talk_turn_correction_fallback"
 UNKNOWN_MEMORY_WORKFLOW = "free_talk_turn_correction_unknown_memory"
 MEMORY_LABEL_DROPPED_WORKFLOW = "free_talk_correction_memory_label_dropped"
+SPAN_DROPPED_WORKFLOW = "free_talk_correction_span_dropped"
+WATCH_PATTERN_FILTERED_WORKFLOW = "free_talk_watch_pattern_filtered"
+PATTERN_USAGE_DROPPED_WORKFLOW = "free_talk_pattern_usage_dropped"
 
 
 @dataclass(frozen=True)
 class TurnCorrectionResult:
-    """한 턴의 교정 판정 결과. 판정 자체가 실패하면 두 값 모두 None이다."""
+    """한 턴의 교정 판정 결과. 판정 자체가 실패하면 모든 값이 None이다.
+
+    pattern_usages는 지켜볼 패턴이 없을 때도 None이고, 판정했는데 등장하지 않았으면 빈 목록이다.
+    """
 
     reacted_to_partner: bool | None
     correction: FreeTalkCorrection | None
+    pattern_usages: list[FreeTalkPatternUsage] | None = None
 
 
 class _CorrectionDraft(BaseModel):
@@ -57,6 +74,9 @@ class _CorrectionDraft(BaseModel):
     reason: str
     mistakePattern: FreeTalkMistakePattern
     usedMemoryId: int | None = None
+    # 빠진 단어를 채운 교정은 wrongSpan이, 단어를 지운 교정은 betterSpan이 null일 수 있다
+    wrongSpan: str | None = None
+    betterSpan: str | None = None
 
     # 공백 응답을 여기서 계약 위반으로 걸러야 뒤의 FreeTalkCorrection 생성이 요청을 실패시키지 않는다.
     @field_validator("originalSentence", "betterSentence", "reason")
@@ -91,6 +111,36 @@ class _TurnCorrectionCandidateWithLabel(_TurnCorrectionCandidate):
     correction: _CorrectionDraftWithLabel | None = None
 
 
+class _PatternUsageDraft(BaseModel):
+    """나쁜 항목이 교정 판정 전체를 계약 위반으로 만들지 않도록 글자 검증은 항목 단위 검증에 맡긴다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: FreeTalkMistakePattern
+    sentence: str
+    span: str
+    correct: bool = Field(strict=True)
+
+
+class _TurnCorrectionCandidateWithUsages(_TurnCorrectionCandidate):
+    """지켜볼 패턴이 있는 요청에서만 쓰는 후보. 없는 요청의 스키마는 그대로 둔다."""
+
+    patternUsages: list[_PatternUsageDraft]
+
+
+class _TurnCorrectionCandidateWithLabelAndUsages(_TurnCorrectionCandidateWithLabel):
+    patternUsages: list[_PatternUsageDraft]
+
+
+# (기억 라벨을 묻는가, 지켜볼 패턴이 있는가)
+_CANDIDATE_MODELS: dict[tuple[bool, bool], type[_TurnCorrectionCandidate]] = {
+    (False, False): _TurnCorrectionCandidate,
+    (True, False): _TurnCorrectionCandidateWithLabel,
+    (False, True): _TurnCorrectionCandidateWithUsages,
+    (True, True): _TurnCorrectionCandidateWithLabelAndUsages,
+}
+
+
 def generate_turn_correction(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
@@ -98,16 +148,19 @@ def generate_turn_correction(
     """제출된 사용자 턴을 별도 LLM 호출로 판정한다. 실패하면 판정 없음으로 돌려준다."""
     # 기억이 없는 요청은 프롬프트와 스키마가 기존과 같아야 교정 품질 회귀가 없다
     with_label = bool(payload.memoryContext)
-    response_model = (
-        _TurnCorrectionCandidateWithLabel if with_label else _TurnCorrectionCandidate
-    )
+    # 지켜볼 패턴이 없는 요청도 같은 이유로 프롬프트와 스키마에 아무것도 덧붙이지 않는다
+    watch_patterns = _watch_patterns(payload)
+    response_model = _CANDIDATE_MODELS[(with_label, bool(watch_patterns))]
     try:
         data = request_json_completion(
             settings=settings,
             system_prompt=_correction_system_prompt(
-                payload.targetLocale, payload.baseLocale, with_memory_label=with_label,
+                payload.targetLocale,
+                payload.baseLocale,
+                with_memory_label=with_label,
+                with_watch_patterns=bool(watch_patterns),
             ),
-            user_prompt=_correction_user_prompt(payload),
+            user_prompt=_correction_user_prompt(payload, watch_patterns),
             response_model=response_model,
             schema_name="free_talk_turn_correction",
             workflow="free_talk_turn_correction",
@@ -125,7 +178,24 @@ def generate_turn_correction(
         return unavailable_turn_correction(
             payload, "contract_validation", _invalid_field_names(exc)
         )
-    return _validated_result(candidate, payload)
+    return _validated_result(candidate, payload, watch_patterns)
+
+
+def _watch_patterns(payload: FreeTalkInnerThoughtRequest) -> list[str]:
+    """셀 수 있는 패턴만 지켜본다. 나머지는 요청을 막지 않고 걸러 내되 흔적을 남긴다."""
+    watch_patterns = effective_watch_patterns(payload.watchPatterns)
+    filtered = len(payload.watchPatterns) - len(watch_patterns)
+    if filtered:
+        logger.warning(
+            "프리톡 턴 교정이 셀 수 없는 실수 패턴을 지켜볼 목록에서 뺐습니다. "
+            "workflow=%s sessionId=%s messageId=%s filtered=%s total=%s",
+            WATCH_PATTERN_FILTERED_WORKFLOW,
+            payload.sessionId,
+            payload.submittedMessageId,
+            filtered,
+            len(payload.watchPatterns),
+        )
+    return watch_patterns
 
 
 def _invalid_field_names(error: ValidationError) -> tuple[str, ...]:
@@ -153,21 +223,24 @@ def unavailable_turn_correction(
 def _validated_result(
     candidate: _TurnCorrectionCandidate,
     payload: FreeTalkInnerThoughtRequest,
+    watch_patterns: list[str],
 ) -> TurnCorrectionResult:
     reacted = _resolved_reacted_to_partner(candidate, _previous_partner_message(payload))
-    if candidate.correction is None:
-        return TurnCorrectionResult(reacted_to_partner=reacted, correction=None)
     submitted = payload.conversationHistory[-1].content
+    usages = _verified_usages(candidate, payload, watch_patterns, submitted)
+    if candidate.correction is None:
+        return _result(reacted, None, usages)
     original = locate_original_sentence(submitted, candidate.correction.originalSentence)
     if original is None:
         return unavailable_turn_correction(payload, "original_not_substring")
     better = candidate.correction.betterSentence.strip()
     if not is_effective_correction(original, better):
-        return TurnCorrectionResult(reacted_to_partner=reacted, correction=None)
+        return _result(reacted, None, _without_dropped(usages, candidate.correction, original))
     used_memory_id = _grounded_memory_id(candidate.correction.usedMemoryId, payload)
     # 서로 아는 대상이라는 기억 근거 없이 a/an을 the로만 바꾼 교정은 추측이라 고칠 것 없음으로 본다
     if used_memory_id is None and is_only_definite_article_swap(original, better):
-        return TurnCorrectionResult(reacted_to_partner=reacted, correction=None)
+        return _result(reacted, None, _without_dropped(usages, candidate.correction, original))
+    wrong_span = _validated_span(original, candidate.correction.wrongSpan, "wrongSpan", payload)
     correction = FreeTalkCorrection(
         originalSentence=original,
         betterSentence=better,
@@ -175,8 +248,109 @@ def _validated_result(
         mistakePattern=candidate.correction.mistakePattern,
         usedMemoryId=used_memory_id,
         memoryLabel=_validated_memory_label(candidate.correction, used_memory_id, payload),
+        wrongSpan=wrong_span,
+        betterSpan=_validated_span(better, candidate.correction.betterSpan, "betterSpan", payload),
     )
-    return TurnCorrectionResult(reacted_to_partner=reacted, correction=correction)
+    if usages is not None:
+        usages = reconciled_with_correction(
+            usages,
+            watch_patterns,
+            pattern=correction.mistakePattern,
+            sentence=original,
+            wrong_span=wrong_span,
+        )
+    return _result(reacted, correction, usages)
+
+
+def _without_dropped(
+    usages: list[UsageClaim] | None,
+    draft: _CorrectionDraft,
+    original: str,
+) -> list[UsageClaim] | None:
+    """서버 규칙으로 교정을 버릴 때는 같은 자리를 틀렸다고 한 사용례도 함께 버려 둘이 어긋나지 않게 한다."""
+    if usages is None:
+        return None
+    return without_dropped_correction(
+        usages,
+        pattern=draft.mistakePattern,
+        sentence=original,
+        wrong_span=locate_span(original, draft.wrongSpan or ""),
+    )
+
+
+def _result(
+    reacted: bool,
+    correction: FreeTalkCorrection | None,
+    usages: list[UsageClaim] | None,
+) -> TurnCorrectionResult:
+    pattern_usages = None
+    if usages is not None:
+        pattern_usages = [
+            FreeTalkPatternUsage(
+                pattern=FreeTalkMistakePattern(usage.pattern),
+                sentence=usage.sentence,
+                span=usage.span,
+                correct=usage.correct,
+            )
+            for usage in usages
+        ]
+    return TurnCorrectionResult(
+        reacted_to_partner=reacted, correction=correction, pattern_usages=pattern_usages
+    )
+
+
+def _verified_usages(
+    candidate: _TurnCorrectionCandidate,
+    payload: FreeTalkInnerThoughtRequest,
+    watch_patterns: list[str],
+    submitted: str,
+) -> list[UsageClaim] | None:
+    """지켜볼 패턴이 없으면 판정하지 않은 것이므로 None이다. 원문 검증에서 빠진 항목은 항목만 버린다."""
+    if not watch_patterns:
+        return None
+    drafts: list[_PatternUsageDraft] = getattr(candidate, "patternUsages", [])
+    verified = verified_usage_claims(
+        (UsageClaim(draft.pattern, draft.sentence, draft.span, draft.correct) for draft in drafts),
+        watch_patterns,
+        submitted,
+    )
+    dropped = len(drafts) - len(verified)
+    if dropped:
+        logger.warning(
+            "프리톡 실수 패턴 사용례 일부가 원문 검증에서 빠졌습니다. "
+            "workflow=%s sessionId=%s messageId=%s dropped=%s total=%s",
+            PATTERN_USAGE_DROPPED_WORKFLOW,
+            payload.sessionId,
+            payload.submittedMessageId,
+            dropped,
+            len(drafts),
+        )
+    return verified
+
+
+def _validated_span(
+    sentence: str,
+    span: str | None,
+    field: str,
+    payload: FreeTalkInnerThoughtRequest,
+) -> str | None:
+    """강조 구절을 검증한다. 구절이 나빠도 교정은 그대로 두고 구절만 버린다."""
+    if span is None:
+        return None
+    reason = span_rejection(sentence, span)
+    if reason is not None:
+        # 구절 원문에는 사용자 발화가 담기므로 이유와 식별자만 남긴다
+        logger.warning(
+            "프리톡 턴 교정의 강조 구절을 쓸 수 없어 구절만 버립니다. "
+            "workflow=%s reason=%s field=%s sessionId=%s messageId=%s",
+            SPAN_DROPPED_WORKFLOW,
+            reason,
+            field,
+            payload.sessionId,
+            payload.submittedMessageId,
+        )
+        return None
+    return locate_span(sentence, span)
 
 
 def _validated_memory_label(
@@ -248,20 +422,24 @@ def _previous_partner_message(payload: FreeTalkInnerThoughtRequest) -> str | Non
     return None
 
 
-def _correction_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
-    return json.dumps(
-        {
-            "targetLocale": payload.targetLocale,
-            "baseLocale": payload.baseLocale,
-            "previousPartnerMessage": _previous_partner_message(payload),
-            "submittedMessage": payload.conversationHistory[-1].content,
-            "memoryContext": [
-                memory.model_dump(mode="json", include={"memoryId", "content", "observedAt"})
-                for memory in payload.memoryContext
-            ],
-        },
-        ensure_ascii=False,
-    )
+def _correction_user_prompt(
+    payload: FreeTalkInnerThoughtRequest,
+    watch_patterns: list[str],
+) -> str:
+    content: dict[str, object] = {
+        "targetLocale": payload.targetLocale,
+        "baseLocale": payload.baseLocale,
+        "previousPartnerMessage": _previous_partner_message(payload),
+        "submittedMessage": payload.conversationHistory[-1].content,
+        "memoryContext": [
+            memory.model_dump(mode="json", include={"memoryId", "content", "observedAt"})
+            for memory in payload.memoryContext
+        ],
+    }
+    # 지켜볼 패턴이 없는 요청은 키 자체를 넣지 않아 입력까지 기존과 같게 둔다
+    if watch_patterns:
+        content["watchPatterns"] = watch_patterns
+    return json.dumps(content, ensure_ascii=False)
 
 
 def _correction_system_prompt(
@@ -269,6 +447,7 @@ def _correction_system_prompt(
     base_locale: str,
     *,
     with_memory_label: bool = False,
+    with_watch_patterns: bool = False,
 ) -> str:
     sections = [
         _role_section(target_locale),
@@ -281,7 +460,11 @@ def _correction_system_prompt(
     # 출력 직전의 별도 절로 둔다.
     if with_memory_label:
         sections.append(_memory_label_section(base_locale))
-    sections.append(_output_schema_section(with_memory_label))
+    # 강조 구절과 사용례도 교정을 정한 뒤의 표기·집계라 같은 이유로 판단 절 뒤에 따로 둔다.
+    sections.append(_highlight_spans_section())
+    if with_watch_patterns:
+        sections.append(_watched_patterns_section())
+    sections.append(_output_schema_section(with_memory_label, with_watch_patterns))
     return "\n\n".join(sections)
 
 
@@ -387,6 +570,47 @@ def _memory_label_section(base_locale: str) -> str:
     )
 
 
+def _highlight_spans_section() -> str:
+    return (
+        "Highlight Spans:\n"
+        "This is only a formatting step: decide the correction first, exactly as described "
+        "above, and never change or skip a correction because of it. wrongSpan is the shortest "
+        "run of words copied verbatim from originalSentence that is wrong, and betterSpan is "
+        "the run of words copied verbatim from betterSentence that replaces it. Example: "
+        "'She buy a coffee every morning.' -> 'She buys a coffee every morning.' gives "
+        "wrongSpan buy and betterSpan buys. If you changed more than one place, pick the place "
+        "that mistakePattern is about. Each span must appear exactly once in its sentence: if "
+        "the same word occurs twice, include a neighboring word so the span is unique (not "
+        "'the' but 'the bus'). Never include the whole sentence unless the whole sentence was "
+        "rewritten. If the fix only adds words, wrongSpan is null; if it only removes words, "
+        "betterSpan is null."
+    )
+
+
+def _watched_patterns_section() -> str:
+    return (
+        "Watched Patterns:\n"
+        "watchPatterns lists mistake codes this learner was corrected on last time. This is a "
+        "separate counting step: decide the correction first, exactly as described above, and "
+        "never add, change, or skip a correction because of it. Then go through every sentence "
+        "of submittedMessage and list in patternUsages each place where one of the "
+        "watchPatterns codes shows up, whether the learner got it right or wrong. pattern is "
+        "that code and must be one of watchPatterns. sentence is exactly one sentence copied "
+        "verbatim from submittedMessage. span is the word or words in that sentence where the "
+        "pattern shows, copied verbatim and appearing exactly once in the sentence; for a "
+        "missing word, use the word right after the gap. correct is true when a native speaker "
+        "would say it the same way and false when the pattern is wrong there. Examples for "
+        "TENSE: 'We watched a movie last night.' -> span watched, correct true. 'Last week I "
+        "cook dinner for my parents.' -> span cook, correct false. For ARTICLE: 'I adopted a "
+        "puppy.' -> span a puppy, correct true. Count each place once, and count only places "
+        "where the pattern is really at stake: for TENSE only verbs whose time matters, not "
+        "every verb in a fixed phrase. One sentence can hold several usages, right and wrong. "
+        "If the corrected sentence's mistakePattern is one of watchPatterns, include that "
+        "place with correct false and span equal to wrongSpan. If none of the watchPatterns "
+        "shows up, return an empty list. Do not list codes that are not in watchPatterns."
+    )
+
+
 def _reaction_policy_section() -> str:
     return (
         "Reaction Policy:\n"
@@ -398,8 +622,22 @@ def _reaction_policy_section() -> str:
     )
 
 
-def _output_schema_section(with_memory_label: bool = False) -> str:
+def _output_schema_section(
+    with_memory_label: bool = False,
+    with_watch_patterns: bool = False,
+) -> str:
     label_example = ',"memoryLabel":null' if with_memory_label else ""
+    usages_empty = ',"patternUsages":[]' if with_watch_patterns else ""
+    usages_example = (
+        ',"patternUsages":[{"pattern":"TENSE","sentence":"...","span":"...","correct":false}]'
+        if with_watch_patterns
+        else ""
+    )
+    usages_rule = (
+        "patternUsages is always a list, possibly empty, even when hasCorrection is false. "
+        if with_watch_patterns
+        else ""
+    )
     label_rule = (
         "memoryLabel is a short noun phrase or null, and is null whenever usedMemoryId is null. "
         if with_memory_label
@@ -408,12 +646,14 @@ def _output_schema_section(with_memory_label: bool = False) -> str:
     return (
         "Output Schema:\n"
         "Return ONLY valid JSON in one of these two shapes: "
-        '{"reactedToPartner":true,"hasCorrection":false,"correction":null} or '
+        f'{{"reactedToPartner":true,"hasCorrection":false,"correction":null{usages_empty}}} or '
         '{"reactedToPartner":true,"hasCorrection":true,"correction":{"originalSentence":"...",'
         '"betterSentence":"...","reason":"...","mistakePattern":"TENSE","usedMemoryId":null'
-        f"{label_example}}}}}. "
+        f'{label_example},"wrongSpan":"...","betterSpan":"..."}}{usages_example}}}. '
         "usedMemoryId is a memoryId from memoryContext or null. "
         f"{label_rule}"
+        "wrongSpan and betterSpan are short verbatim pieces of their sentences or null. "
+        f"{usages_rule}"
         "When hasCorrection is false, correction must be null. "
         "Never return text outside the JSON object."
     )
