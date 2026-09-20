@@ -80,3 +80,16 @@ class ContextBudgetTests(unittest.TestCase):
     def test_short_policy_input_keeps_summary_and_original(self):
         for request in self.requests(contextPolicyVersion="v1"):
             self.assertIs(_ensure_context_budget(request, Settings(_env_file=None)), request)
+
+    def test_inconsistent_summary_contract_is_rejected(self):
+        summary = {"revision": 1, "coveredThroughSequence": 3, "content": {
+            "topic": "Old topic", "userStatements": [], "openThreads": [],
+            "interactionContext": []}}
+        for factory, model in ((valid_turn_payload, FreeTalkTurnRequest),
+                               (valid_closing_payload, FreeTalkClosingRequest),
+                               (valid_inner_thought_payload, FreeTalkInnerThoughtRequest)):
+            for fields in ({"sessionSummary": summary},
+                           {"sessionSummary": summary, "contextPolicyVersion": "v1",
+                            "historyIncomplete": True}):
+                with self.subTest(model=model.__name__, fields=tuple(fields)), self.assertRaises(ValidationError):
+                    model.model_validate(factory(**fields))
