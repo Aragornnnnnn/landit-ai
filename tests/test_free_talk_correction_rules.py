@@ -2,6 +2,7 @@
 import unittest
 
 from app.free_talk.domain.correction_rules import (
+    is_declarative_question,
     is_effective_correction,
     MEMORY_LABEL_MAX_LENGTH,
     is_only_definite_article_swap,
@@ -15,6 +16,32 @@ class ArticleSwapApostropheTests(unittest.TestCase):
         self.assertTrue(
             is_only_definite_article_swap("I saw a dog’s tail", "I saw the dog's tail")
         )
+
+
+class DeclarativeQuestionTests(unittest.TestCase):
+    def test_statement_order_questions_are_declarative(self):
+        for sentence in (
+            "You called the police?",
+            "Wait, you’re leaving already?",
+            "He came to your school?",
+            "You studied a lot, right?",
+        ):
+            with self.subTest(sentence):
+                self.assertTrue(is_declarative_question(sentence))
+
+    def test_questions_with_a_question_word_or_helping_verb_are_not(self):
+        for sentence in (
+            "Where you work now?",
+            "So what the doctor said?",
+            "Do you like it?",
+            "Isn’t it far?",
+            "Don't you know him?",
+            "Won’t you join us?",
+            "Can I try some?",
+            "You called the police.",
+        ):
+            with self.subTest(sentence):
+                self.assertFalse(is_declarative_question(sentence))
 
 
 class LocateOriginalSentenceTests(unittest.TestCase):

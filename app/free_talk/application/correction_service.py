@@ -16,6 +16,7 @@ from pydantic import (
 
 from app.core.config import Settings
 from app.free_talk.domain.correction_rules import (
+    is_declarative_question,
     is_effective_correction,
     is_only_definite_article_swap,
     locate_original_sentence,
@@ -286,6 +287,13 @@ def _validated_result(
         return unavailable_turn_correction(payload, "original_not_substring")
     usages = _verified_usages(candidate, payload, watch_patterns, submitted)
     better = candidate.correction.betterSentence.strip()
+    # 평서문 어순 질문(You called the police?)은 구어에서 자연스러워 의문문 오류로 고치지 않는다
+    if candidate.correction.mistakePattern == FreeTalkMistakePattern.QUESTION_FORM and (
+        is_declarative_question(original)
+    ):
+        return _result(
+            reacted, None, _without_dropped(usages, candidate.correction, original, submitted)
+        )
     if not is_effective_correction(original, better):
         return _result(
             reacted, None, _without_dropped(usages, candidate.correction, original, submitted)
@@ -567,7 +575,9 @@ def _mistake_pattern_section() -> str:
         "very tired yesterday.\n"
         "WORD_ORDER: words are in the wrong order. Always I go there. -> I always go there.\n"
         "NEGATION: the negative is formed wrong. I not go. -> I didn't go.\n"
-        "QUESTION_FORM: the question is formed wrong. You like it? -> Do you like it?\n"
+        "QUESTION_FORM: the question is formed wrong. Why she is angry? -> Why is she angry? "
+        "A plain statement said as a question (You called the police?) is natural in casual "
+        "chat and is not a mistake.\n"
         "TENSE: wrong tense. I go to the gym yesterday. -> I went to the gym yesterday.\n"
         "VERB_FORM: wrong verb form after another verb or be. I enjoy to go. -> I enjoy "
         "going. / I am agree. -> I agree.\n"
@@ -675,7 +685,9 @@ def _watched_patterns_section() -> str:
         "she, it, they, him, her, them, his, or their, never a noun with my, your, or our in "
         "front of it; for PREPOSITION a "
         "preposition with its object, or the verb that is missing one; for QUESTION_FORM a "
-        "question. Words that carry no such form are never usages, right or wrong: not "
+        "question built with a question word or a helping verb (What did you, Are you, Can "
+        "I). A plain statement said as a question (You called the police?) is natural in "
+        "casual chat: it is not a QUESTION_FORM usage, right or wrong. Words that carry no such form are never usages, right or wrong: not "
         "adverbs such as sometimes or mostly, not short answers such as yes or not yet, and "
         "for ARTICLE not nouns that already have my, your, this, or another determiner. A "
         "sentence with no such place has usages []. Never list a place just because nothing "

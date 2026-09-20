@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from app.free_talk.domain.correction_rules import (
     comparable_word,
+    is_declarative_question,
     locate_original_sentence,
     locate_span,
     span_range_in,
@@ -122,6 +123,9 @@ def verified_usage_claims(
         sentence = locate_original_sentence(submitted, claim.sentence)
         span = locate_span(sentence, claim.span) if sentence is not None else None
         if sentence is None or span is None or not _shows_the_form(claim, span):
+            continue
+        # 평서문 어순 질문은 구어에서 자연스러운 말이다. 의문문을 맞게도 틀리게도 만든 것이 아니다.
+        if claim.pattern == "QUESTION_FORM" and is_declarative_question(sentence):
             continue
         place = place_in(submitted, sentence, span)
         same_place = next(

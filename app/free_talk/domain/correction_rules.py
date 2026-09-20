@@ -139,6 +139,34 @@ def is_only_definite_article_swap(original: str, better: str) -> bool:
     )
 
 
+_QUESTION_WORDS = frozenset({"what", "where", "when", "why", "who", "whom", "whose", "which", "how"})
+_HELPING_VERBS = frozenset(
+    {
+        "do", "does", "did", "is", "are", "am", "was", "were", "have", "has", "had", "can", "could",
+        "will", "would", "shall", "should", "may", "might", "must",
+        # won't, shan't는 아포스트로피 앞부분이 원형과 다르다
+        "won", "shan",
+    }
+)  # fmt: skip
+
+
+def is_declarative_question(sentence: str) -> bool:
+    """평서문 어순 그대로 물음표만 붙인 질문인지 본다(You called the police?).
+
+    구어에서 자연스러운 말이라 의문문을 잘못 만든 것으로 치지 않는다. 의문사가 하나라도 있으면 어순이
+    문제일 수 있으므로(Where you work now?) 여기에 넣지 않고 모델 판정에 맡긴다.
+    """
+    words = [comparable_word(word).split("'")[0] for word in sentence.split()]
+    words = [word for word in words if word]
+    if not sentence.rstrip().endswith("?") or not words:
+        return False
+    if any(word in _QUESTION_WORDS for word in words):
+        return False
+    # n't가 붙은 조동사(don't, isn't)는 아포스트로피 앞부분이 don, isn이 되므로 원형도 본다
+    first = words[0]
+    return first not in _HELPING_VERBS and first.removesuffix("n") not in _HELPING_VERBS
+
+
 # 실측 후 조정할 초기값. 화면 태그 "{날짜} 스몰톡에서 말한 {라벨}"에 들어갈 짧은 명사구의 상한이다.
 MEMORY_LABEL_MAX_LENGTH = 20
 _LABEL_FORBIDDEN_CHARS = frozenset("\n\r!?.！？。")

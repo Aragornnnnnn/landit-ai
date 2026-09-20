@@ -209,6 +209,33 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         self.assertIsNone(data["correction"]["wrongSpan"])
         self.assertEqual(data["patternUsages"], [usage("ARTICLE", sentence, "new", False)])
 
+    def test_statement_said_as_a_question_is_never_a_question_form_mistake(self):
+        payload = payload_with_partner_turn(watchPatterns=["QUESTION_FORM"])
+        payload["conversationHistory"][-1]["content"] = "Really? You take the bus now? Where you live?"
+        completion = correction_completion(
+            correction={
+                "originalSentence": "You take the bus now?",
+                "betterSentence": "Do you take the bus now?",
+                "reason": "물어볼 때는 Do로 시작해요. 그래야 질문처럼 들려요.",
+                "mistakePattern": "QUESTION_FORM",
+                "wrongSpan": None,
+                "betterSpan": "Do",
+            },
+            watchedSentences=by_sentence(
+                usage("QUESTION_FORM", "You take the bus now?", "You take", False),
+                usage("QUESTION_FORM", "Where you live?", "you live", False),
+            ),
+        )
+
+        data = self._data(payload, completion)
+
+        # 구어에서 자연스러운 말이라 교정도 틀린 사용례도 내리지 않는다. 어순이 틀린 의문사 질문은 남는다.
+        self.assertIsNone(data["correction"])
+        self.assertTrue(data["reactedToPartner"])
+        self.assertEqual(
+            data["patternUsages"], [usage("QUESTION_FORM", "Where you live?", "you live", False)]
+        )
+
     def test_failed_judgment_returns_null_usages(self):
         with self.assertLogs(CORRECTION_LOGGER, level="WARNING"):
             data = self._data(
