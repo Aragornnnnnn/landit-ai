@@ -1088,9 +1088,9 @@ def _closing_user_prompt(payload: FreeTalkClosingRequest) -> str:
 
 
 def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
-    # 장기기억은 턴 교정의 근거로만 쓰고 속마음 판정에는 넘기지 않는다
+    # 장기기억과 지켜볼 실수 패턴은 턴 교정에만 쓰고 속마음 판정에는 넘기지 않는다
     return json.dumps(
-        payload.model_dump(mode="json", exclude={"memoryContext"}),
+        payload.model_dump(mode="json", exclude={"memoryContext", "watchPatterns"}),
         ensure_ascii=False,
     )
 
