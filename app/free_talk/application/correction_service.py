@@ -123,13 +123,17 @@ class _PatternUsageDraft(BaseModel):
 
 
 class _TurnCorrectionCandidateWithUsages(_TurnCorrectionCandidate):
-    """지켜볼 패턴이 있는 요청에서만 쓰는 후보. 없는 요청의 스키마는 그대로 둔다."""
+    """지켜볼 패턴이 있는 요청에서만 쓰는 후보. 없는 요청의 스키마는 그대로 둔다.
 
-    patternUsages: list[_PatternUsageDraft]
+    strict 스키마에서는 필수지만, 스키마를 강제하지 못하는 폴백 경로에서 목록이 빠져도 교정까지 잃지
+    않도록 None을 받아 "판정 안 됨"으로 내린다.
+    """
+
+    patternUsages: list[_PatternUsageDraft] | None = None
 
 
 class _TurnCorrectionCandidateWithLabelAndUsages(_TurnCorrectionCandidateWithLabel):
-    patternUsages: list[_PatternUsageDraft]
+    patternUsages: list[_PatternUsageDraft] | None = None
 
 
 # (기억 라벨을 묻는가, 지켜볼 패턴이 있는가)
@@ -227,19 +231,24 @@ def _validated_result(
 ) -> TurnCorrectionResult:
     reacted = _resolved_reacted_to_partner(candidate, _previous_partner_message(payload))
     submitted = payload.conversationHistory[-1].content
-    usages = _verified_usages(candidate, payload, watch_patterns, submitted)
     if candidate.correction is None:
+        usages = _verified_usages(candidate, payload, watch_patterns, submitted)
         return _result(reacted, None, usages)
     original = locate_original_sentence(submitted, candidate.correction.originalSentence)
     if original is None:
         return unavailable_turn_correction(payload, "original_not_substring")
+    usages = _verified_usages(candidate, payload, watch_patterns, submitted)
     better = candidate.correction.betterSentence.strip()
     if not is_effective_correction(original, better):
-        return _result(reacted, None, _without_dropped(usages, candidate.correction, original))
+        return _result(
+            reacted, None, _without_dropped(usages, candidate.correction, original, submitted)
+        )
     used_memory_id = _grounded_memory_id(candidate.correction.usedMemoryId, payload)
     # 서로 아는 대상이라는 기억 근거 없이 a/an을 the로만 바꾼 교정은 추측이라 고칠 것 없음으로 본다
     if used_memory_id is None and is_only_definite_article_swap(original, better):
-        return _result(reacted, None, _without_dropped(usages, candidate.correction, original))
+        return _result(
+            reacted, None, _without_dropped(usages, candidate.correction, original, submitted)
+        )
     wrong_span = _validated_span(original, candidate.correction.wrongSpan, "wrongSpan", payload)
     correction = FreeTalkCorrection(
         originalSentence=original,
@@ -255,6 +264,7 @@ def _validated_result(
         usages = reconciled_with_correction(
             usages,
             watch_patterns,
+            submitted,
             pattern=correction.mistakePattern,
             sentence=original,
             wrong_span=wrong_span,
@@ -266,12 +276,14 @@ def _without_dropped(
     usages: list[UsageClaim] | None,
     draft: _CorrectionDraft,
     original: str,
+    submitted: str,
 ) -> list[UsageClaim] | None:
     """서버 규칙으로 교정을 버릴 때는 같은 자리를 틀렸다고 한 사용례도 함께 버려 둘이 어긋나지 않게 한다."""
     if usages is None:
         return None
     return without_dropped_correction(
         usages,
+        submitted,
         pattern=draft.mistakePattern,
         sentence=original,
         wrong_span=locate_span(original, draft.wrongSpan or ""),
@@ -306,9 +318,9 @@ def _verified_usages(
     submitted: str,
 ) -> list[UsageClaim] | None:
     """지켜볼 패턴이 없으면 판정하지 않은 것이므로 None이다. 원문 검증에서 빠진 항목은 항목만 버린다."""
-    if not watch_patterns:
+    drafts: list[_PatternUsageDraft] | None = getattr(candidate, "patternUsages", None)
+    if not watch_patterns or drafts is None:
         return None
-    drafts: list[_PatternUsageDraft] = getattr(candidate, "patternUsages", [])
     verified = verified_usage_claims(
         (UsageClaim(draft.pattern, draft.sentence, draft.span, draft.correct) for draft in drafts),
         watch_patterns,
@@ -317,7 +329,7 @@ def _verified_usages(
     dropped = len(drafts) - len(verified)
     if dropped:
         logger.warning(
-            "프리톡 실수 패턴 사용례 일부가 원문 검증에서 빠졌습니다. "
+            "프리톡 실수 패턴 사용례 일부가 원문 검증이나 같은 자리 중복으로 빠졌습니다. "
             "workflow=%s sessionId=%s messageId=%s dropped=%s total=%s",
             PATTERN_USAGE_DROPPED_WORKFLOW,
             payload.sessionId,

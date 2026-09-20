@@ -157,14 +157,14 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         self.assertIsNone(data["correction"])
         self.assertIsNone(data["patternUsages"])
 
-    def test_missing_usages_in_a_watched_reply_is_a_contract_violation(self):
-        with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
-            data = self._data(
-                payload_with_partner_turn(watchPatterns=["TENSE"]), correction_completion()
-            )
+    def test_missing_usages_in_a_watched_reply_keeps_the_correction(self):
+        # 스키마를 강제하지 못하는 폴백 경로에서 목록이 빠져도 교정까지 잃지 않고 "판정 안 됨"으로 내린다
+        data = self._data(
+            payload_with_partner_turn(watchPatterns=["TENSE"]), correction_completion()
+        )
 
+        self.assertEqual(data["correction"]["wrongSpan"], "go")
         self.assertIsNone(data["patternUsages"])
-        self.assertIn("reason=contract_validation", logs.output[0])
 
     def test_correction_on_a_watched_pattern_is_always_a_wrong_usage(self):
         completion = correction_completion(

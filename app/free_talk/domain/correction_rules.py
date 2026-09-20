@@ -25,9 +25,9 @@ def _span_matches(sentence: str, candidate: str) -> list[re.Match[str]]:
     words = candidate.split()
     if not words:
         return []
-    # don't 안의 don처럼 단어 일부만 걸리지 않도록 아포스트로피도 단어 글자로 본다
+    # don't 안의 don, well-known 안의 well처럼 단어 일부만 걸리지 않도록 아포스트로피와 하이픈도 단어 글자로 본다
     pattern = re.compile(
-        r"(?<![\w'])" + r"\s+".join(re.escape(word) for word in words) + r"(?![\w'])",
+        r"(?<![\w'-])" + r"\s+".join(re.escape(word) for word in words) + r"(?![\w'-])",
         re.IGNORECASE,
     )
     return list(pattern.finditer(sentence))

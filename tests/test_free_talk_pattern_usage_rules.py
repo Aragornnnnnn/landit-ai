@@ -29,6 +29,10 @@ class SpanTests(unittest.TestCase):
         self.assertIsNone(locate_span(sentence, "go"))
         self.assertEqual(locate_span(sentence, "go home"), "go home")
 
+    def test_half_of_a_hyphenated_word_is_not_a_span(self):
+        self.assertEqual(span_rejection("She is a well-known chef.", "well"), "not_found")
+        self.assertIsNone(span_rejection("She is a well-known chef.", "well-known"))
+
     def test_blank_and_regex_metacharacters(self):
         self.assertEqual(span_rejection(SENTENCE, "  "), "blank")
         self.assertEqual(locate_span("It cost $5 (really).", "$5 (really)"), "$5 (really)")
@@ -64,9 +68,26 @@ class VerifiedUsageClaimTests(unittest.TestCase):
             ],
         )
 
-    def test_duplicate_claims_collapse_to_one(self):
-        claims = [UsageClaim("TENSE", SENTENCE, "go", False)] * 2
-        self.assertEqual(len(verified_usage_claims(claims, ["TENSE"], SUBMITTED)), 1)
+    def test_same_place_claimed_twice_collapses_to_one(self):
+        claims = [
+            UsageClaim("TENSE", SENTENCE, "go", False),
+            UsageClaim("TENSE", SENTENCE.rstrip("."), "I go", False),
+        ]
+        self.assertEqual(
+            verified_usage_claims(claims, ["TENSE"], SUBMITTED),
+            [UsageClaim("TENSE", SENTENCE, "go", False)],
+        )
+
+    def test_same_place_claimed_right_and_wrong_is_dropped_entirely(self):
+        claims = [
+            UsageClaim("TENSE", SENTENCE, "go", False),
+            UsageClaim("TENSE", SENTENCE, "I go", True),
+            UsageClaim("TENSE", "We watched a movie and I eat popcorn.", "watched", True),
+        ]
+        self.assertEqual(
+            verified_usage_claims(claims, ["TENSE"], SUBMITTED),
+            [UsageClaim("TENSE", "We watched a movie and I eat popcorn.", "watched", True)],
+        )
 
 
 class ReconcileTests(unittest.TestCase):
@@ -77,7 +98,7 @@ class ReconcileTests(unittest.TestCase):
         ]
 
         reconciled = reconciled_with_correction(
-            usages, ["TENSE"], pattern="TENSE", sentence=SENTENCE, wrong_span="go"
+            usages, ["TENSE"], SUBMITTED, pattern="TENSE", sentence=SENTENCE, wrong_span="go"
         )
 
         self.assertEqual(
@@ -94,7 +115,7 @@ class ReconcileTests(unittest.TestCase):
             with self.subTest(pattern=pattern, span=span):
                 self.assertEqual(
                     reconciled_with_correction(
-                        usages, ["TENSE"], pattern=pattern, sentence=SENTENCE, wrong_span=span
+                        usages, ["TENSE"], SUBMITTED, pattern=pattern, sentence=SENTENCE, wrong_span=span
                     ),
                     usages,
                 )
@@ -107,11 +128,44 @@ class ReconcileTests(unittest.TestCase):
             UsageClaim("ARTICLE", "I bought new phone.", "new phone", False),
         ]
 
+        submitted = f"Yes. {gym} I bought new phone."
+
         kept = without_dropped_correction(
-            usages, pattern="ARTICLE", sentence=gym, wrong_span="a"
+            usages, submitted, pattern="ARTICLE", sentence=gym, wrong_span="a"
         )
 
         self.assertEqual(kept, usages[1:])
+
+    def test_same_place_is_recognized_when_the_sentence_slices_differ(self):
+        # 모델은 같은 문장을 마침표를 빼거나 앞말을 떼고 옮기기도 한다
+        gym = "And I am doing stairs at a gym."
+        submitted = f"Yes. {gym}"
+        trimmed = [UsageClaim("ARTICLE", "I am doing stairs at a gym", "a", False)]
+
+        kept = without_dropped_correction(
+            trimmed, submitted, pattern="ARTICLE", sentence=gym, wrong_span="a gym"
+        )
+        reconciled = reconciled_with_correction(
+            [UsageClaim("TENSE", SENTENCE.rstrip("."), "go", True)],
+            ["TENSE"],
+            SUBMITTED,
+            pattern="TENSE",
+            sentence=SENTENCE,
+            wrong_span="go",
+        )
+
+        self.assertEqual(kept, [])
+        self.assertEqual(reconciled, [UsageClaim("TENSE", SENTENCE, "go", False)])
+
+    def test_dropped_correction_keeps_another_pattern_that_only_overlaps(self):
+        gym = "And I am doing stairs at a gym."
+        usages = [UsageClaim("PLURAL", gym, "stairs at a gym", False)]
+
+        kept = without_dropped_correction(
+            usages, gym, pattern="ARTICLE", sentence=gym, wrong_span="a gym"
+        )
+
+        self.assertEqual(kept, usages)
 
     def test_dropped_correction_without_a_span_drops_that_pattern_in_the_sentence(self):
         usages = [
@@ -120,7 +174,7 @@ class ReconcileTests(unittest.TestCase):
         ]
 
         kept = without_dropped_correction(
-            usages, pattern="TENSE", sentence=SENTENCE, wrong_span=None
+            usages, SUBMITTED, pattern="TENSE", sentence=SENTENCE, wrong_span=None
         )
 
         self.assertEqual(kept, usages[1:])
