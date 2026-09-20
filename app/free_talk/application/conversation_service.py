@@ -17,6 +17,10 @@ from app.common.inner_thought_contract import (
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.core.config import Settings
+from app.core.structured_output import json_schema_response_format
+from app.free_talk.llm.context_budget import (
+    AiContextTooLargeError, estimate_request_tokens, fit_context,
+)
 from app.free_talk.application.memory_context import memory_context_with_time_status
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError,
@@ -42,9 +46,6 @@ from app.models.free_talk import (
 
 logger = logging.getLogger(__name__)
 
-
-class AiContextTooLargeError(Exception):
-    """프리톡 생성 입력이 설정된 모델 문맥 예산을 초과했을 때 발생한다."""
 
 _TITLE_PATTERN = re.compile(r"[가-힣A-Za-z0-9 ·-]+$")
 _TITLE_LETTER_PATTERN = re.compile(r"[가-힣A-Za-z]")
@@ -236,7 +237,7 @@ def generate_turn(
         AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
     """
     current_time = datetime.now(UTC)
-    _ensure_context_budget(payload, settings, current_time=current_time)
+    payload = _ensure_context_budget(payload, settings, current_time=current_time)
     data = _request_turn_completion(payload, settings, current_time)
     try:
         candidate = _validated_turn_candidate(data, payload)
@@ -348,7 +349,7 @@ def generate_closing(
     payload: FreeTalkClosingRequest,
     settings: Settings,
 ) -> FreeTalkClosingResponse:
-    _ensure_context_budget(payload, settings)
+    payload = _ensure_context_budget(payload, settings)
     data = request_json_completion(
         settings=settings,
         system_prompt=_closing_system_prompt(
@@ -401,7 +402,7 @@ def generate_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
-    _ensure_context_budget(payload, settings)
+    payload = _ensure_context_budget(payload, settings)
     try:
         data = request_json_completion(
             settings=settings,
@@ -729,17 +730,23 @@ def _ensure_context_budget(
     payload: FreeTalkTurnRequest | FreeTalkInnerThoughtRequest | FreeTalkClosingRequest,
     settings: Settings,
     current_time: datetime | None = None,
-) -> None:
-    """현재 요청의 직렬화된 프롬프트가 최소 여유분을 남기는지 검사한다."""
-    if isinstance(payload, FreeTalkClosingRequest):
-        prompt = _closing_user_prompt(payload)
-    elif isinstance(payload, FreeTalkInnerThoughtRequest):
-        prompt = _inner_thought_user_prompt(payload)
-    else:
-        prompt = _memory_user_prompt(payload, current_time or datetime.now(UTC))
-    estimated_tokens = (len(prompt.encode("utf-8")) + 3) // 4
-    if estimated_tokens + 512 > settings.free_talk_context_input_budget_tokens:
-        raise AiContextTooLargeError("free-talk context exceeds token budget")
+):
+    """실제 생성·복구 계약 전체를 검사하고 원본 요청을 변경하지 않는다."""
+    if payload.contextPolicyVersion is None:
+        return payload
+    now = current_time or datetime.now(UTC)
+    contracts = _context_budget_contracts(payload, now)
+    formats = [(system, json_schema_response_format(model, name=name))
+               for system, model, name in contracts]
+
+    def request_size(candidate):
+        user = (_memory_user_prompt(candidate, now)
+                if isinstance(candidate, FreeTalkTurnRequest)
+                else json.dumps(candidate.model_dump(mode="json"), ensure_ascii=False))
+        return max(estimate_request_tokens(system, user, schema)
+                   for system, schema in formats)
+
+    return fit_context(payload, settings.free_talk_context_input_budget_tokens, request_size)
 
 
 def _context_budget_contracts(payload, now: datetime):
