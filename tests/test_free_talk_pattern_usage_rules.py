@@ -68,6 +68,15 @@ class VerifiedUsageClaimTests(unittest.TestCase):
             ],
         )
 
+    def test_correct_article_usage_must_show_an_article(self):
+        submitted = "My boss bought a desk. I took taxi."
+        claims = [
+            UsageClaim("ARTICLE", "My boss bought a desk.", "My boss", True),
+            UsageClaim("ARTICLE", "My boss bought a desk.", "a desk", True),
+            UsageClaim("ARTICLE", "I took taxi.", "taxi", False),
+        ]
+        self.assertEqual(verified_usage_claims(claims, ["ARTICLE"], submitted), claims[1:])
+
     def test_same_place_claimed_twice_collapses_to_one(self):
         claims = [
             UsageClaim("TENSE", SENTENCE, "go", False),

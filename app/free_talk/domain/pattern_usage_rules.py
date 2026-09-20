@@ -26,6 +26,9 @@ WATCHABLE_PATTERNS = frozenset(
 )
 
 
+_ARTICLES = frozenset({"a", "an", "the"})
+
+
 @dataclass(frozen=True)
 class UsageClaim:
     """모델이 주장한 사용례 한 건. 검증 전이라 어떤 값도 믿지 않는다."""
@@ -64,6 +67,17 @@ def _overlap(first: tuple[int, int] | None, second: tuple[int, int] | None) -> b
     return first[0] < second[1] and second[0] < first[1]
 
 
+def _shows_the_form(claim: "UsageClaim", span: str) -> bool:
+    """맞게 쓴 관사는 구절 안에 관사가 보여야 한다.
+
+    모델이 my boss처럼 관사가 필요 없는 명사를 "맞게 쓴 관사"로 세는 일이 실측에서 남았고, 이런 오판은
+    카드의 "세 번 다 맞았어요"를 부풀린다. 틀린 쪽은 관사가 빠진 자리라 구절에 관사가 없는 것이 정상이다.
+    """
+    if claim.pattern != "ARTICLE" or not claim.correct:
+        return True
+    return any(word.lower() in _ARTICLES for word in span.split())
+
+
 def verified_usage_claims(
     claims: Iterable[UsageClaim],
     watch_patterns: Iterable[str],
@@ -82,7 +96,7 @@ def verified_usage_claims(
             continue
         sentence = locate_original_sentence(submitted, claim.sentence)
         span = locate_span(sentence, claim.span) if sentence is not None else None
-        if sentence is None or span is None:
+        if sentence is None or span is None or not _shows_the_form(claim, span):
             continue
         place = place_in(submitted, sentence, span)
         same_place = next(

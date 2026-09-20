@@ -34,6 +34,16 @@ def usage(pattern, sentence, span, correct):
     return {"pattern": pattern, "sentence": sentence, "span": span, "correct": correct}
 
 
+def by_sentence(*usages):
+    """모델이 돌려주는 문장별 모양. 같은 문장의 사용례를 한 항목으로 묶는다."""
+    sentences = {}
+    for item in usages:
+        sentences.setdefault(item["sentence"], []).append(
+            {key: item[key] for key in ("pattern", "span", "correct")}
+        )
+    return [{"sentence": sentence, "usages": items} for sentence, items in sentences.items()]
+
+
 def draft(**overrides):
     correction = dict(correction_completion()["correction"])
     correction.update(overrides)
@@ -96,10 +106,10 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
 
     def test_watched_patterns_come_back_as_right_and_wrong_usages(self):
         completion = correction_completion(
-            patternUsages=[
+            watchedSentences=by_sentence(
                 usage("TENSE", GYM_SENTENCE, "go", False),
                 usage("TENSE", TIRING_SENTENCE, "was", True),
-            ]
+            )
         )
 
         data = self._data(payload_with_partner_turn(watchPatterns=["TENSE"]), completion)
@@ -116,13 +126,13 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         completion = correction_completion(
             hasCorrection=False,
             correction=None,
-            patternUsages=[
+            watchedSentences=by_sentence(
                 usage("TENSE", TIRING_SENTENCE, "was", True),
                 usage("TENSE", TIRING_SENTENCE, "were", True),
                 usage("TENSE", "I never said this.", "said", True),
                 usage("ARTICLE", GYM_SENTENCE, "gym", False),
                 usage("TENSE", TIRING_SENTENCE, "", True),
-            ],
+            ),
         )
 
         with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
@@ -138,7 +148,7 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
             "reactedToPartner": True,
             "hasCorrection": False,
             "correction": None,
-            "patternUsages": [],
+            "watchedSentences": [{"sentence": TIRING_SENTENCE, "usages": []}],
         }
 
         watched = self._data(payload_with_partner_turn(watchPatterns=["ARTICLE"]), nothing)
@@ -168,7 +178,7 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
 
     def test_correction_on_a_watched_pattern_is_always_a_wrong_usage(self):
         completion = correction_completion(
-            patternUsages=[usage("TENSE", GYM_SENTENCE, "I go", True)]
+            watchedSentences=by_sentence(usage("TENSE", GYM_SENTENCE, "I go", True))
         )
 
         data = self._data(payload_with_partner_turn(watchPatterns=["TENSE"]), completion)
@@ -178,10 +188,10 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
     def test_correction_dropped_by_server_rules_takes_its_wrong_usage_with_it(self):
         gym = "And I am doing stairs at a gym."
         completion = gym_correction(wrongSpan="a gym", betterSpan="the gym")
-        completion["patternUsages"] = [
+        completion["watchedSentences"] = by_sentence(
             usage("ARTICLE", gym, "a", False),
             usage("ARTICLE", "Yes. I'm doing solid cardio session.", "solid", False),
-        ]
+        )
 
         data = self._data(gym_payload(watchPatterns=["ARTICLE"]), completion)
 
@@ -202,12 +212,12 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         # 지켜볼 패턴이 없는 요청은 입력·프롬프트·스키마가 글자까지 같아야 교정 품질 회귀가 없다
         self.assertEqual(calls[0], calls[1])
         self.assertEqual(calls[0], calls[2])
-        self.assertNotIn("patternUsages", json.dumps(calls[0]))
+        self.assertNotIn("watchedSentences", json.dumps(calls[0]))
         self.assertNotIn("watchPatterns", json.dumps(calls[0]))
         self.assertNotIn("Watched Patterns:", json.dumps(calls[0]))
 
     def test_uncountable_watch_patterns_are_filtered_with_a_trace(self):
-        completion = correction_completion(patternUsages=[])
+        completion = correction_completion(watchedSentences=[])
         fake = self._fake(completion)
 
         with self.assertLogs(CORRECTION_LOGGER, level="WARNING") as logs:
@@ -220,7 +230,7 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
 
     def test_watch_section_is_appended_after_the_unchanged_prompt(self):
         plain = self._fake(correction_completion())
-        watched = self._fake(correction_completion(patternUsages=[]))
+        watched = self._fake(correction_completion(watchedSentences=[]))
 
         self._post(payload_with_partner_turn(), plain)
         self._post(payload_with_partner_turn(watchPatterns=["TENSE"]), watched)
@@ -231,13 +241,13 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         self.assertTrue(watched_system.startswith(plain_system.split("Output Schema:")[0]))
         self.assertIn("Watched Patterns:", watched_system)
         self.assertIn("Highlight Spans:", plain_system)
-        self.assertIn("patternUsages", json.dumps(watched_call["response_format"]))
+        self.assertIn("watchedSentences", json.dumps(watched_call["response_format"]))
 
     def test_memory_label_and_watch_patterns_combine_in_one_schema(self):
         completion = gym_correction(
             usedMemoryId=9012, memoryLabel="헬스장", wrongSpan="a gym", betterSpan="the gym"
         )
-        completion["patternUsages"] = []
+        completion["watchedSentences"] = []
         fake = self._fake(completion)
 
         response = self._post(
@@ -247,7 +257,7 @@ class FreeTalkPatternUsageApiTests(unittest.TestCase):
         data = response.json()["data"]
         schema = json.dumps(fake.completions.correction_calls[0]["response_format"])
         self.assertIn("memoryLabel", schema)
-        self.assertIn("patternUsages", schema)
+        self.assertIn("watchedSentences", schema)
         self.assertEqual(data["correction"]["memoryLabel"], "헬스장")
         self.assertEqual(
             data["patternUsages"],

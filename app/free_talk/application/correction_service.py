@@ -117,9 +117,18 @@ class _PatternUsageDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     pattern: FreeTalkMistakePattern
-    sentence: str
     span: str
     correct: bool = Field(strict=True)
+
+
+class _WatchedSentenceDraft(BaseModel):
+    """사용례를 문장별로 받는다. 납작한 목록으로 받으면 모델이 교정한 자리 주변만 적고 나머지 문장을
+    건너뛰어(실측 재현율 0.60) 모든 문장을 한 번씩 적게 한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str
+    usages: list[_PatternUsageDraft]
 
 
 class _TurnCorrectionCandidateWithUsages(_TurnCorrectionCandidate):
@@ -129,11 +138,11 @@ class _TurnCorrectionCandidateWithUsages(_TurnCorrectionCandidate):
     않도록 None을 받아 "판정 안 됨"으로 내린다.
     """
 
-    patternUsages: list[_PatternUsageDraft] | None = None
+    watchedSentences: list[_WatchedSentenceDraft] | None = None
 
 
 class _TurnCorrectionCandidateWithLabelAndUsages(_TurnCorrectionCandidateWithLabel):
-    patternUsages: list[_PatternUsageDraft] | None = None
+    watchedSentences: list[_WatchedSentenceDraft] | None = None
 
 
 # (기억 라벨을 묻는가, 지켜볼 패턴이 있는가)
@@ -318,14 +327,15 @@ def _verified_usages(
     submitted: str,
 ) -> list[UsageClaim] | None:
     """지켜볼 패턴이 없으면 판정하지 않은 것이므로 None이다. 원문 검증에서 빠진 항목은 항목만 버린다."""
-    drafts: list[_PatternUsageDraft] | None = getattr(candidate, "patternUsages", None)
-    if not watch_patterns or drafts is None:
+    sentences: list[_WatchedSentenceDraft] | None = getattr(candidate, "watchedSentences", None)
+    if not watch_patterns or sentences is None:
         return None
-    verified = verified_usage_claims(
-        (UsageClaim(draft.pattern, draft.sentence, draft.span, draft.correct) for draft in drafts),
-        watch_patterns,
-        submitted,
-    )
+    drafts = [
+        UsageClaim(usage.pattern, sentence.sentence, usage.span, usage.correct)
+        for sentence in sentences
+        for usage in sentence.usages
+    ]
+    verified = verified_usage_claims(drafts, watch_patterns, submitted)
     dropped = len(drafts) - len(verified)
     if dropped:
         logger.warning(
@@ -604,15 +614,17 @@ def _watched_patterns_section() -> str:
         "Watched Patterns:\n"
         "watchPatterns lists mistake codes this learner was corrected on last time. This is a "
         "separate counting step: decide the correction first, exactly as described above, and "
-        "never add, change, or skip a correction because of it. Then go through submittedMessage "
-        "sentence by sentence, to the last sentence, and list in patternUsages every place "
-        "where one of the watchPatterns codes shows up. Places the learner got right matter as "
-        "much as places they got wrong, so do not stop after the first one. pattern is that "
-        "code and must be one of watchPatterns. sentence is exactly one sentence copied "
-        "verbatim from submittedMessage. span is the word or words in that sentence where the "
-        "pattern shows, copied verbatim and appearing exactly once in the sentence; for a "
-        "missing word, use the word right after the gap. correct is true when a native speaker "
-        "would say it the same way and false when the pattern is wrong there. "
+        "never add, change, or skip a correction because of it. Then fill watchedSentences "
+        "with one entry for every sentence of submittedMessage, in order from the first "
+        "sentence to the last, including sentences where nothing shows up. sentence is that "
+        "one sentence copied verbatim. usages lists every place in that sentence where one of "
+        "the watchPatterns codes shows up; places the learner got right matter as much as "
+        "places they got wrong, so check each sentence on its own even when another sentence "
+        "was corrected. pattern is that code and must be one of watchPatterns. span is the "
+        "word or words in that sentence where the pattern shows, copied verbatim and "
+        "appearing exactly once in the sentence; for a missing word, use the word right after "
+        "the gap. correct is true when a native speaker would say it the same way and false "
+        "when the pattern is wrong there. "
         "A place counts only when the form of the pattern is visible in the span itself: for "
         "TENSE, SUBJECT_VERB_AGREEMENT, VERB_FORM, and NEGATION a verb; for ARTICLE the word "
         "a, an, or the with its noun, or a singular countable noun that is missing one; for "
@@ -620,15 +632,15 @@ def _watched_patterns_section() -> str:
         "preposition with its object, or the verb that is missing one; for QUESTION_FORM a "
         "question. Words that carry no such form are never usages, right or wrong: not "
         "adverbs such as sometimes or mostly, not short answers such as yes or not yet, and "
-        "for ARTICLE not nouns that already have my, your, this, or another determiner. "
-        "Never list a place just because nothing is wrong with it. Examples for TENSE: 'We "
-        "watched a movie last night.' -> span watched, correct true. 'Last week I cook dinner "
-        "for my parents.' -> span cook, correct false. For ARTICLE: 'I adopted a puppy.' -> "
-        "span a puppy, correct true. Count each place once. One sentence can hold several "
-        "usages, right and wrong. If the corrected sentence's mistakePattern is one of "
-        "watchPatterns, include that place with correct false and span equal to wrongSpan, "
-        "or, when wrongSpan is null, the word right after the gap. If none of the "
-        "watchPatterns shows up, return an empty list. Do not list codes that are not in "
+        "for ARTICLE not nouns that already have my, your, this, or another determiner. A "
+        "sentence with no such place has usages []. Never list a place just because nothing "
+        "is wrong with it. Example for TENSE: 'We watched a movie last night and then we eat "
+        "ramen. It was late.' -> one entry with usages watched true and eat false, and one "
+        "entry with usage was true. Example for ARTICLE: 'I adopted a puppy. My mom loves "
+        "him.' -> one entry with usage a puppy true, and one entry with usages []. Count each "
+        "place once. If the corrected sentence's mistakePattern is one of watchPatterns, "
+        "include that place with correct false and span equal to wrongSpan, or, when "
+        "wrongSpan is null, the word right after the gap. Do not list codes that are not in "
         "watchPatterns."
     )
 
@@ -649,14 +661,16 @@ def _output_schema_section(
     with_watch_patterns: bool = False,
 ) -> str:
     label_example = ',"memoryLabel":null' if with_memory_label else ""
-    usages_empty = ',"patternUsages":[]' if with_watch_patterns else ""
     usages_example = (
-        ',"patternUsages":[{"pattern":"TENSE","sentence":"...","span":"...","correct":false}]'
+        ',"watchedSentences":[{"sentence":"...","usages":[{"pattern":"TENSE","span":"...",'
+        '"correct":false}]},{"sentence":"...","usages":[]}]'
         if with_watch_patterns
         else ""
     )
+    usages_empty = usages_example
     usages_rule = (
-        "patternUsages is always a list, possibly empty, even when hasCorrection is false. "
+        "watchedSentences has one entry per sentence of submittedMessage even when "
+        "hasCorrection is false. "
         if with_watch_patterns
         else ""
     )
