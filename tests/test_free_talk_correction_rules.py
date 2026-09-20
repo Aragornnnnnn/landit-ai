@@ -10,6 +10,13 @@ from app.free_talk.domain.correction_rules import (
 )
 
 
+class ArticleSwapApostropheTests(unittest.TestCase):
+    def test_apostrophe_shape_does_not_hide_an_article_swap(self):
+        self.assertTrue(
+            is_only_definite_article_swap("I saw a dog’s tail", "I saw the dog's tail")
+        )
+
+
 class LocateOriginalSentenceTests(unittest.TestCase):
     def test_exact_substring_is_returned_as_is(self):
         content = "Yes. I go to gym yesterday with my friend. It was fun."

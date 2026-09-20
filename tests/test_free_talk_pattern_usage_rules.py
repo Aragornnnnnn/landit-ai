@@ -88,6 +88,11 @@ class WordAfterInsertionTests(unittest.TestCase):
         )
         self.assertEqual(word_after_insertion("Went home early.", "I went home early."), "Went")
 
+    def test_restyled_apostrophe_is_not_a_change(self):
+        self.assertEqual(
+            word_after_insertion("I don’t have time.", "I don't have much time."), "time"
+        )
+
     def test_anything_but_one_clean_insertion_gives_nothing(self):
         cases = {
             "replacement": ("I go home.", "I went home."),
@@ -162,6 +167,18 @@ class VerifiedUsageClaimTests(unittest.TestCase):
             UsageClaim("VERB_FORM", "He owns a cafe.", "owns", False),
         ]
         self.assertEqual(verified_usage_claims(claims, ["VERB_FORM"], submitted), claims[1:])
+
+    def test_ing_nouns_are_not_verb_forms_and_contracted_pronouns_count(self):
+        submitted = "I run every morning. They’re my friends and it's fun."
+        second = "They’re my friends and it's fun."
+        claims = [
+            UsageClaim("VERB_FORM", "I run every morning.", "morning", True),
+            UsageClaim("PRONOUN", second, "They’re", True),
+            UsageClaim("PRONOUN", second, "it's", True),
+        ]
+        self.assertEqual(
+            verified_usage_claims(claims, ["VERB_FORM", "PRONOUN"], submitted), claims[1:]
+        )
 
     def test_same_place_claimed_twice_collapses_to_one(self):
         claims = [

@@ -3,8 +3,15 @@ import re
 from difflib import SequenceMatcher
 
 
+# 여는 둥근 따옴표와 큰따옴표는 단어 글자가 아니다. 닫는 작은따옴표(’)는 아포스트로피와 같은 글자라 떼지 않는다.
+_EDGE_PUNCTUATION = ".,!?;:\"()“”‘"
 # iOS 키보드는 기본으로 둥근 아포스트로피(’)를 넣고, 모델은 옮겨 적으며 곧은 것(')으로 바꾸기도 한다.
 _APOSTROPHES = "'’"
+
+
+def comparable_word(word: str) -> str:
+    """단어끼리 같은지 볼 때 쓰는 모양. 대소문자, 아포스트로피 모양, 양끝 문장부호를 무시한다."""
+    return word.strip(_EDGE_PUNCTUATION).lower().replace("’", "'")
 
 
 def _word_pattern(word: str) -> str:
@@ -81,10 +88,6 @@ def span_range_in(sentence: str, candidate: str) -> tuple[int, int] | None:
     return matches[0].start(), matches[0].end()
 
 
-# 여는 둥근 따옴표와 큰따옴표는 단어 글자가 아니다. 닫는 작은따옴표(’)는 아포스트로피와 같은 글자라 떼지 않는다.
-_EDGE_PUNCTUATION = ".,!?;:\"()“”‘"
-
-
 def word_after_insertion(original: str, better: str) -> str | None:
     """단어를 채워 넣기만 한 교정에서 빈자리 바로 뒤 단어를 원문 조각으로 돌려준다.
 
@@ -92,13 +95,13 @@ def word_after_insertion(original: str, better: str) -> str | None:
     없으므로, 그 자리를 가리킬 때 이 단어를 쓴다.
     """
     original_words = [word.strip(_EDGE_PUNCTUATION) for word in original.split()]
-    better_words = [word.strip(_EDGE_PUNCTUATION) for word in better.split()]
+    # 모델이 옮겨 적으며 아포스트로피 모양을 바꾼 것(don’t → don't)은 바뀐 곳으로 치지 않는다
     changes = [
         opcode
         for opcode in SequenceMatcher(
             None,
-            [word.lower() for word in original_words],
-            [word.lower() for word in better_words],
+            [comparable_word(word) for word in original.split()],
+            [comparable_word(word) for word in better.split()],
             autojunk=False,
         ).get_opcodes()
         if opcode[0] != "equal"
@@ -113,7 +116,7 @@ def is_effective_correction(original: str, better: str) -> bool:
     return original.strip() != better.strip()
 
 
-_WORD_PATTERN = re.compile(r"[A-Za-z0-9']+")
+_WORD_PATTERN = re.compile(rf"[A-Za-z0-9{_APOSTROPHES}]+")
 _INDEFINITE_ARTICLES = {"a", "an"}
 
 
@@ -122,8 +125,8 @@ def is_only_definite_article_swap(original: str, better: str) -> bool:
 
     듣는 사람이 이미 아는 대상이라는 근거(장기기억)가 없으면 이 교정은 추측이다.
     """
-    original_words = [word.lower() for word in _WORD_PATTERN.findall(original)]
-    better_words = [word.lower() for word in _WORD_PATTERN.findall(better)]
+    original_words = [comparable_word(word) for word in _WORD_PATTERN.findall(original)]
+    better_words = [comparable_word(word) for word in _WORD_PATTERN.findall(better)]
     if len(original_words) != len(better_words):
         return False
     changed = [

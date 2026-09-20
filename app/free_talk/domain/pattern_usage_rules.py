@@ -3,6 +3,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.free_talk.domain.correction_rules import (
+    comparable_word,
     locate_original_sentence,
     locate_span,
     span_range_in,
@@ -35,6 +36,13 @@ _THIRD_PERSON_PRONOUNS = frozenset(
     }
 )  # fmt: skip
 _FORM_WORDS = {"ARTICLE": _ARTICLES, "PRONOUN": _THIRD_PERSON_PRONOUNS}
+# -ing로 끝나지만 동사 형태가 아닌 흔한 단어
+_ING_NON_VERBS = frozenset(
+    {
+        "morning", "evening", "thing", "nothing", "something", "anything", "everything",
+        "during", "king", "ring", "string", "spring", "wedding", "building", "ceiling",
+    }
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -83,15 +91,16 @@ def _shows_the_form(claim: "UsageClaim", span: str) -> bool:
     """
     if not claim.correct:
         return True
-    words = span.split()
+    # it's, they're처럼 축약된 대명사는 아포스트로피 앞부분으로 본다
+    words = [comparable_word(word).split("'")[0] for word in span.split()]
     if claim.pattern == "VERB_FORM":
         # 동사 형태는 앞 동사에 이어지는 두 번째 동사의 모양이다. has, visit처럼 혼자 선 본동사 한 단어는
         # 그 사슬이 보이지 않는다(실측에서 시제가 틀린 본동사를 맞은 동사 형태로 센 오판이 있었다).
-        return len(words) > 1 or words[0].lower().endswith("ing")
+        return len(words) > 1 or (words[0].endswith("ing") and words[0] not in _ING_NON_VERBS)
     form_words = _FORM_WORDS.get(claim.pattern)
     if form_words is None:
         return True
-    return any(word.lower().strip(".,!?;:\"") in form_words for word in words)
+    return any(word in form_words for word in words)
 
 
 def verified_usage_claims(
