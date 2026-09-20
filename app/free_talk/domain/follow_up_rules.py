@@ -61,12 +61,15 @@ def scheduled_date_status(content: str, observed_on: date | None, today: date) -
     """validTo가 없는 일정의 content 날짜로 예정 일정이 지났는지 판단한다.
 
     말할 당시 이미 지난 날짜면 예정이 아니라 끝난 일을 전한 것이다. 날짜를 못 읽으면 판단하지 않는다.
+    말한 날과 같은 날짜는 그날 이미 끝난 일인지 저녁에 있을 일인지 날짜만으로 알 수 없어 판단하지 않는다.
     """
     dates = _content_dates(content)
     if not dates or observed_on is None:
         return UNKNOWN
     latest = max(dates)
-    if latest <= observed_on:
+    if latest == observed_on:
+        return UNKNOWN
+    if latest < observed_on:
         return NOT_SCHEDULED
     return PASSED if latest < today else UPCOMING
 
