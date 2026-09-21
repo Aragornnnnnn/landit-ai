@@ -85,7 +85,7 @@ class ContextSummaryTests(unittest.IsolatedAsyncioTestCase):
                 Settings(
                     _env_file=None,
                     openrouter_api_key="test",
-                    openrouter_model="test-model",
+                    openrouter_model="openai/gpt-5.4-mini",
                 ),
             )
 
@@ -109,7 +109,7 @@ class ContextSummaryTests(unittest.IsolatedAsyncioTestCase):
                 Settings(
                     _env_file=None,
                     openrouter_api_key="test",
-                    openrouter_model="test-model",
+                    openrouter_model="openai/gpt-5.4-mini",
                 ),
             )
 
@@ -125,7 +125,7 @@ class ContextSummaryTests(unittest.IsolatedAsyncioTestCase):
                 Settings(
                     _env_file=None,
                     openrouter_api_key="test",
-                    openrouter_model="test-model",
+                    openrouter_model="openai/gpt-5.4-mini",
                     free_talk_summary_timeout_seconds=0.001,
                 ),
             )
@@ -152,7 +152,7 @@ class ContextSummaryTests(unittest.IsolatedAsyncioTestCase):
                 Settings(
                     _env_file=None,
                     openrouter_api_key="test",
-                    openrouter_model="test-model",
+                    openrouter_model="openai/gpt-5.4-mini",
                     free_talk_context_input_budget_tokens=10,
                 ),
             )
@@ -163,3 +163,25 @@ class ContextSummaryBoundaryTests(unittest.TestCase):
         for timeout in (float("inf"), float("-inf"), float("nan"), 0, -1):
             with self.subTest(timeout=timeout), self.assertRaises(ValidationError):
                 Settings(_env_file=None, free_talk_summary_timeout_seconds=timeout)
+
+    def test_rejects_uncovered_target_sequence(self):
+        with self.assertRaises(ValidationError):
+            _payload(targetThroughSequence=3)
+
+    def test_rejects_missing_previous_summary_for_advanced_state(self):
+        for state in ({"baseRevision": 1}, {"coveredThroughSequence": 1}):
+            with self.subTest(state=state), self.assertRaises(ValidationError):
+                _payload(**state)
+
+    def test_previous_summary_requires_revision_and_covered_boundary(self):
+        previous = {"topic": "Earlier", "userStatements": [],
+                    "openThreads": [], "interactionContext": []}
+        for state in ({}, {"baseRevision": 1}, {"coveredThroughSequence": 1}):
+            with self.subTest(state=state), self.assertRaises(ValidationError):
+                _payload(previousSummary=previous, **state)
+        source = _payload().model_dump()["sourceMessages"]
+        for message in source:
+            message["sequence"] += 2
+        self.assertEqual(_payload(previousSummary=previous, baseRevision=1,
+                                 coveredThroughSequence=2, targetThroughSequence=4,
+                                 sourceMessages=source).targetThroughSequence, 4)

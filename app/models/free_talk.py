@@ -495,12 +495,17 @@ class ContextSummaryRequest(BaseModel):
 
     @model_validator(mode="after")
     def sequence_range_must_be_ordered(self) -> Self:
+        if self.previousSummary is None:
+            if self.baseRevision != 0 or self.coveredThroughSequence != 0:
+                raise ValueError("initial summary requires zero revision and covered sequence")
+        elif self.baseRevision == 0 or self.coveredThroughSequence == 0:
+            raise ValueError("previous summary requires a positive revision and covered sequence")
         if self.targetThroughSequence <= self.coveredThroughSequence:
             raise ValueError("target sequence must be after covered sequence")
         sequences = [message.sequence for message in self.sourceMessages]
         if sequences != sorted(sequences) or len(sequences) != len(set(sequences)):
             raise ValueError("source messages must be ordered by unique sequence")
-        if sequences[0] <= self.coveredThroughSequence or sequences[-1] > self.targetThroughSequence:
+        if sequences[0] <= self.coveredThroughSequence or sequences[-1] != self.targetThroughSequence:
             raise ValueError("source messages must fit the requested sequence range")
         return self
 
