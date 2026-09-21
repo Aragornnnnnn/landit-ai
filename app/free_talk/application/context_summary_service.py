@@ -57,7 +57,9 @@ async def generate_context_summary(
     response_format = json_schema_response_format(
         SessionSummaryContent, name="free_talk_session_summary",
     )
-    if estimate_request_tokens(_SUMMARY_SYSTEM_PROMPT, user_prompt, response_format) > settings.free_talk_context_input_budget_tokens:
+    if estimate_request_tokens(
+        _SUMMARY_SYSTEM_PROMPT, user_prompt, response_format, settings.openrouter_model,
+    ) > settings.free_talk_context_input_budget_tokens:
         raise SummaryInputTooLargeError("summary input exceeds token budget")
 
     try:

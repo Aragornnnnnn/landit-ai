@@ -11,7 +11,8 @@ ARG ALIGNMENT_MODEL_SHA256=a0e9cd656e3c6cd2fcaadf93a4fae10e6449096c53ccda9f67797
 ENV APP_VERSION=${APP_VERSION} \
     TZ=Asia/Seoul \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TIKTOKEN_CACHE_DIR=/app/tokenizer-cache
 
 WORKDIR /app
 
@@ -24,6 +25,9 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir .
+
+# 토크나이저 데이터를 이미지에 포함해 요청 처리 중 다운로드하지 않는다.
+RUN python -c 'import tiktoken; tiktoken.get_encoding("o200k_base")'
 
 # 정렬 모델을 빌드 시점에 내려받아 이미지에 포함한다 (런타임 다운로드 금지).
 # 체크섬 불일치는 빌드 실패로 fail-closed — 모델 교체 시 SHA와 라벨 상수를 함께 갱신한다

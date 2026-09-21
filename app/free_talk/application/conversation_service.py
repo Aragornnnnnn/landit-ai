@@ -743,7 +743,7 @@ def _ensure_context_budget(
         user = (_memory_user_prompt(candidate, now)
                 if isinstance(candidate, FreeTalkTurnRequest)
                 else json.dumps(candidate.model_dump(mode="json"), ensure_ascii=False))
-        return max(estimate_request_tokens(system, user, schema)
+        return max(estimate_request_tokens(system, user, schema, settings.openrouter_model)
                    for system, schema in formats)
 
     return fit_context(payload, settings.free_talk_context_input_budget_tokens, request_size)

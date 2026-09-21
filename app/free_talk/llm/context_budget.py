@@ -3,6 +3,10 @@ import json
 from collections.abc import Callable
 from typing import TypeVar
 
+import tiktoken
+
+from app.free_talk.llm.json_completion import AiGenerationFailedError
+
 from app.models.free_talk import (
     FreeTalkClosingRequest,
     FreeTalkInnerThoughtRequest,
@@ -18,13 +22,24 @@ class AiContextTooLargeError(Exception):
     """직전 AI와 현재 USER 원문도 입력 예산에 들어가지 않을 때 발생한다."""
 
 
-def estimate_request_tokens(system: str, user: str, response_format: dict) -> int:
-    """직렬화된 system·user·schema와 512토큰 여유분의 바이트 기반 추정치다."""
+_MODEL_ENCODINGS = {
+    "openai/gpt-5.4-mini": "o200k_base",
+    "openai/gpt-5.4-mini-20260317": "o200k_base",
+}
+
+
+def estimate_request_tokens(
+    system: str, user: str, response_format: dict, model: str | None,
+) -> int:
+    """지원 모델의 로컬 토크나이저로 system·user·schema와 여유분을 센다."""
+    encoding_name = _MODEL_ENCODINGS.get(model)
+    if encoding_name is None:
+        raise AiGenerationFailedError("context policy requires a supported tokenizer model")
     serialized = json.dumps({"messages": [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ], "response_format": response_format}, ensure_ascii=False)
-    return (len(serialized.encode("utf-8")) + 3) // 4 + 512
+    return len(tiktoken.get_encoding(encoding_name).encode_ordinary(serialized)) + 512
 
 
 def fit_context(
