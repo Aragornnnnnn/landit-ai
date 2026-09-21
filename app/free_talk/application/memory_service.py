@@ -1,5 +1,6 @@
 # 프리톡 장기기억 후보 추출과 상태 판정을 담당하는 유스케이스 모듈
 import json
+import logging
 import re
 from datetime import datetime
 from typing import Literal
@@ -39,6 +40,14 @@ from app.models.free_talk import (
 
 
 _MAX_CANDIDATES = 5
+logger = logging.getLogger(__name__)
+_DUPLICATE_SUPERSEDE_CORRECTION = (
+    "The previous response assigned the same existing memory ID to multiple candidates. "
+    "Regenerate all resolutions so each existing memory ID is superseded at most once "
+    "across the entire response. Choose the best-supported candidate for each target. "
+    "Re-evaluate the remaining candidates: IGNORE redundant facts and ADD only genuinely "
+    "independent facts. Do not invent facts or memory IDs to avoid the conflict."
+)
 EXTRACTOR_VERSION = "memory-candidate-v10"
 _CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
 _DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
@@ -357,6 +366,10 @@ def _candidates_with_embeddings(
     )
 
 
+class _DuplicateMemorySupersedeError(AiResponseInvalidError):
+    """여러 후보가 같은 기존 기억을 대체하도록 생성됐을 때 발생한다."""
+
+
 def generate_memory_resolution(
     payload: MemoryResolutionRequest,
     settings: Settings,
@@ -374,14 +387,38 @@ def generate_memory_resolution(
     """
     for candidate in payload.candidates:
         _validate_resolution_sources(candidate)
+    try:
+        return _request_validated_resolution(payload, settings)
+    except _DuplicateMemorySupersedeError:
+        logger.warning(
+            "장기기억 중복 대체 응답을 한 번 교정합니다. "
+            "event=memory_resolution_retry workflow=free_talk_memory_resolution "
+            "reason=duplicate_supersede provider=%s model=%s",
+            settings.llm_provider,
+            settings.openrouter_model,
+        )
+        return _request_validated_resolution(payload, settings, correction=True)
+
+
+def _request_validated_resolution(
+    payload: MemoryResolutionRequest,
+    settings: Settings,
+    *,
+    correction: bool = False,
+) -> MemoryResolutionResponse:
+    """교정 요청에도 동일한 계약 검증을 적용하고 추가 재시도는 제한한다."""
+    system_prompt = _resolution_system_prompt()
+    if correction:
+        system_prompt += " " + _DUPLICATE_SUPERSEDE_CORRECTION
     return _validated_resolution(
         request_json_completion(
             settings=settings,
-            system_prompt=_resolution_system_prompt(),
+            system_prompt=system_prompt,
             user_prompt=_json_prompt(payload),
             response_model=_MemoryResolutionResponseWithEvidence,
             schema_name="free_talk_memory_resolution",
             workflow="free_talk_memory_resolution",
+            max_attempts=1 if correction else 2,
         ),
         payload,
     )
@@ -716,7 +753,7 @@ def _validate_superseded_ids(
             raise AiResponseInvalidError("resolution references an unknown memory")
         superseded_ids.extend(resolution.supersededMemoryIds)
     if len(superseded_ids) != len(set(superseded_ids)):
-        raise AiResponseInvalidError("a memory cannot be superseded twice")
+        raise _DuplicateMemorySupersedeError("a memory cannot be superseded twice")
 
 
 def _json_prompt(payload: BaseModel) -> str:
@@ -760,6 +797,10 @@ def _resolution_system_prompt() -> str:
         "entity; owning Bori and hiking with Bori are separate facts. "
         "Only SUPERSEDE may contain supersededMemoryIds, and use only IDs present in "
         "the candidate's comparableMemories. Never supersede another candidate. "
+        "Across all resolutions, each existing memory ID may be superseded at most once. "
+        "When candidates compete for the same memory, choose the best-supported candidate "
+        "to supersede it and re-evaluate the others as IGNORE for redundant facts or ADD "
+        "only for independent facts. "
         "A subset candidate may supersede a more detailed memory only for an explicit user "
         "correction or change to that same fact. Preserve all other uncorrected details. "
         "The correction exception supports one target memory only. For that case, include "
