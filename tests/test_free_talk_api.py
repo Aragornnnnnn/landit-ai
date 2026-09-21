@@ -2,6 +2,7 @@
 import json
 import unittest
 import warnings
+from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -2924,6 +2925,132 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_corrects_competing_supersedes_once(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        corrected = deepcopy(duplicate)
+        corrected["resolutions"][1].update(operation="IGNORE", supersededMemoryIds=[])
+        fake_openai = FakeOpenAI(contents=[json.dumps(duplicate), json.dumps(corrected)])
+
+        with self.assertLogs(
+            "app.free_talk.application.memory_service", level="WARNING",
+        ) as logs:
+            response = self._post(
+                "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"], corrected)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        first, second = fake_openai.completions.calls
+        self.assertIn(
+            "each existing memory ID may be superseded at most once",
+            first["messages"][0]["content"],
+        )
+        self.assertIn(
+            "The previous response assigned the same existing memory ID",
+            second["messages"][0]["content"],
+        )
+        self.assertEqual(first["messages"][1], second["messages"][1])
+        self.assertIn("reason=duplicate_supersede", " ".join(logs.output))
+        self.assertNotIn(payload["candidates"][0]["content"], " ".join(logs.output))
+
+    def test_memory_resolution_rejects_invalid_correction_without_retrying(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        unknown = deepcopy(duplicate)
+        unknown["resolutions"][1]["supersededMemoryIds"] = [999]
+        missing = {"resolutions": duplicate["resolutions"][:1]}
+        for correction in (duplicate, unknown, missing, {}, "invalid-json"):
+            with self.subTest(correction=correction):
+                fake_openai = FakeOpenAI(contents=[
+                    json.dumps(duplicate),
+                    correction if isinstance(correction, str) else json.dumps(correction),
+                ])
+                response = self._post(
+                    "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+                self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_memory_resolution_bounds_schema_retry_and_correction(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        fake_openai = FakeOpenAI(contents=["{}", json.dumps(duplicate), "{}"])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+
+    def test_memory_resolution_corrects_duplicates_after_format_fallback(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        corrected = deepcopy(duplicate)
+        corrected["resolutions"][1].update(operation="IGNORE", supersededMemoryIds=[])
+        unsupported = RuntimeError("response_format json_schema is not supported")
+        unsupported.status_code = 400
+        fake_openai = FakeOpenAI(contents=[
+            unsupported, json.dumps(duplicate), json.dumps(corrected),
+        ])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"], corrected)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertEqual(
+            fake_openai.completions.calls[1]["response_format"]["type"], "json_object",
+        )
+
+    def test_memory_resolution_does_not_retry_failed_correction_call(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        fake_openai = FakeOpenAI(contents=[
+            json.dumps(duplicate), RuntimeError("provider unavailable"),
+        ])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_memory_resolution_correction_preserves_information_loss_guard(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        payload["candidates"][0]["content"] = "사용자는 매주 등산한다."
+        payload["candidates"][0]["comparableMemories"][0]["content"] = (
+            "사용자는 친구와 매주 등산한다."
+        )
+        corrected = deepcopy(duplicate)
+        corrected["resolutions"][1].update(operation="IGNORE", supersededMemoryIds=[])
+        fake_openai = FakeOpenAI(contents=[json.dumps(duplicate), json.dumps(corrected)])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(
+            resolution["operation"] == "IGNORE" and not resolution["supersededMemoryIds"]
+            for resolution in response.json()["data"]["resolutions"]
+        ))
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def _competing_memory_resolutions(self):
+        payload = valid_memory_resolution_payload()
+        candidate = deepcopy(payload["candidates"][0])
+        candidate["candidateIndex"] = 1
+        payload["candidates"].append(candidate)
+        duplicate = {"resolutions": [
+            {"candidateIndex": index, "operation": "SUPERSEDE", "supersededMemoryIds": [77]}
+            for index in range(2)
+        ]}
+        return payload, duplicate
 
     def test_memory_resolution_rejects_unlinked_source_before_llm_call(self):
         payload = valid_memory_resolution_payload()
