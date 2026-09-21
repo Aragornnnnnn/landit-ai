@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     openrouter_model: str | None = None
     free_talk_context_input_budget_tokens: int = Field(default=8000, gt=0)
     free_talk_summary_max_tokens: int = Field(default=800, gt=0)
-    free_talk_summary_timeout_seconds: float = Field(default=8.0, gt=0.0)
+    free_talk_summary_timeout_seconds: float = Field(
+        default=8.0, gt=0.0, allow_inf_nan=False,
+    )
     pronunciation_model: str = "google/gemini-3.5-flash"
     # 판정 프로바이더 고정 (OpenRouter 태그, 쉼표 구분 우선순위. 빈 값 = 자동 라우팅).
     # LAN-389 실측: 같은 모델이라도 Vertex 서빙은 STRESS 검출이 죽는다 —

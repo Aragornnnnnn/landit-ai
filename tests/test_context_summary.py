@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from app.core.config import Settings
 from app.free_talk.application.context_summary_service import (
     SummaryInputTooLargeError,
@@ -155,3 +157,9 @@ class ContextSummaryTests(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         self.assertEqual(len(fake.calls), 0)
+
+class ContextSummaryBoundaryTests(unittest.TestCase):
+    def test_rejects_non_finite_or_non_positive_deadline(self):
+        for timeout in (float("inf"), float("-inf"), float("nan"), 0, -1):
+            with self.subTest(timeout=timeout), self.assertRaises(ValidationError):
+                Settings(_env_file=None, free_talk_summary_timeout_seconds=timeout)
