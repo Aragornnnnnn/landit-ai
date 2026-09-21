@@ -4314,6 +4314,106 @@ class SessionFeedbackApiTests(unittest.TestCase):
         messages = fake_openai.completions.kwargs["messages"]
         self.assertIn("Fabricated fluent answer.", messages[1]["content"])
 
+    def test_assessment_excludes_non_latin_evidence_without_losing_english_turns(self):
+        for retry in (False, True):
+            with self.subTest(retry=retry):
+                payload = valid_session_feedback_payload()
+                payload["assessmentMessages"] = valid_assessment_messages()
+                payload["assessmentMessages"][0]["userMessage"] = "매워서 피자를 좋아해요."
+                assessment = valid_level_assessment()
+                for domain in assessment["core"]["messages"][0]["domains"].values():
+                    domain["evidenceExcerpt"] = "매워서 피자를 좋아해요."
+                response_data = {"sessionId": 100, "levelAssessment": assessment}
+                contents = (["{}"] if retry else []) + [json.dumps(response_data)]
+                fake = FakeOpenAI(contents=contents)
+                with patch("app.core.openai_client.OpenAI", return_value=fake):
+                    response = make_client(self._app()).post(
+                        "/api/v1/conversation/session-level-assessment", json=payload,
+                    )
+                self.assertEqual(response.status_code, 200)
+                actual = response.json()["data"]["levelAssessment"]
+                self.assertIsNotNone(actual)
+                for domain in actual["core"]["messages"][0]["domains"].values():
+                    self.assertEqual(domain, {
+                        "level": None, "evidenceStatus": "NOT_OBSERVED",
+                        "evidenceExcerpt": None,
+                    })
+                self.assertEqual(actual["core"]["messages"][1], assessment["core"]["messages"][1])
+                self.assertIsNone(actual["details"])
+                self.assertEqual(len(fake.completions.calls), 2 if retry else 1)
+
+    def test_assessment_preserves_names_numeric_choices_and_latin_evidence(self):
+        for text in ("My name is 민수.", "Saturday.", "3", "10:30", "Café, please.", "Ｙｅｓ."):
+            with self.subTest(text=text):
+                payload = valid_session_feedback_payload()
+                payload["assessmentMessages"] = valid_assessment_messages()
+                payload["assessmentMessages"][0]["userMessage"] = text
+                assessment = valid_level_assessment()
+                for domain in assessment["core"]["messages"][0]["domains"].values():
+                    domain["evidenceExcerpt"] = text
+                request = conversation_models.SessionLevelAssessmentRequest.model_validate(payload)
+                actual = next_message_service._recover_session_level_assessment(
+                    {"sessionId": 100, "levelAssessment": assessment}, request, None,
+                )
+                self.assertEqual(actual.model_dump(mode="json"), assessment)
+
+    def test_assessment_excludes_only_non_latin_excerpt_domains(self):
+        payload = valid_session_feedback_payload()
+        payload["assessmentMessages"] = valid_assessment_messages()
+        text = "I like 피자 because it is spicy."
+        payload["assessmentMessages"][0]["userMessage"] = text
+        assessment = valid_level_assessment()
+        domains = assessment["core"]["messages"][0]["domains"]
+        for domain in domains.values():
+            domain["evidenceExcerpt"] = text
+        domains["vocabulary"]["evidenceExcerpt"] = "피자"
+        request = conversation_models.SessionLevelAssessmentRequest.model_validate(payload)
+        actual = next_message_service._recover_session_level_assessment(
+            {"sessionId": 100, "levelAssessment": assessment}, request, None,
+        )
+        self.assertIsNone(actual.core.messages[0].domains.vocabulary.level)
+        self.assertEqual(actual.core.messages[0].domains.grammar.level, 4)
+        self.assertIsNone(actual.details)
+        self.assertEqual(domains["vocabulary"]["level"], 3)
+
+    def test_assessment_excludes_non_latin_scripts_but_keeps_source_validation(self):
+        for text in ("저는 개발자예요.", "ㅈㅓㄴㅡㄴ ㅎㅏㄱㅅㅐㅇ", "我喜欢旅行。", "Я люблю путешествия."):
+            payload = valid_session_feedback_payload()
+            payload["assessmentMessages"] = valid_assessment_messages()
+            payload["assessmentMessages"][0]["userMessage"] = text
+            assessment = valid_level_assessment()
+            for domain in assessment["core"]["messages"][0]["domains"].values():
+                domain["evidenceExcerpt"] = text
+            request = conversation_models.SessionLevelAssessmentRequest.model_validate(payload)
+            data = {"sessionId": 100, "levelAssessment": assessment}
+            actual = next_message_service._recover_session_level_assessment(data, request, None)
+            self.assertIsNone(actual.core.messages[0].domains.grammar.level)
+            assessment["core"]["messages"][0]["domains"]["grammar"]["evidenceExcerpt"] = "없는 근거"
+            self.assertIsNone(next_message_service._recover_session_level_assessment(data, request, None))
+
+    def test_assessment_all_non_latin_turns_return_unobserved_core_without_retry(self):
+        payload = valid_session_feedback_payload()
+        payload["assessmentMessages"] = valid_assessment_messages()
+        assessment = valid_level_assessment()
+        for message, judgment in zip(payload["assessmentMessages"], assessment["core"]["messages"]):
+            message["userMessage"] = "최근 3일은 집에서 쉬었어요."
+            for domain in judgment["domains"].values():
+                domain["evidenceExcerpt"] = "3"
+        fake = FakeOpenAI(content=json.dumps({"sessionId": 100, "levelAssessment": assessment}))
+        with patch("app.core.openai_client.OpenAI", return_value=fake):
+            response = make_client(self._app()).post(
+                "/api/v1/conversation/session-level-assessment", json=payload,
+            )
+        self.assertEqual(response.status_code, 200)
+        actual = response.json()["data"]["levelAssessment"]
+        self.assertIsNotNone(actual)
+        self.assertIsNone(actual["details"])
+        self.assertTrue(all(
+            domain["level"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
+            for message in actual["core"]["messages"] for domain in message["domains"].values()
+        ))
+        self.assertEqual(len(fake.completions.calls), 1)
+
     def test_session_level_assessment_prompt_requests_five_domain_grounded_assessment(self):
         app = self._app()
         payload = valid_session_feedback_payload()
