@@ -21,6 +21,9 @@ from app.common.inner_thought_contract import (
     report_inner_thought_fallback,
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
+from app.conversation.application.session_assessment_evidence import (
+    filter_non_latin_assessment_evidence,
+)
 from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
@@ -1421,7 +1424,10 @@ def _recover_session_level_assessment(
         )
     except ValidationError:
         details = None
-    return SessionLevelAssessment(core=core, details=details)
+    filtered_core = filter_non_latin_assessment_evidence(core, expected_messages)
+    if filtered_core is not core:
+        details = None
+    return SessionLevelAssessment(core=filtered_core, details=details)
 
 
 def _recover_session_feedback_summary(
