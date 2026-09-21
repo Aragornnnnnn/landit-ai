@@ -43,7 +43,7 @@ BE 현재 경로는 `feature/learning/freetalk/{message,innerthought,client,doma
 | `context.summary-source-max-bytes` | 첫 시도 원문 구간 UTF-8 6,000바이트. 최종 토큰 검사는 AI가 수행. |
 | `FREE_TALK_CONTEXT_INPUT_BUDGET_TOKENS` | 8,000 추정 토큰 |
 | `FREE_TALK_SUMMARY_MAX_TOKENS` | 요약 JSON 전체 800 추정 토큰 |
-| 요약 LLM 입력 예산 / 출력 상한 | 8,000 추정 토큰 / completion 2,048토큰 |
+| 요약 LLM 입력 예산 / 출력 상한 | 8,000 추정 토큰 / completion 800토큰 |
 | AI 요약 deadline / BE HTTP timeout | 8초 / 10초 |
 | 요약 실행 선점 유효기간 / 실패 후 최소 간격 | 30초 / 30초 |
 | 요약 전용 BE 실행기 | 인스턴스당 동시 2개·대기 8개, 포화 시 거부. 부하 검증 후 조정. |
@@ -285,7 +285,7 @@ develop 통합 검증 → 운영 AI 호환 버전 → BE 추가 스키마·기�
 
 PostgreSQL 검증은 임시 클러스터의 `127.0.0.1:55431/postgres`, 사용자 `landit_test`, 스키마 `lan531`만 사용한다. 클러스터를 준비한 뒤 `LAN531_TEST_POSTGRES=true ./gradlew test --tests '*FreeTalkContextPostgresTests'`로 실행한다. 플래그가 없으면 해당 테스트는 스킵된다. 운영 연결 설정이나 사용자 원문을 읽지 않는다.
 
-입력 토큰 수는 현재 UTF-8 바이트 기반 추정치다. 모델 tokenizer 검증과 실제 `usage.prompt_tokens` 대조, 반복 요약의 실제 LLM 품질 및 총 비용 비교는 수행하지 않았다. 따라서 테스트 통과를 운영 품질이나 비용 절감의 입증으로 사용하지 않는다. 기능의 운영 활성화·push·PR·배포는 이번 리뷰 보완에 포함하지 않는다.
+입력 토큰 수는 `tiktoken==0.12.0`의 `o200k_base`로 system·user·schema를 직렬화해 계산하고 512토큰 여유분을 더한다. 실제 `usage.prompt_tokens` 대조, 반복 요약의 실제 LLM 품질 및 총 비용 비교는 수행하지 않았다. 따라서 테스트 통과를 운영 품질이나 비용 절감의 입증으로 사용하지 않는다. 기능의 운영 활성화·push·PR·배포는 이번 리뷰 보완에 포함하지 않는다.
 
 ## 기준 브랜치와 migration 번호 확인 (2026-09-20)
 
@@ -294,3 +294,14 @@ PostgreSQL 검증은 임시 클러스터의 `127.0.0.1:55431/postgres`, 사용�
 - LAN-531의 미배포 migration을 `V114__add_free_talk_context_summary.sql`로 옮기고 PostgreSQL 테스트 참조를 함께 변경했다. SQL 내용은 그대로다. 공용+PostgreSQL, 공용+H2 각각에 열린 PR의 추가 파일을 합쳐 버전 중복이 없음을 확인했다.
 - #204의 V112 → #205의 V113 → LAN-531의 V114 순으로 병합·적용한다. 병합 직전에 develop과 열린 PR 전체의 버전 점유를 다시 확인한다. 이번 확인에서는 운영 DB migration 이력을 조회하거나 변경하지 않았다.
 - V114 기준 `LAN531_TEST_POSTGRES=true ./gradlew --offline clean check --console=plain`을 통과했다. 전체 1,378개, 실패·오류 0개, 환경 조건 skip 9개이며 PostgreSQL 검증 3개가 포함된다. 최초 PostgreSQL 테스트의 연결 실패는 임시 서버를 테스트 포트(55431)로 재시작한 뒤 해소했다.
+
+## PR 리뷰 반영 (2026-09-21)
+
+- `FREE_TALK_SUMMARY_TIMEOUT_SECONDS`는 양의 유한값만 허용한다. `inf`·`-inf`·`nan`·0·음수는 설정 검증에서 거부한다.
+- 요약 원문의 마지막 sequence는 `targetThroughSequence`와 같아야 한다. 이전 요약이 없으면 revision과 covered 경계가 모두 0이어야 하고, 이전 요약이 있으면 둘 다 양수여야 한다.
+- 토크나이저 매핑은 `openai/gpt-5.4-mini`와 `openai/gpt-5.4-mini-20260317`의 `o200k_base`로 한정한다. [공식 tiktoken 매핑](https://github.com/openai/tiktoken/blob/0.12.0/tiktoken/model.py)에 따른 GPT-5 인코딩이다. 임의 모델에는 같은 인코딩을 추정 적용하지 않는다.
+- 미지원 또는 미설정 모델에서는 `v1` 대화·속마음·종료 및 요약 요청이 외부 호출 전에 `AI_GENERATION_FAILED`로 거부된다. 정책 필드가 없는 기존 대화 요청은 영향을 받지 않는다. 이미 BE에서 축소한 원문을 AI가 복원할 수 없으므로 입력 예산 검사를 조용히 생략하지 않는다. 모델 변경 전에 매핑을 검증하고 추가해야 한다.
+- 인코딩 데이터는 Docker 빌드 및 CI 테스트 준비 단계에서 받는다. 로컬 테스트도 의존성 설치 후 `python -c 'import tiktoken; tiktoken.get_encoding("o200k_base")'`로 준비한다. 사용자 원문·요약 캐시가 아닌 고정 토크나이저 데이터다.
+- 로컬 토큰 계산은 provider의 내부 framing·schema 변환까지 정확히 재현한 청구량이 아니다. 실제 usage 비교와 LLM 품질·비용 평가는 여전히 출시 전 별도 검증이다.
+
+검증: AI 전체 unittest 557개(실패 0, skip 7), OpenAPI 생성과 요약 경로 확인, 네트워크 다운로드를 차단한 별도 프로세스에서 인코딩 로딩 성공. BE 전체 `./gradlew --offline check`는 1,378개(실패 0, skip 12)와 Spotless·Checkstyle 통과. BE의 변경된 13개 파일은 주석·공백을 제외한 Java 코드가 동일함을 확인했다. 이번에는 PostgreSQL 전용 3개 테스트를 실행하지 않았으며 앞선 검증과 구분한다. 로컬 Docker 실행 도구가 없어 이미지 빌드는 CI에서 확인한다.
