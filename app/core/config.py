@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     message_feedback_model: str | None = None
     openrouter_review_model: str | None = None
     message_feedback_review_enabled: bool = True
+    # 프리톡 턴 교정 호출의 SDK 타임아웃이자 속마음 응답에 교정을 얹을 때까지 기다리는 상한.
+    # 교정은 보조 판정이라 상한을 넘기면 null로 내려가고 속마음 응답은 그대로 반환한다.
+    free_talk_correction_timeout_seconds: float = Field(
+        default=6.0, gt=0.0, allow_inf_nan=False
+    )
+    # 비우면 OPENROUTER_MODEL을 그대로 쓴다. 교정만 더 빠르거나 싼 모델로 분리할 때 설정한다.
+    free_talk_correction_model: str | None = None
     session_level_assessment_budget_seconds: float = Field(
         default=100.0, gt=0.0, allow_inf_nan=False
     )

@@ -55,6 +55,28 @@ class MemoryOperation(StrEnum):
     IGNORE = "IGNORE"
 
 
+class FreeTalkMistakePattern(StrEnum):
+    """턴별 교정에서 고른 문장의 대표 실수 유형. 세션을 가로질러 비교하므로 고정 목록이다."""
+
+    TENSE = "TENSE"
+    SUBJECT_VERB_AGREEMENT = "SUBJECT_VERB_AGREEMENT"
+    VERB_FORM = "VERB_FORM"
+    ARTICLE = "ARTICLE"
+    PLURAL = "PLURAL"
+    PRONOUN = "PRONOUN"
+    PREPOSITION = "PREPOSITION"
+    NEGATION = "NEGATION"
+    QUESTION_FORM = "QUESTION_FORM"
+    WORD_ORDER = "WORD_ORDER"
+    MISSING_WORD = "MISSING_WORD"
+    REDUNDANCY = "REDUNDANCY"
+    WORD_CHOICE = "WORD_CHOICE"
+    LITERAL_TRANSLATION = "LITERAL_TRANSLATION"
+    REGISTER = "REGISTER"
+    NATURALNESS = "NATURALNESS"
+    OTHER = "OTHER"
+
+
 def _validate_timezone_aware(value: datetime) -> datetime:
     """기억 시각은 사용자 시간대 해석을 위해 명시적 오프셋을 포함해야 한다."""
     if value.tzinfo is None or value.utcoffset() is None:
@@ -508,11 +530,35 @@ class FreeTalkInnerThoughtRequest(FreeTalkContext):
         return self
 
 
+class FreeTalkCorrection(BaseModel):
+    """사용자 턴에서 고른 한 문장의 교정. originalSentence는 제출 메시지 원문의 일부여야 한다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    originalSentence: str
+    betterSentence: str
+    reason: str
+    mistakePattern: FreeTalkMistakePattern
+
+    @field_validator("originalSentence", "betterSentence", "reason")
+    @classmethod
+    def text_fields_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
 class FreeTalkInnerThoughtResponse(BaseModel):
+    """속마음과 함께 턴 교정 판정을 담는다.
+
+    reactedToPartner와 correction은 교정 판정이 실패·타임아웃하면 둘 다 null이다.
+    고칠 게 없을 때는 correction만 null이고 reactedToPartner는 채워진다.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     innerThought: str
     innerThoughtType: InnerThoughtType
+    reactedToPartner: bool | None
+    correction: FreeTalkCorrection | None
 
     @field_validator("innerThought")
     @classmethod
