@@ -2,7 +2,7 @@
 import math
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -458,6 +458,139 @@ class FreeTalkContext(BaseModel):
         return value
 
 
+class SessionSummaryEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(max_length=500)
+    sourceMessageIds: list[int] = Field(min_length=1, max_length=4)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def text_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("sourceMessageIds")
+    @classmethod
+    def source_ids_must_be_unique(cls, value: list[int]) -> list[int]:
+        return _validate_unique_positive_ids(value)
+
+
+class SessionSummaryContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(max_length=300)
+    userStatements: list[SessionSummaryEntry] = Field(max_length=8)
+    openThreads: list[SessionSummaryEntry] = Field(max_length=4)
+    interactionContext: list[SessionSummaryEntry] = Field(max_length=4)
+
+    @field_validator("topic", mode="before")
+    @classmethod
+    def topic_must_be_trimmed(cls, value: object) -> object:
+        return _strip_string(value)
+
+    @field_validator("topic")
+    @classmethod
+    def topic_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+
+class SessionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = Field(ge=1)
+    coveredThroughSequence: int = Field(ge=1)
+    content: SessionSummaryContent
+
+
+class FreeTalkContextWindow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contextPolicyVersion: Literal["v1"] | None = None
+    sessionSummary: SessionSummary | None = None
+    historyIncomplete: bool = False
+
+    @model_validator(mode="after")
+    def summary_state_must_be_consistent(self) -> Self:
+        if self.historyIncomplete and self.sessionSummary is not None:
+            raise ValueError("incomplete history must not include a session summary")
+        if self.sessionSummary is not None and self.contextPolicyVersion is None:
+            raise ValueError("session summary requires a context policy version")
+        return self
+
+
+class ContextSummarySourceMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    turnNumber: int = Field(gt=0)
+    role: Literal["AI", "USER"]
+    content: str
+    occurredAt: datetime
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        return _validate_not_blank(value)
+
+    @field_validator("occurredAt")
+    @classmethod
+    def occurred_at_must_include_timezone(cls, value: datetime) -> datetime:
+        return _validate_timezone_aware(value)
+
+
+class ContextSummaryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sessionId: int = Field(gt=0)
+    policyVersion: Literal["v1"]
+    baseRevision: int = Field(ge=0)
+    previousSummary: SessionSummaryContent | None = None
+    coveredThroughSequence: int = Field(ge=0)
+    targetThroughSequence: int = Field(gt=0)
+    timezone: str
+    sourceMessages: list[ContextSummarySourceMessage] = Field(min_length=1)
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_must_be_supported(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a supported IANA timezone") from exc
+        return value
+
+    @model_validator(mode="after")
+    def sequence_range_must_be_ordered(self) -> Self:
+        if self.previousSummary is None:
+            if self.baseRevision != 0 or self.coveredThroughSequence != 0:
+                raise ValueError("initial summary requires zero revision and covered sequence")
+        elif self.baseRevision == 0 or self.coveredThroughSequence == 0:
+            raise ValueError("previous summary requires a positive revision and covered sequence")
+        if self.targetThroughSequence <= self.coveredThroughSequence:
+            raise ValueError("target sequence must be after covered sequence")
+        sequences = [message.sequence for message in self.sourceMessages]
+        if sequences != sorted(sequences) or len(sequences) != len(set(sequences)):
+            raise ValueError("source messages must be ordered by unique sequence")
+        if sequences[0] <= self.coveredThroughSequence or sequences[-1] != self.targetThroughSequence:
+            raise ValueError("source messages must fit the requested sequence range")
+        return self
+
+
+class ContextSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policyVersion: Literal["v1"]
+    baseRevision: int = Field(ge=0)
+    coveredThroughSequence: int = Field(gt=0)
+    summary: SessionSummaryContent
+
+
 class MemoryContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -538,7 +671,7 @@ class FreeTalkOpeningResponse(BaseModel):
         return _validate_not_blank(value)
 
 
-class FreeTalkTurnRequest(FreeTalkContext):
+class FreeTalkTurnRequest(FreeTalkContext, FreeTalkContextWindow):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     responseMode: FreeTalkResponseMode
@@ -599,7 +732,7 @@ class FreeTalkTurnResponse(BaseModel):
         return self
 
 
-class FreeTalkInnerThoughtRequest(FreeTalkContext):
+class FreeTalkInnerThoughtRequest(FreeTalkContext, FreeTalkContextWindow):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
@@ -687,7 +820,7 @@ class FreeTalkInnerThoughtResponse(BaseModel):
         return _validate_not_blank(value)
 
 
-class FreeTalkClosingRequest(FreeTalkContext):
+class FreeTalkClosingRequest(FreeTalkContext, FreeTalkContextWindow):
     submittedMessageId: int = Field(gt=0)
     submittedTurnNumber: int = Field(gt=0)
     closingReason: FreeTalkClosingReason

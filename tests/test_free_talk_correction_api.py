@@ -170,7 +170,9 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
         data = response.json()["data"]
         self.assert_inner_thought_intact(data)
         self.assertFalse(data["reactedToPartner"])
-        self.assertEqual(data["correction"], correction["correction"])
+        self.assertEqual(data["correction"], {
+            **correction["correction"], "usedMemoryId": None, "memoryLabel": None,
+        })
         self.assertEqual(len(fake.completions.calls), 2)
         self.assertEqual(len(fake.completions.correction_calls), 1)
         self.assertEqual(len(logs.output), 1)

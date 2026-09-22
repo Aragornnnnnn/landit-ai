@@ -23,6 +23,10 @@ from app.common.inner_thought_contract import (
 from app.common.inner_thought_prompt import shared_inner_thought_policy
 from app.common.failure_observation import observe
 from app.core.config import Settings
+from app.core.structured_output import json_schema_response_format
+from app.free_talk.llm.context_budget import (
+    AiContextTooLargeError, estimate_request_tokens, fit_context,
+)
 from app.free_talk.application.correction_service import (
     TurnCorrectionResult,
     generate_turn_correction,
@@ -356,6 +360,7 @@ def generate_turn(
         AiGenerationFailedError: AI 호출이나 모델 설정이 실패할 때.
     """
     current_time = datetime.now(UTC)
+    payload = _ensure_context_budget(payload, settings, current_time=current_time)
     data = _request_turn_completion(payload, settings, current_time)
     try:
         outcome = _turn_outcome(data, payload)
@@ -439,9 +444,10 @@ def _repaired_follow_up_outcome(
 def _request_turn_completion(
     payload: FreeTalkTurnRequest,
     settings: Settings,
-    current_time: datetime,
+    current_time: datetime | None = None,
 ) -> dict[str, object]:
     """CONTINUE 응답에 메시지가 없으면 같은 요청을 복구 계약으로 한 번 재호출한다."""
+    current_time = current_time or datetime.now(UTC)
     user_prompt = _memory_user_prompt(payload, current_time)
     follow_up_policy = _turn_follow_up_policy(payload.pendingFollowUp)
     response_model = (
@@ -542,6 +548,7 @@ def generate_closing(
     payload: FreeTalkClosingRequest,
     settings: Settings,
 ) -> FreeTalkClosingResponse:
+    payload = _ensure_context_budget(payload, settings)
     data = request_json_completion(
         settings=settings,
         system_prompt=_closing_system_prompt(
@@ -597,6 +604,7 @@ def generate_inner_thought(
     settings: Settings,
 ) -> FreeTalkInnerThoughtResponse:
     """속마음과 턴 교정을 병렬로 만들고 한 응답에 얹는다. 교정은 상한 시간까지만 기다린다."""
+    payload = _ensure_context_budget(payload, settings)
     deadline = time.monotonic() + settings.free_talk_correction_timeout_seconds
     # with(=shutdown(wait=True))를 쓰면 상한을 넘긴 교정 스레드를 기다리게 되므로 대기 없이 닫는다
     executor = ThreadPoolExecutor(max_workers=1)
@@ -817,6 +825,7 @@ def _turn_system_prompt(
         "follow-up question. Do not repeat the same reaction or empathy in different words. "
         "Make translatedMessage a concise equivalent without adding details. "
         + _memory_system_policy(timezone_name, current_time)
+        + _context_window_policy()
         + "Return inferredTitle as null."
     )
 
@@ -862,15 +871,18 @@ def _closing_system_prompt(
         "Briefly acknowledge the conversation without summarizing it or repeating the same "
         "sentiment. Make translatedMessage a concise equivalent without adding details. "
         "Return aiMessage, translatedMessage, and inferredTitle. "
+        + _context_window_policy()
         + title_instruction
     )
 
 
 def _title_repair_system_prompt() -> str:
     return (
-        "Return only JSON with inferredTitle. Infer a concise title from the full conversation. "
+        "Return only JSON with inferredTitle. Infer a concise title from the supplied conversation "
+        "and session summary. "
         "The title must be 1 to 30 characters, contain at least one Korean or English letter, "
         "and use only Korean letters, English letters, digits, spaces, middle dots, or hyphens."
+        + _context_window_policy()
     )
 
 
@@ -1071,6 +1083,16 @@ def _memory_system_policy(timezone_name: str, current_time: datetime) -> str:
     )
 
 
+def _context_window_policy() -> str:
+    return (
+        " The payload may contain a sessionSummary and a bounded conversationHistory. "
+        "Treat current original messages as authoritative over the summary. "
+        "If historyIncomplete is true, do not invent missing prior details or assume that "
+        "the summary covers omitted messages. Preserve explicit corrections, negations, dates, "
+        "and plans from the current original messages."
+    )
+
+
 def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
     return "\n\n".join(
         [
@@ -1083,6 +1105,7 @@ def _inner_thought_system_prompt(character: FreeTalkCharacter) -> str:
                 '"relationshipTone":"NEUTRAL","directedAttack":false}. '
                 "innerThought must be Korean. Never return text outside the JSON object."
             ),
+            _context_window_policy(),
         ]
     )
 
@@ -1120,6 +1143,70 @@ def _inner_thought_user_prompt(payload: FreeTalkInnerThoughtRequest) -> str:
         payload.model_dump(mode="json", exclude={"memoryContext", "watchPatterns"}),
         ensure_ascii=False,
     )
+
+
+def _ensure_context_budget(
+    payload: FreeTalkTurnRequest | FreeTalkInnerThoughtRequest | FreeTalkClosingRequest,
+    settings: Settings,
+    current_time: datetime | None = None,
+):
+    """실제 생성·복구 계약 전체를 검사하고 원본 요청을 변경하지 않는다."""
+    if payload.contextPolicyVersion is None:
+        return payload
+    now = current_time or datetime.now(UTC)
+    contracts = _context_budget_contracts(payload, now)
+    formats = [(system, json_schema_response_format(model, name=name))
+               for system, model, name in contracts]
+
+    def request_size(candidate):
+        if isinstance(candidate, FreeTalkTurnRequest):
+            user = _memory_user_prompt(candidate, now)
+        elif isinstance(candidate, FreeTalkInnerThoughtRequest):
+            user = _inner_thought_user_prompt(candidate)
+        else:
+            user = _closing_user_prompt(candidate)
+        return max(estimate_request_tokens(system, user, schema, settings.openrouter_model)
+                   for system, schema in formats)
+
+    return fit_context(payload, settings.free_talk_context_input_budget_tokens, request_size)
+
+
+def _context_budget_contracts(payload, now: datetime):
+    """후속 repair도 동일한 원문 윈도우 안에서 예산을 지키도록 검사한다."""
+    if isinstance(payload, FreeTalkClosingRequest):
+        return [
+            (_closing_system_prompt(payload.characterId, payload.titleGenerationRequired),
+             _ClosingStructuredOutput, "free_talk_closing"),
+            (_title_repair_system_prompt(), _TitleCandidate, "free_talk_title_repair"),
+        ]
+    if isinstance(payload, FreeTalkInnerThoughtRequest):
+        return [
+            (_inner_thought_system_prompt(payload.characterId),
+             InnerThoughtCandidate, "free_talk_inner_thought"),
+            (_inner_thought_repair_system_prompt(payload.characterId),
+             InnerThoughtCandidate, "free_talk_inner_thought_repair"),
+        ]
+    return _turn_context_budget_contracts(payload, now)
+
+
+def _turn_context_budget_contracts(payload: FreeTalkTurnRequest, now: datetime):
+    """후속 질문의 추가 정책·스키마와 두 복구 경로까지 입력 예산에 포함한다."""
+    policy = _turn_follow_up_policy(payload.pendingFollowUp)
+    model = (_TurnStructuredOutput if payload.pendingFollowUp is None
+             else _TurnWithFollowUpStructuredOutput)
+    system = _turn_system_prompt(payload.responseMode, payload.characterId, payload.timezone, now)
+    contracts = [(system + policy, model, "free_talk_turn")]
+    if payload.responseMode == FreeTalkResponseMode.CONTINUE_AFTER_EXIT_DECLINED:
+        contracts.append((
+            _continue_turn_repair_system_prompt(payload.characterId, payload.timezone, now)
+            + policy, model, "free_talk_turn_repair",
+        ))
+    if payload.pendingFollowUp is not None:
+        contracts.append((
+            system + policy + _FOLLOW_UP_REPAIR_INSTRUCTION,
+            model, "free_talk_turn_follow_up_repair",
+        ))
+    return contracts
 
 
 def _validated_used_memory_ids(

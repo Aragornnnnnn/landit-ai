@@ -33,6 +33,9 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y ffmpeg
 
+      - name: Prepare local tokenizer
+        run: python -c 'import tiktoken; tiktoken.get_encoding("o200k_base")'
+
       - name: Run tests
         run: python -m unittest discover -s tests
 
