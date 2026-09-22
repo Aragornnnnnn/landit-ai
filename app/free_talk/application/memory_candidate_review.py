@@ -1,11 +1,13 @@
 # 추출 후보를 원문과 대조하고 검증된 내용만 임베딩 단계로 전달한다.
 import json
 import logging
+
 import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.free_talk.llm.json_completion import AiResponseInvalidError, request_json_completion
 from app.models.free_talk import MemoryCandidate, MemoryType
@@ -170,7 +172,10 @@ def _reviewed_candidate(
     if draft.memoryType == MemoryType.PROFILE and not review.isStableProfile:
         return None
     if review.decision == "REFINE":
-        if not _has_refinement_evidence(draft, review, context):
+        reason = _refinement_failure_reason(draft, review, context)
+        if reason is not None:
+            observe(workflow="memory_candidate_review", failure_stage="evidence",
+                    reason=reason, outcome="expected_rejection")
             logger.warning(
                 "Memory candidate dropped. workflow=memory_candidate_review "
                 "reason=invalid_refinement_evidence candidateIndex=%s", draft.candidateIndex,
@@ -188,18 +193,24 @@ def _reviewed_candidate(
 def _has_refinement_evidence(
     draft: MemoryCandidate, review: _CandidateReview, context: dict,
 ) -> bool:
-    if (
-        not review.content or not review.quote
-        or review.sourceMessageId not in draft.sourceMessageIds
-    ):
-        return False
+    return _refinement_failure_reason(draft, review, context) is None
+
+
+def _refinement_failure_reason(draft, review, context) -> str | None:
+    """REFINE 후보의 근거를 검증하고 유효하면 None, 아니면 거절 사유를 반환한다."""
+    if not review.content or not review.quote:
+        return "refinement_fields_missing"
+    if review.sourceMessageId not in draft.sourceMessageIds:
+        return "source_id_mismatch"
     if _content_numbers(draft.content) != _content_numbers(review.content):
-        return False
-    return any(
-        message["messageId"] == review.sourceMessageId and message["role"] == "USER"
-        and review.quote in message["content"]
-        for message in context["conversationHistory"]
-    )
+        return "numbers_changed"
+    sources = [message for message in context["conversationHistory"]
+               if message["messageId"] == review.sourceMessageId and message["role"] == "USER"]
+    if not sources:
+        return "source_message_missing_or_not_user"
+    if not any(review.quote in message["content"] for message in sources):
+        return "quote_not_in_source"
+    return None
 
 
 def _content_numbers(content: str) -> list[int]:

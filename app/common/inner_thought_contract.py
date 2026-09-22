@@ -1,5 +1,7 @@
 # 시나리오와 프리톡의 속마음 응답 검증 및 fallback 정책을 정의하는 모듈
 import logging
+
+from app.common.failure_observation import observe
 import re
 from dataclasses import dataclass
 
@@ -99,15 +101,9 @@ def report_inner_thought_fallback(
     reason: str,
     invalid_fields: tuple[str, ...] = (),
 ) -> None:
-    logger.error(
-        "AI inner thought contract fallback. "
-        "workflow=%s attempt=repair reason=%s sessionId=%s messageId=%s fields=%s",
-        workflow,
-        reason,
-        session_id,
-        message_id,
-        ",".join(invalid_fields) or "none",
-    )
+    observe(workflow=workflow, failure_stage="output_validation", reason=reason,
+            outcome="recovered", attempt=2)
+
 
 
 def derive_inner_thought_type(
