@@ -5,6 +5,7 @@ import logging
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import Settings
+from app.free_talk.application.expression_reuse_service import find_used_expressions
 from app.free_talk.llm.json_completion import (
     AiResponseInvalidError,
     request_json_completion,
@@ -52,9 +53,13 @@ def recommend_expressions(
             selection = _RecommendationSelection(
                 expressionIds=[payload.existingExpressions[0].expressionId],
             )
-        return _build_recommendations(selection, payload)
+        response = _build_recommendations(selection, payload)
     except (ValidationError, ValueError) as exc:
         raise AiResponseInvalidError from exc
+    # 추천이 확정된 뒤에 돌려 재사용 판정 실패가 추천 결과를 막지 않게 한다
+    return response.model_copy(
+        update={"usedExpressions": find_used_expressions(payload, settings)},
+    )
 
 
 def _build_recommendations(
@@ -96,4 +101,8 @@ def _recommendations_system_prompt() -> str:
 
 
 def _recommendations_user_prompt(payload: ExpressionRecommendationsRequest) -> str:
-    return json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
+    # 학습 완료 표현은 재사용 판정 전용이라 추천 후보와 섞이지 않게 뺀다
+    return json.dumps(
+        payload.model_dump(mode="json", exclude={"learnedExpressions"}),
+        ensure_ascii=False,
+    )

@@ -10,6 +10,10 @@ from unittest.mock import patch
 
 from app.core.config import Settings
 from app.free_talk.application.correction_service import CORRECTION_POLICY_HEADING
+from app.free_talk.application.expression_reuse_service import (
+    EXPRESSION_REUSE_POLICY_HEADING,
+)
+from app.free_talk.application.follow_up_service import FOLLOW_UP_POLICY_HEADING
 from app.free_talk.llm.json_completion import AiResponseInvalidError
 from app.main import create_app
 
@@ -17,6 +21,8 @@ from app.main import create_app
 NO_CORRECTION_COMPLETION = json.dumps(
     {"reactedToPartner": True, "hasCorrection": False, "correction": None}
 )
+NO_USED_EXPRESSIONS_COMPLETION = json.dumps({"usedExpressions": []})
+NO_FOLLOW_UP_COMPLETION = json.dumps({"options": []})
 
 
 def make_settings(**overrides):
@@ -35,25 +41,49 @@ def make_client(app):
 
 
 class FakeCompletions:
-    """속마음 등 본 호출은 calls·contents로, 병렬로 도는 턴 교정 호출은 correction_calls·correction_contents로 나눠 받는다."""
+    """본 호출은 calls·contents로, 보조 호출은 시스템 프롬프트 마커별 목록으로 나눠 받는다.
 
-    def __init__(self, *, contents=None, error=None, correction_contents=None):
+    보조 호출: 병렬로 도는 턴 교정, 추천 뒤에 도는 표현 재사용 판정, 장기기억 뒤에 도는 후속 질문.
+    """
+
+    def __init__(
+        self,
+        *,
+        contents=None,
+        error=None,
+        correction_contents=None,
+        reuse_contents=None,
+        follow_up_contents=None,
+    ):
         self.contents = list(contents or [])
-        self.correction_contents = list(correction_contents or [NO_CORRECTION_COMPLETION])
         self.error = error
         self.calls = []
+        self.correction_contents = list(correction_contents or [NO_CORRECTION_COMPLETION])
+        self.reuse_contents = list(reuse_contents or [NO_USED_EXPRESSIONS_COMPLETION])
+        self.follow_up_contents = list(follow_up_contents or [NO_FOLLOW_UP_COMPLETION])
         self.correction_calls = []
+        self.reuse_calls = []
+        self.follow_up_calls = []
         self._lock = threading.Lock()
+
+    def _route(self, system_prompt):
+        routes = (
+            (CORRECTION_POLICY_HEADING, self.correction_calls, self.correction_contents),
+            (EXPRESSION_REUSE_POLICY_HEADING, self.reuse_calls, self.reuse_contents),
+            (FOLLOW_UP_POLICY_HEADING, self.follow_up_calls, self.follow_up_contents),
+        )
+        for marker, calls, contents in routes:
+            if marker in system_prompt:
+                return calls, contents, True
+        return self.calls, self.contents, False
 
     def create(self, **kwargs):
         # 교정 호출은 다른 스레드에서 동시에 들어오므로 시스템 프롬프트 마커로 라우팅한다
-        is_correction = CORRECTION_POLICY_HEADING in kwargs["messages"][0]["content"]
+        calls, contents, is_auxiliary = self._route(kwargs["messages"][0]["content"])
         with self._lock:
-            calls = self.correction_calls if is_correction else self.calls
-            contents = self.correction_contents if is_correction else self.contents
             calls.append(kwargs)
             index = len(calls) - 1
-        if self.error is not None and not is_correction:
+        if self.error is not None and not is_auxiliary:
             raise self.error
         content = contents[min(index, len(contents) - 1)]
         if callable(content):
@@ -101,11 +131,15 @@ class FakeOpenAI:
         embedding_error=None,
         embedding_indices=None,
         correction_contents=None,
+        reuse_contents=None,
+        follow_up_contents=None,
     ):
         self.completions = FakeCompletions(
             contents=contents,
             error=error,
             correction_contents=correction_contents,
+            reuse_contents=reuse_contents,
+            follow_up_contents=follow_up_contents,
         )
         self.chat = SimpleNamespace(completions=self.completions)
         self.embeddings = FakeEmbeddings(
@@ -423,7 +457,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json()["data"],
-            opening_completion(emotion=None),
+            opening_completion(emotion=None) | {"followUpAsked": False, "followUpId": None},
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
@@ -1348,6 +1382,8 @@ class FreeTalkApiTests(unittest.TestCase):
                 "translatedMessage": None,
                 "emotion": None,
                 "usedMemoryIds": [],
+                "followUpAsked": False,
+                "followUpId": None,
             },
         )
 
@@ -1374,6 +1410,8 @@ class FreeTalkApiTests(unittest.TestCase):
                 "translatedMessage": None,
                 "emotion": None,
                 "usedMemoryIds": [],
+                "followUpAsked": False,
+                "followUpId": None,
             },
         )
 
@@ -1407,6 +1445,8 @@ class FreeTalkApiTests(unittest.TestCase):
                 "translatedMessage": None,
                 "emotion": None,
                 "usedMemoryIds": [],
+                "followUpAsked": False,
+                "followUpId": None,
             },
         )
 
@@ -2482,9 +2522,18 @@ class FreeTalkApiTests(unittest.TestCase):
             {
                 "candidates": [],
                 "extractorVersion": "memory-candidate-v10",
+                "followUpQuestion": {
+                    "memoryId": None,
+                    "candidateIndex": None,
+                    "triggerType": "NONE",
+                    "question": "다음엔 요즘 빠져 있는 거 얘기해줘.",
+                    "invite": "기억해둘게.",
+                },
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
+        # 기존 기억도 새 후보도 없으면 후속 질문 모델을 부르지 않는다
+        self.assertEqual(len(fake_openai.completions.follow_up_calls), 0)
 
     def test_memory_candidates_drops_ambiguous_relative_weekday_event(self):
         payload = valid_memory_candidates_payload()
