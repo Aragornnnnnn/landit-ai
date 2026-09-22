@@ -1,11 +1,13 @@
 # 프리톡 LLM의 JSON 응답 호출과 기본 계약 검증을 담당하는 모듈
 import json
 import logging
+
 from json import JSONDecodeError
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -49,10 +51,13 @@ def request_json_completion(
     workflow: str = "free_talk_json_completion",
     max_attempts: int = 2,
     retry_schema_violations: bool = True,
+    model: str | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, object]:
-    model = _required_model(settings)
+    model = _resolved_model(settings, model)
     try:
-        client = create_openai_client(settings)
+        # timeout을 주면 SDK 재시도 없이 그 시간 안에 끝내거나 실패한다 (보조 판정용).
+        client = create_openai_client(settings, timeout=timeout_seconds)
         request = {
             "model": model,
             "messages": [
@@ -109,7 +114,10 @@ def request_json_completion(
                     )
                     request.pop("response_format", None)
                     completion = client.chat.completions.create(**request)
-                return _parse_json_object(_extract_content(completion))
+                data = _parse_json_object(_extract_content(completion))
+                observe(workflow=workflow, failure_stage="output_format", reason="format_fallback",
+                        outcome="recovered", attempt=attempt)
+                return data
             try:
                 data = _parse_json_object(_extract_content(completion))
             except AiResponseInvalidError as exc:
@@ -120,7 +128,7 @@ def request_json_completion(
                     workflow,
                     settings.llm_provider,
                     model,
-                    str(exc),
+                    type(exc).__name__,
                     attempt,
                     max_attempts,
                 )
@@ -137,9 +145,11 @@ def request_json_completion(
                     max_attempts,
                 )
                 continue
+            schema_valid = True
             try:
                 response_model.model_validate(data)
             except ValidationError as exc:
+                schema_valid = False
                 reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
                 logger.warning(
                     "Structured Outputs schema 검증에 실패했습니다. "
@@ -164,6 +174,9 @@ def request_json_completion(
                         max_attempts,
                     )
                     continue
+            if schema_valid and attempt > 1:
+                observe(workflow=workflow, failure_stage="output_validation", reason="json_repaired",
+                        outcome="recovered", attempt=attempt)
             return data
     except AiResponseInvalidError:
         raise
@@ -176,6 +189,13 @@ def request_json_completion(
         raise AiGenerationFailedError from exc
 
     raise AiGenerationFailedError
+
+
+def _resolved_model(settings: Settings, override: str | None) -> str:
+    """호출별 모델 지정이 있으면 그것을, 없으면 기본 OPENROUTER_MODEL을 쓴다."""
+    if override is not None and override.strip():
+        return override.strip()
+    return _required_model(settings)
 
 
 def _required_model(settings: Settings) -> str:

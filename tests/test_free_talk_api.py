@@ -1,14 +1,28 @@
 # 프리톡 대화 생성 API의 HTTP 계약을 검증하는 unittest 모듈
 import json
+import threading
 import unittest
 import warnings
+from copy import deepcopy
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.config import Settings
+from app.free_talk.application.correction_service import CORRECTION_POLICY_HEADING
+from app.free_talk.application.expression_reuse_service import (
+    EXPRESSION_REUSE_POLICY_HEADING,
+)
+from app.free_talk.application.follow_up_service import FOLLOW_UP_POLICY_HEADING
 from app.free_talk.llm.json_completion import AiResponseInvalidError
 from app.main import create_app
+
+# 교정 응답을 지정하지 않은 테스트가 그대로 통과하도록 쓰는 픽스처 기본값(운영 동작 아님)
+NO_CORRECTION_COMPLETION = json.dumps(
+    {"reactedToPartner": True, "hasCorrection": False, "correction": None}
+)
+NO_USED_EXPRESSIONS_COMPLETION = json.dumps({"usedExpressions": []})
+NO_FOLLOW_UP_COMPLETION = json.dumps({"options": []})
 
 
 def make_settings(**overrides):
@@ -27,17 +41,53 @@ def make_client(app):
 
 
 class FakeCompletions:
-    def __init__(self, *, contents=None, error=None):
+    """본 호출은 calls·contents로, 보조 호출은 시스템 프롬프트 마커별 목록으로 나눠 받는다.
+
+    보조 호출: 병렬로 도는 턴 교정, 추천 뒤에 도는 표현 재사용 판정, 장기기억 뒤에 도는 후속 질문.
+    """
+
+    def __init__(
+        self,
+        *,
+        contents=None,
+        error=None,
+        correction_contents=None,
+        reuse_contents=None,
+        follow_up_contents=None,
+    ):
         self.contents = list(contents or [])
         self.error = error
         self.calls = []
+        self.correction_contents = list(correction_contents or [NO_CORRECTION_COMPLETION])
+        self.reuse_contents = list(reuse_contents or [NO_USED_EXPRESSIONS_COMPLETION])
+        self.follow_up_contents = list(follow_up_contents or [NO_FOLLOW_UP_COMPLETION])
+        self.correction_calls = []
+        self.reuse_calls = []
+        self.follow_up_calls = []
+        self._lock = threading.Lock()
+
+    def _route(self, system_prompt):
+        routes = (
+            (CORRECTION_POLICY_HEADING, self.correction_calls, self.correction_contents),
+            (EXPRESSION_REUSE_POLICY_HEADING, self.reuse_calls, self.reuse_contents),
+            (FOLLOW_UP_POLICY_HEADING, self.follow_up_calls, self.follow_up_contents),
+        )
+        for marker, calls, contents in routes:
+            if marker in system_prompt:
+                return calls, contents, True
+        return self.calls, self.contents, False
 
     def create(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.error is not None:
+        # 교정 호출은 다른 스레드에서 동시에 들어오므로 시스템 프롬프트 마커로 라우팅한다
+        calls, contents, is_auxiliary = self._route(kwargs["messages"][0]["content"])
+        with self._lock:
+            calls.append(kwargs)
+            index = len(calls) - 1
+        if self.error is not None and not is_auxiliary:
             raise self.error
-        index = len(self.calls) - 1
-        content = self.contents[min(index, len(self.contents) - 1)]
+        content = contents[min(index, len(contents) - 1)]
+        if callable(content):
+            content = content()
         if isinstance(content, Exception):
             raise content
         return SimpleNamespace(
@@ -80,8 +130,17 @@ class FakeOpenAI:
         embedding_vectors=None,
         embedding_error=None,
         embedding_indices=None,
+        correction_contents=None,
+        reuse_contents=None,
+        follow_up_contents=None,
     ):
-        self.completions = FakeCompletions(contents=contents, error=error)
+        self.completions = FakeCompletions(
+            contents=contents,
+            error=error,
+            correction_contents=correction_contents,
+            reuse_contents=reuse_contents,
+            follow_up_contents=follow_up_contents,
+        )
         self.chat = SimpleNamespace(completions=self.completions)
         self.embeddings = FakeEmbeddings(
             vectors=embedding_vectors,
@@ -378,14 +437,14 @@ class FreeTalkApiTests(unittest.TestCase):
         settings.update(overrides)
         return create_app(make_settings(**settings))
 
-    def _post(self, path, payload, fake_openai):
+    def _post(self, path, payload, fake_openai, **settings_overrides):
         # 원문 대조의 네트워크 계약은 test_memory_candidate_review에서 별도로 검사한다.
         with (
             patch("app.core.openai_client.OpenAI", return_value=fake_openai),
             patch("app.free_talk.application.memory_service.review_memory_candidates",
                   side_effect=lambda drafts, *_: drafts),
         ):
-            return make_client(self._app()).post(path, json=payload)
+            return make_client(self._app(**settings_overrides)).post(path, json=payload)
 
     def test_opening_returns_generated_message(self):
         fake_openai = FakeOpenAI(contents=[json.dumps(opening_completion())])
@@ -398,7 +457,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json()["data"],
-            opening_completion(emotion=None),
+            opening_completion(emotion=None) | {"followUpAsked": False, "followUpId": None},
         )
         self.assertEqual(len(fake_openai.completions.calls), 1)
 
@@ -1020,6 +1079,9 @@ class FreeTalkApiTests(unittest.TestCase):
             {
                 "innerThought": "친구들과 등산을 간다니 꽤 기대하고 있나 보네.",
                 "innerThoughtType": "GOOD",
+                "reactedToPartner": True,
+                "correction": None,
+                "patternUsages": None,
             },
         )
 
@@ -1111,7 +1173,7 @@ class FreeTalkApiTests(unittest.TestCase):
             ],
         )
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             response = self._post(
                 "/api/v1/free-talk/inner-thought",
                 valid_inner_thought_payload(),
@@ -1123,7 +1185,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["innerThoughtType"], "NORMAL")
         self.assertEqual(len(fake_openai.completions.calls), 2)
         self.assertIn("workflow=free_talk_inner_thought_contract_fallback", logs.output[0])
-        self.assertIn("fields=directedAttack", logs.output[0])
+        self.assertIn("reason=contract_validation", logs.output[0])
         self.assertNotIn(inner_thought, logs.output[0])
 
     def test_inner_thought_repairs_malformed_json_response(self):
@@ -1144,7 +1206,7 @@ class FreeTalkApiTests(unittest.TestCase):
     def test_inner_thought_uses_safe_fallback_after_malformed_json_repair(self):
         fake_openai = FakeOpenAI(contents=["not JSON", "still not JSON"])
 
-        with self.assertLogs("app.common.inner_thought_contract", level="ERROR") as logs:
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
             response = self._post(
                 "/api/v1/free-talk/inner-thought",
                 valid_inner_thought_payload(),
@@ -1157,6 +1219,9 @@ class FreeTalkApiTests(unittest.TestCase):
             {
                 "innerThought": "상대의 말을 받아들이고 있다.",
                 "innerThoughtType": "NORMAL",
+                "reactedToPartner": True,
+                "correction": None,
+                "patternUsages": None,
             },
         )
         self.assertEqual(len(fake_openai.completions.calls), 2)
@@ -1208,8 +1273,8 @@ class FreeTalkApiTests(unittest.TestCase):
         )
 
         with self.assertLogs(
-            "app.common.inner_thought_contract",
-            level="ERROR",
+            "app.common.failure_observation",
+            level="WARNING",
         ) as logs:
             response = self._post(
                 "/api/v1/free-talk/inner-thought",
@@ -1319,6 +1384,8 @@ class FreeTalkApiTests(unittest.TestCase):
                 "translatedMessage": None,
                 "emotion": None,
                 "usedMemoryIds": [],
+                "followUpAsked": False,
+                "followUpId": None,
             },
         )
 
@@ -1345,6 +1412,8 @@ class FreeTalkApiTests(unittest.TestCase):
                 "translatedMessage": None,
                 "emotion": None,
                 "usedMemoryIds": [],
+                "followUpAsked": False,
+                "followUpId": None,
             },
         )
 
@@ -1378,6 +1447,8 @@ class FreeTalkApiTests(unittest.TestCase):
                 "translatedMessage": None,
                 "emotion": None,
                 "usedMemoryIds": [],
+                "followUpAsked": False,
+                "followUpId": None,
             },
         )
 
@@ -2453,9 +2524,18 @@ class FreeTalkApiTests(unittest.TestCase):
             {
                 "candidates": [],
                 "extractorVersion": "memory-candidate-v10",
+                "followUpQuestion": {
+                    "memoryId": None,
+                    "candidateIndex": None,
+                    "triggerType": "NONE",
+                    "question": "다음엔 요즘 빠져 있는 거 얘기해줘.",
+                    "invite": "기억해둘게.",
+                },
             },
         )
         self.assertEqual(len(fake_openai.embeddings.calls), 0)
+        # 기존 기억도 새 후보도 없으면 후속 질문 모델을 부르지 않는다
+        self.assertEqual(len(fake_openai.completions.follow_up_calls), 0)
 
     def test_memory_candidates_drops_ambiguous_relative_weekday_event(self):
         payload = valid_memory_candidates_payload()
@@ -2924,6 +3004,132 @@ class FreeTalkApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+
+    def test_memory_resolution_corrects_competing_supersedes_once(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        corrected = deepcopy(duplicate)
+        corrected["resolutions"][1].update(operation="IGNORE", supersededMemoryIds=[])
+        fake_openai = FakeOpenAI(contents=[json.dumps(duplicate), json.dumps(corrected)])
+
+        with self.assertLogs(
+            "app.free_talk.application.memory_service", level="WARNING",
+        ) as logs:
+            response = self._post(
+                "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"], corrected)
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+        first, second = fake_openai.completions.calls
+        self.assertIn(
+            "each existing memory ID may be superseded at most once",
+            first["messages"][0]["content"],
+        )
+        self.assertIn(
+            "The previous response assigned the same existing memory ID",
+            second["messages"][0]["content"],
+        )
+        self.assertEqual(first["messages"][1], second["messages"][1])
+        self.assertIn("reason=duplicate_supersede", " ".join(logs.output))
+        self.assertNotIn(payload["candidates"][0]["content"], " ".join(logs.output))
+
+    def test_memory_resolution_rejects_invalid_correction_without_retrying(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        unknown = deepcopy(duplicate)
+        unknown["resolutions"][1]["supersededMemoryIds"] = [999]
+        missing = {"resolutions": duplicate["resolutions"][:1]}
+        for correction in (duplicate, unknown, missing, {}, "invalid-json"):
+            with self.subTest(correction=correction):
+                fake_openai = FakeOpenAI(contents=[
+                    json.dumps(duplicate),
+                    correction if isinstance(correction, str) else json.dumps(correction),
+                ])
+                response = self._post(
+                    "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+                self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_memory_resolution_bounds_schema_retry_and_correction(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        fake_openai = FakeOpenAI(contents=["{}", json.dumps(duplicate), "{}"])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+
+    def test_memory_resolution_corrects_duplicates_after_format_fallback(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        corrected = deepcopy(duplicate)
+        corrected["resolutions"][1].update(operation="IGNORE", supersededMemoryIds=[])
+        unsupported = RuntimeError("response_format json_schema is not supported")
+        unsupported.status_code = 400
+        fake_openai = FakeOpenAI(contents=[
+            unsupported, json.dumps(duplicate), json.dumps(corrected),
+        ])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"], corrected)
+        self.assertEqual(len(fake_openai.completions.calls), 3)
+        self.assertEqual(
+            fake_openai.completions.calls[1]["response_format"]["type"], "json_object",
+        )
+
+    def test_memory_resolution_does_not_retry_failed_correction_call(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        fake_openai = FakeOpenAI(contents=[
+            json.dumps(duplicate), RuntimeError("provider unavailable"),
+        ])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "AI_GENERATION_FAILED")
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def test_memory_resolution_correction_preserves_information_loss_guard(self):
+        payload, duplicate = self._competing_memory_resolutions()
+        payload["candidates"][0]["content"] = "사용자는 매주 등산한다."
+        payload["candidates"][0]["comparableMemories"][0]["content"] = (
+            "사용자는 친구와 매주 등산한다."
+        )
+        corrected = deepcopy(duplicate)
+        corrected["resolutions"][1].update(operation="IGNORE", supersededMemoryIds=[])
+        fake_openai = FakeOpenAI(contents=[json.dumps(duplicate), json.dumps(corrected)])
+
+        response = self._post(
+            "/api/v1/free-talk/memory-resolution", payload, fake_openai,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(
+            resolution["operation"] == "IGNORE" and not resolution["supersededMemoryIds"]
+            for resolution in response.json()["data"]["resolutions"]
+        ))
+        self.assertEqual(len(fake_openai.completions.calls), 2)
+
+    def _competing_memory_resolutions(self):
+        payload = valid_memory_resolution_payload()
+        candidate = deepcopy(payload["candidates"][0])
+        candidate["candidateIndex"] = 1
+        payload["candidates"].append(candidate)
+        duplicate = {"resolutions": [
+            {"candidateIndex": index, "operation": "SUPERSEDE", "supersededMemoryIds": [77]}
+            for index in range(2)
+        ]}
+        return payload, duplicate
 
     def test_memory_resolution_rejects_unlinked_source_before_llm_call(self):
         payload = valid_memory_resolution_payload()
