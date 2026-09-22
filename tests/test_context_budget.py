@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.free_talk.application.conversation_service import (
-    AiContextTooLargeError,
     _ensure_context_budget,
 )
 from app.free_talk.llm.context_budget import estimate_request_tokens
@@ -68,19 +67,28 @@ class ContextBudgetTests(unittest.TestCase):
                 self.assertIsNotNone(request.sessionSummary)
                 self.assertEqual(len(request.conversationHistory), 21)
 
-    def test_oversized_latest_pair_rejects_without_truncating_text(self):
+    def test_oversized_latest_pair_is_preserved_without_truncating_text(self):
         history = self.history()[-2:]
         history[0]["content"] = "🙂 " * 12000
-        for request in self.requests(conversationHistory=history, contextPolicyVersion="v1"):
-            with self.subTest(model=type(request).__name__), self.assertRaises(AiContextTooLargeError):
-                _ensure_context_budget(request, Settings(_env_file=None, openrouter_model="openai/gpt-5.4-mini"))
+        for request in self.requests(conversationHistory=self.history()[:-2] + history,
+                                     contextPolicyVersion="v1"):
+            with self.subTest(model=type(request).__name__):
+                result = _ensure_context_budget(request, Settings(
+                    _env_file=None, openrouter_model="openai/gpt-5.4-mini",
+                ))
+                self.assertEqual(result.conversationHistory, request.conversationHistory[-2:])
+                self.assertTrue(result.historyIncomplete)
+                self.assertEqual(len(request.conversationHistory), 21)
 
     def test_budget_includes_system_and_response_schema(self):
         payload = valid_turn_payload(contextPolicyVersion="v1")
         payload["conversationHistory"][0]["content"] = "word " * 7500
         request = FreeTalkTurnRequest.model_validate(payload)
-        with self.assertRaises(AiContextTooLargeError):
-            _ensure_context_budget(request, Settings(_env_file=None, openrouter_model="openai/gpt-5.4-mini"), datetime.now(UTC))
+        result = _ensure_context_budget(request, Settings(
+            _env_file=None, openrouter_model="openai/gpt-5.4-mini",
+        ), datetime.now(UTC))
+        self.assertTrue(result.historyIncomplete)
+        self.assertEqual(result.conversationHistory, request.conversationHistory)
 
     def test_short_policy_input_keeps_summary_and_original(self):
         for request in self.requests(contextPolicyVersion="v1"):

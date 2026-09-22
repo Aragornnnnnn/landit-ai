@@ -18,10 +18,6 @@ ContextRequest = TypeVar(
 )
 
 
-class AiContextTooLargeError(Exception):
-    """직전 AI와 현재 USER 원문도 입력 예산에 들어가지 않을 때 발생한다."""
-
-
 _MODEL_ENCODINGS = {
     "openai/gpt-5.4-mini": "o200k_base",
     "openai/gpt-5.4-mini-20260317": "o200k_base",
@@ -47,7 +43,7 @@ def fit_context(
     budget: int,
     request_size: Callable[[ContextRequest], int],
 ) -> ContextRequest:
-    """기존 정책은 그대로 두고 초과 요청만 원문 경계를 따라 복사·축소한다."""
+    """초과 요청은 축소하되 최소 원문도 예산을 넘으면 그대로 생성에 전달한다."""
     if payload.contextPolicyVersion is None or request_size(payload) <= budget:
         return payload
     history = payload.conversationHistory
@@ -64,8 +60,6 @@ def fit_context(
             "historyIncomplete": True,
         })
 
-    if request_size(candidate(len(boundaries) - 1)) > budget:
-        raise AiContextTooLargeError("free-talk context exceeds token budget")
     low, high = 0, len(boundaries) - 1
     while low < high:
         middle = (low + high) // 2

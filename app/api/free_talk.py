@@ -9,7 +9,6 @@ from app.common.response import ApiResponse, success_response
 from app.free_talk.application.conversation_service import (
     AiGenerationFailedError,
     AiResponseInvalidError,
-    AiContextTooLargeError,
     generate_closing,
     generate_inner_thought,
     generate_opening,
@@ -110,8 +109,6 @@ def create_closing(
 ) -> ApiResponse[FreeTalkClosingResponse]:
     try:
         response = generate_closing(payload, request.app.state.settings)
-    except AiContextTooLargeError as exc:
-        raise ApiException(400, ErrorCode.FREE_TALK_CONTEXT_TOO_LARGE) from exc
     except (AiResponseInvalidError, AiGenerationFailedError) as exc:
         report_ai_fallback(request, exc, workflow="free_talk_closing_fallback")
         response = safe_closing_response()
@@ -210,8 +207,6 @@ def create_memory_query_embedding(
 def _generate(payload, request: Request, generator):
     try:
         return generator(payload, request.app.state.settings)
-    except AiContextTooLargeError as exc:
-        raise ApiException(400, ErrorCode.FREE_TALK_CONTEXT_TOO_LARGE) from exc
     except AiResponseInvalidError as exc:
         logger.warning(
             "프리톡 AI 응답 계약 검증에 실패했습니다. "

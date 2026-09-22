@@ -25,7 +25,7 @@ from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.core.structured_output import json_schema_response_format
 from app.free_talk.llm.context_budget import (
-    AiContextTooLargeError, estimate_request_tokens, fit_context,
+    estimate_request_tokens, fit_context,
 )
 from app.free_talk.application.correction_service import (
     TurnCorrectionResult,
