@@ -1,6 +1,7 @@
 # 프리톡 대화 생성 요청을 LLM JSON 응답으로 변환하는 유스케이스 모듈
 import json
 import logging
+
 import re
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -19,6 +20,7 @@ from app.common.inner_thought_contract import (
     report_inner_thought_fallback,
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
+from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.free_talk.application.correction_service import (
     TurnCorrectionResult,
@@ -380,6 +382,8 @@ def generate_closing(
         allow_question=allow_question,
     ):
         response = safe_closing_response()
+        observe(workflow="free_talk_closing", failure_stage="output_validation",
+                reason="safe_closing_fallback", outcome="recovered")
     return FreeTalkClosingResponse(
         inferredTitle=_resolve_closing_title(data, payload, settings),
         aiMessage=response.aiMessage,
@@ -452,7 +456,10 @@ def _inner_thought_result(
                 workflow="free_talk_inner_thought_repair",
                 max_attempts=1,
             )
-            return parse_inner_thought(data)
+            result = parse_inner_thought(data)
+            observe(workflow="free_talk_inner_thought", failure_stage="output_validation",
+                    reason="contract_repaired", outcome="recovered", attempt=2)
+            return result
         except AiGenerationFailedError:
             raise
         except AiResponseInvalidError:
@@ -506,7 +513,9 @@ def _resolve_closing_title(
             workflow="free_talk_title_repair",
             retry_schema_violations=False,
         )
-    except (AiGenerationFailedError, AiResponseInvalidError):
+    except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+        observe(workflow="closing_title", failure_stage="generation", reason="optional_title_missing",
+                outcome="recovered", exc=exc)
         return None
     return _valid_title(repaired_data.get("inferredTitle"))
 

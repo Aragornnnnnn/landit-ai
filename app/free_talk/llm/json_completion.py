@@ -1,11 +1,13 @@
 # 프리톡 LLM의 JSON 응답 호출과 기본 계약 검증을 담당하는 모듈
 import json
 import logging
+
 from json import JSONDecodeError
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -112,7 +114,10 @@ def request_json_completion(
                     )
                     request.pop("response_format", None)
                     completion = client.chat.completions.create(**request)
-                return _parse_json_object(_extract_content(completion))
+                data = _parse_json_object(_extract_content(completion))
+                observe(workflow=workflow, failure_stage="output_format", reason="format_fallback",
+                        outcome="recovered", attempt=attempt)
+                return data
             try:
                 data = _parse_json_object(_extract_content(completion))
             except AiResponseInvalidError as exc:
@@ -123,7 +128,7 @@ def request_json_completion(
                     workflow,
                     settings.llm_provider,
                     model,
-                    str(exc),
+                    type(exc).__name__,
                     attempt,
                     max_attempts,
                 )
@@ -140,9 +145,11 @@ def request_json_completion(
                     max_attempts,
                 )
                 continue
+            schema_valid = True
             try:
                 response_model.model_validate(data)
             except ValidationError as exc:
+                schema_valid = False
                 reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
                 logger.warning(
                     "Structured Outputs schema 검증에 실패했습니다. "
@@ -167,6 +174,9 @@ def request_json_completion(
                         max_attempts,
                     )
                     continue
+            if schema_valid and attempt > 1:
+                observe(workflow=workflow, failure_stage="output_validation", reason="json_repaired",
+                        outcome="recovered", attempt=attempt)
             return data
     except AiResponseInvalidError:
         raise

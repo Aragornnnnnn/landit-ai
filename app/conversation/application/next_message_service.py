@@ -1,6 +1,7 @@
 # 대화 생성 API의 LLM 호출과 응답 검증을 담당하는 모듈
 import json
 import logging
+
 import re
 import time
 import unicodedata
@@ -21,9 +22,13 @@ from app.common.inner_thought_contract import (
     report_inner_thought_fallback,
 )
 from app.common.inner_thought_prompt import shared_inner_thought_policy
+from app.conversation.application.session_assessment_evidence import (
+    filter_non_latin_assessment_evidence,
+)
 from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
+from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -369,7 +374,10 @@ def _repair_or_fallback_inner_thought(
         )
         return fallback_inner_thought(None)
     try:
-        return parse_inner_thought(data)
+        result = parse_inner_thought(data)
+        observe(workflow="scenario_inner_thought", failure_stage="output_validation",
+                reason="contract_repaired", outcome="recovered", attempt=2)
+        return result
     except InnerThoughtContractError as exc:
         report_inner_thought_fallback(
             workflow="scenario_inner_thought_contract_fallback",
@@ -446,9 +454,19 @@ def _recover_closing_message_response(
     try:
         _validate_closing_message_policy(response)
     except AiResponseInvalidError:
+        observe(workflow="scenario_closing_message", failure_stage="output_validation",
+                reason="safe_closing_fallback", outcome="recovered")
         return response.model_copy(
             update={"aiMessage": "Okay.", "translatedMessage": "알겠어."},
         )
+    if (
+        not has_messages
+        or not isinstance(data.get("innerThought"), str)
+        or not data.get("innerThought", "").strip()
+        or data.get("innerThoughtType") not in tuple(item.value for item in InnerThoughtType)
+    ):
+        observe(workflow="scenario_closing_message", failure_stage="output_validation",
+                reason="safe_closing_fallback", outcome="recovered")
     return response
 
 
@@ -505,6 +523,8 @@ def generate_message_feedback(
                     request.sessionId,
                     request.messageId,
                 )
+                observe(workflow="message_feedback", failure_stage="copy_review",
+                        reason="candidate_preserved", outcome="recovered", exc=exc)
                 copy_was_fallback = True
         feedback = _postprocess_message_feedback_benchmark(
             feedback,
@@ -538,6 +558,8 @@ def generate_message_feedback(
             request.sessionId,
             request.messageId,
         )
+        observe(workflow="message_feedback", failure_stage="generation",
+                reason="generation_failed", outcome="failed", exc=exc)
         return MessageFeedbackResponse(
             sessionId=request.sessionId,
             messageId=request.messageId,
@@ -1264,7 +1286,8 @@ def generate_session_level_assessment(
         None,
         require_session_id=True,
     )
-    if level_assessment is None:
+    retried = level_assessment is None
+    if retried:
         level_assessment = _retry_session_level_assessment_core(
             resolved_settings,
             request,
@@ -1273,6 +1296,15 @@ def generate_session_level_assessment(
             selected_response_format,
             deadline=deadline,
         )
+    if level_assessment is None:
+        observe(workflow="level_assessment", failure_stage="core_validation",
+                reason="core_missing", outcome="failed", attempt=2)
+    elif retried:
+        observe(workflow="level_assessment", failure_stage="core_validation",
+                reason="core_repaired", outcome="recovered", attempt=2)
+    elif level_assessment.details is None:
+        observe(workflow="level_assessment", failure_stage="details_validation",
+                reason="optional_details_missing", outcome="recovered")
     return SessionLevelAssessmentResponse(
         sessionId=request.sessionId,
         levelAssessment=level_assessment,
@@ -1421,7 +1453,10 @@ def _recover_session_level_assessment(
         )
     except ValidationError:
         details = None
-    return SessionLevelAssessment(core=core, details=details)
+    filtered_core = filter_non_latin_assessment_evidence(core, expected_messages)
+    if filtered_core is not core:
+        details = None
+    return SessionLevelAssessment(core=filtered_core, details=details)
 
 
 def _recover_session_feedback_summary(
@@ -1689,7 +1724,10 @@ def _request_json_completion(
                     )
                     request.pop("response_format", None)
                     completion = client.chat.completions.create(**request)
-                return _parse_json_object(_extract_message_content(completion))
+                data = _parse_json_object(_extract_message_content(completion))
+                observe(workflow=workflow, failure_stage="output_format", reason="format_fallback",
+                        outcome="recovered", attempt=attempt)
+                return data
             try:
                 data = _parse_strict_json_object(_extract_message_content(completion))
             except AiResponseInvalidError as exc:
@@ -1717,9 +1755,11 @@ def _request_json_completion(
                     max_attempts,
                 )
                 continue
+            schema_valid = True
             try:
                 response_model.model_validate(data)
             except ValidationError as exc:
+                schema_valid = False
                 reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
                 logger.warning(
                     "Structured Outputs schema 검증에 실패했습니다. "
@@ -1744,6 +1784,9 @@ def _request_json_completion(
                         max_attempts,
                     )
                     continue
+            if schema_valid and attempt > 1:
+                observe(workflow=workflow, failure_stage="output_validation", reason="json_repaired",
+                        outcome="recovered", attempt=attempt)
             return data
     except AiGenerationFailedError:
         raise

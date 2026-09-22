@@ -117,6 +117,29 @@ class FreeTalkTurnCorrectionApiTests(unittest.TestCase):
         self.assertEqual(len(fake.completions.calls), 1)
         self.assertEqual(len(fake.completions.correction_calls), 1)
 
+    def test_inner_thought_repair_keeps_correction_and_records_recovery(self):
+        correction = correction_completion(reactedToPartner=False)
+        fake = FakeOpenAI(
+            contents=["not JSON", json.dumps(inner_thought_completion())],
+            correction_contents=[json.dumps(correction)],
+        )
+
+        with self.assertLogs("app.common.failure_observation", level="WARNING") as logs:
+            response = self._post(payload_with_partner_turn(), fake)
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assert_inner_thought_intact(data)
+        self.assertFalse(data["reactedToPartner"])
+        self.assertEqual(data["correction"], correction["correction"])
+        self.assertEqual(len(fake.completions.calls), 2)
+        self.assertEqual(len(fake.completions.correction_calls), 1)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("workflow=free_talk_inner_thought", logs.output[0])
+        self.assertIn("reason=contract_repaired", logs.output[0])
+        self.assertIn("outcome=recovered", logs.output[0])
+        self.assertIn("attempt=2", logs.output[0])
+
     def test_no_correction_keeps_reaction_and_returns_null_correction(self):
         fake = self._fake(
             {"reactedToPartner": False, "hasCorrection": False, "correction": None}
