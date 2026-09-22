@@ -605,6 +605,17 @@ class FreeTalkInnerThoughtRequest(FreeTalkContext):
     conversationHistory: list[ConversationHistoryMessage] = Field(min_length=1)
     # 턴 교정의 근거로만 쓰고 속마음 판정에는 넘기지 않는다
     memoryContext: list["MemoryContext"] = Field(default_factory=list, max_length=3)
+    # 직전 세션에서 교정받은 실수 패턴. 턴 교정 호출에만 넘기고, 비어 있으면 그 호출은 기존과 같다
+    watchPatterns: list[FreeTalkMistakePattern] = Field(default_factory=list, max_length=3)
+
+    @field_validator("watchPatterns")
+    @classmethod
+    def watch_patterns_must_be_unique(
+        cls, value: list[FreeTalkMistakePattern]
+    ) -> list[FreeTalkMistakePattern]:
+        if len(value) != len(set(value)):
+            raise ValueError("watchPatterns must be unique")
+        return value
 
     @model_validator(mode="after")
     def submitted_message_must_match_latest_history(self) -> Self:
@@ -632,6 +643,10 @@ class FreeTalkCorrection(BaseModel):
     # usedMemoryId가 있을 때만. 그 기억이 가리키는 대상을 기준 언어(baseLocale)의 짧은 명사구로.
     # 날짜와 "스몰톡에서 말한" 같은 틀 문구는 백엔드가 붙인다.
     memoryLabel: str | None = None
+    # 화면에서 색칠할 구절. 각 문장 안에 단어 경계 기준으로 정확히 한 번 나오는 부분 문자열이다.
+    # 빠진 단어를 채운 교정은 wrongSpan이, 단어를 지운 교정은 betterSpan이 null이다.
+    wrongSpan: str | None = None
+    betterSpan: str | None = None
 
     @field_validator("originalSentence", "betterSentence", "reason")
     @classmethod
@@ -639,11 +654,23 @@ class FreeTalkCorrection(BaseModel):
         return _validate_not_blank(value)
 
 
+class FreeTalkPatternUsage(BaseModel):
+    """지켜볼 실수 패턴이 이번 턴에 등장한 사용례 하나. span은 sentence의, sentence는 제출 메시지의 일부다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: FreeTalkMistakePattern
+    sentence: str
+    span: str
+    correct: bool
+
+
 class FreeTalkInnerThoughtResponse(BaseModel):
     """속마음과 함께 턴 교정 판정을 담는다.
 
     reactedToPartner와 correction은 교정 판정이 실패·타임아웃하면 둘 다 null이다.
     고칠 게 없을 때는 correction만 null이고 reactedToPartner는 채워진다.
+    patternUsages는 지켜볼 패턴이 없거나 판정이 실패하면 null이고, 판정했는데 등장하지 않았으면 빈 목록이다.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -652,6 +679,7 @@ class FreeTalkInnerThoughtResponse(BaseModel):
     innerThoughtType: InnerThoughtType
     reactedToPartner: bool | None
     correction: FreeTalkCorrection | None
+    patternUsages: list[FreeTalkPatternUsage] | None
 
     @field_validator("innerThought")
     @classmethod

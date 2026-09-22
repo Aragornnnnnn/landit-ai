@@ -2,12 +2,46 @@
 import unittest
 
 from app.free_talk.domain.correction_rules import (
+    is_declarative_question,
     is_effective_correction,
     MEMORY_LABEL_MAX_LENGTH,
     is_only_definite_article_swap,
     locate_original_sentence,
     memory_label_rejection,
 )
+
+
+class ArticleSwapApostropheTests(unittest.TestCase):
+    def test_apostrophe_shape_does_not_hide_an_article_swap(self):
+        self.assertTrue(
+            is_only_definite_article_swap("I saw a dog’s tail", "I saw the dog's tail")
+        )
+
+
+class DeclarativeQuestionTests(unittest.TestCase):
+    def test_statement_order_questions_are_declarative(self):
+        for sentence in (
+            "You called the police?",
+            "Wait, you’re leaving already?",
+            "He came to your school?",
+            "You studied a lot, right?",
+        ):
+            with self.subTest(sentence):
+                self.assertTrue(is_declarative_question(sentence))
+
+    def test_questions_with_a_question_word_or_helping_verb_are_not(self):
+        for sentence in (
+            "Where you work now?",
+            "So what the doctor said?",
+            "Do you like it?",
+            "Isn’t it far?",
+            "Don't you know him?",
+            "Won’t you join us?",
+            "Can I try some?",
+            "You called the police.",
+        ):
+            with self.subTest(sentence):
+                self.assertFalse(is_declarative_question(sentence))
 
 
 class LocateOriginalSentenceTests(unittest.TestCase):
@@ -23,6 +57,12 @@ class LocateOriginalSentenceTests(unittest.TestCase):
         self.assertEqual(
             locate_original_sentence(content, "i go to gym YESTERDAY with my friend."),
             "I go to  gym yesterday with my friend.",
+        )
+
+    def test_apostrophe_shape_does_not_matter_and_the_original_slice_is_returned(self):
+        content = "Yeah. I don’t like it. It’s too sweet."
+        self.assertEqual(
+            locate_original_sentence(content, "I don't like it."), "I don’t like it."
         )
 
     def test_missing_sentence_returns_none(self):
