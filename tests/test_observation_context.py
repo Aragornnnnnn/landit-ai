@@ -16,6 +16,7 @@ from app.free_talk.llm.json_completion import request_json_completion
 from app.main import create_app
 from tests.test_failure_observation import MemoryTransport
 from test_app import make_client, make_settings
+from test_pronunciation_api import REQUEST_BODY, DECODED, SPANS
 from test_conversation_api import valid_next_message_payload
 from test_context_summary import _payload, _FakeAsyncCompletions
 from app.free_talk.llm.embeddings import request_embeddings
@@ -198,4 +199,52 @@ class ObservationContextTests(unittest.TestCase):
                 asyncio.run(summarize())
         self.assertEqual(for_failure(caught.exception)["model"], "openai/gpt-5.4-mini")
         self.assertEqual(for_failure(caught.exception)["free_talk_session_id"], "7")
+        self.assertEqual(for_failure(), {})
+
+    def test_pronunciation_workers_keep_request_and_model_on_sdk_and_output_failure(self):
+        client = make_client(create_app(make_settings(
+            landit_ai_internal_token="test-auth", pronunciation_model="vendor/pronunciation")))
+        service = "app.pronunciation.application.analysis_service"
+        for upstream_failure, status in ((True, 503), (False, 502)):
+            with self.subTest(upstream_failure=upstream_failure):
+                upstream = Mock()
+                if upstream_failure:
+                    upstream.chat.completions.create.side_effect = RuntimeError("secret-audio")
+                else:
+                    upstream.chat.completions.create.return_value = SimpleNamespace(
+                        choices=[SimpleNamespace(message=SimpleNamespace(content="not-json"))])
+                with (patch(f"{service}.decode_user_audio", return_value=DECODED),
+                      patch(f"{service}._download_reference", return_value=b"reference"),
+                      patch(f"{service}.align_words", return_value=SPANS),
+                      patch(f"{service}.create_openai_client", return_value=upstream)):
+                    response = client.post("/api/v1/pronunciation/analyze", json=REQUEST_BODY,
+                                           headers=self.headers)
+                self.assertEqual(response.status_code, status)
+                event = self.transport.events[-1]
+                self.assertEqual(event["tags"]["http_route"], "/api/v1/pronunciation/analyze")
+                self.assertEqual(event["tags"]["http_method"], "POST")
+                self.assertEqual(event["tags"]["provider"], "openrouter")
+                self.assertEqual(event["tags"]["model"], "vendor/pronunciation")
+                self.assertEqual(event["user"], {"id": "42"})
+                self.assertNotIn("learning_session_id", event["tags"])
+                self.assertNotIn("secret-", json.dumps(event))
+        self.assertEqual(len(self.transport.events), 2)
+        self.assertEqual(for_failure(), {})
+
+    def test_pronunciation_worker_context_is_per_submission_and_restored(self):
+        from app.pronunciation.application.analysis_service import _submit_observed
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            for session in (100, 200):
+                with scope(learning_session_id=session, free_talk_session_id=None):
+                    def worker():
+                        bind_model("openrouter", "worker-model")
+                        raise ValueError("secret-output")
+                    future = _submit_observed(executor, worker)
+                with self.assertRaises(ValueError) as caught:
+                    future.result()
+                saved = for_failure(caught.exception)
+                self.assertEqual(saved["learning_session_id"], str(session))
+                self.assertEqual(saved["model"], "worker-model")
+                self.assertEqual(executor.submit(for_failure).result(), {})
         self.assertEqual(for_failure(), {})
