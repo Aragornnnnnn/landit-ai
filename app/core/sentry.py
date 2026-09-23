@@ -3,11 +3,16 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.openai import OpenAIIntegration
 
+from app.common.observation_context import for_failure
 from app.core.config import Settings
 from app.common.failure_diagnostics import exception_diagnostics
 from app.common.failure_observation import request_id, user_id, validated_user_id
 
-_SAFE_TAGS = {"workflow", "failure_stage", "reason", "outcome", "recovered", "attempt", "request_id"}
+_SAFE_TAGS = {
+    "workflow", "failure_stage", "reason", "outcome", "recovered", "attempt",
+    "request_id", "learning_session_id", "free_talk_session_id", "message_id",
+    "http_method", "http_route", "provider", "model",
+}
 _FRAME_FIELDS = {"filename", "function", "module", "lineno", "in_app"}
 
 
@@ -34,6 +39,7 @@ def scrub_sensitive_request_data(event: dict, hint: dict) -> dict | None:
         "outcome": "failed", "recovered": "false", "attempt": "1",
     }
     tags = dict(tags)
+    tags.update(for_failure(exc))
     correlation = getattr(exc, "_landit_request_id", None) or request_id.get()
     if correlation and "request_id" not in tags:
         tags["request_id"] = correlation

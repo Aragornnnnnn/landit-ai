@@ -5,6 +5,7 @@ from contextvars import ContextVar
 import sentry_sdk
 from opentelemetry import metrics
 
+from app.common.observation_context import for_failure
 from app.common.failure_diagnostics import exception_diagnostics
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ def observe(*, workflow: str, failure_stage: str, reason: str,
         "attempt": str(attempt),
     }
     _counter.add(1, {k: v for k, v in tags.items() if k != "attempt"})
+    tags.update(for_failure(exc))
     correlation = getattr(exc, "_landit_request_id", request_id.get())
     actor = getattr(exc, "_landit_user_id", user_id.get())
     if correlation:
