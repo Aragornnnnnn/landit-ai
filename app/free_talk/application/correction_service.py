@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.common.observation_context import remember
 from app.core.config import Settings
 from app.common.failure_observation import observe
 from app.free_talk.domain.correction_rules import (
@@ -195,6 +196,7 @@ def generate_turn_correction(
     except AiResponseInvalidError:
         return unavailable_turn_correction(payload, "response_invalid")
     except ValidationError as exc:
+        remember(exc)
         return unavailable_turn_correction(
             payload, "contract_validation", _invalid_field_names(exc)
         )
@@ -202,6 +204,7 @@ def generate_turn_correction(
     try:
         return _validated_result(candidate, payload, watch_patterns)
     except Exception as exc:  # noqa: BLE001
+        remember(exc)
         return unexpected_turn_correction(payload, exc)
 
 

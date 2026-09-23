@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.common.observation_context import bind_model, preserve_failure
 from app.core.config import Settings
 from app.core.openai_client import create_async_openai_client
 from app.core.structured_output import json_schema_response_format
@@ -37,6 +38,7 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 
+@preserve_failure
 async def generate_context_summary(
     payload: ContextSummaryRequest,
     settings: Settings,
@@ -68,8 +70,10 @@ async def generate_context_summary(
                 settings,
                 timeout=settings.free_talk_summary_timeout_seconds,
             )
+            model = _required_model(settings)
+            bind_model(settings.llm_provider, model)
             completion = await client.chat.completions.create(
-                model=_required_model(settings),
+                model=model,
                 messages=[
                     {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
