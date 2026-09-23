@@ -5,7 +5,7 @@ from sentry_sdk.integrations.openai import OpenAIIntegration
 
 from app.core.config import Settings
 from app.common.failure_diagnostics import exception_diagnostics
-from app.common.failure_observation import request_id
+from app.common.failure_observation import request_id, user_id, validated_user_id
 
 _SAFE_TAGS = {"workflow", "failure_stage", "reason", "outcome", "recovered", "attempt", "request_id"}
 _FRAME_FIELDS = {"filename", "function", "module", "lineno", "in_app"}
@@ -38,6 +38,9 @@ def scrub_sensitive_request_data(event: dict, hint: dict) -> dict | None:
     if correlation and "request_id" not in tags:
         tags["request_id"] = correlation
     safe["tags"] = {key: value for key, value in tags.items() if key in _SAFE_TAGS}
+    actor = validated_user_id(getattr(exc, "_landit_user_id", user_id.get()))
+    if actor:
+        safe["user"] = {"id": actor}
     if getattr(exc, "_landit_synthetic", False):
         safe["fingerprint"] = ["functional_failure", tags["workflow"], tags["failure_stage"], tags["reason"]]
     diagnostics = exception_diagnostics(exc)

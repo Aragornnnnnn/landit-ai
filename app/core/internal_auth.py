@@ -6,7 +6,7 @@ import uuid
 from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
-from app.common.failure_observation import observe, request_id
+from app.common.failure_observation import observe, request_id, user_id, validated_user_id
 from app.core.config import Settings
 
 
@@ -19,6 +19,7 @@ def register_internal_auth(app: FastAPI, settings: Settings) -> None:
         request.state.internal_authenticated = False
         correlation = str(uuid.uuid4())
         context_token = request_id.set(correlation)
+        user_context_token = user_id.set("")
         try:
             # 비어 있는 설정은 구버전 BE를 먼저 교체하기 위한 전환 단계다.
             if expected and request.url.path.startswith("/api/"):
@@ -31,6 +32,7 @@ def register_internal_auth(app: FastAPI, settings: Settings) -> None:
                         "error": {"code": "UNAUTHORIZED", "message": "인증이 필요합니다."},
                     })
                 request.state.internal_authenticated = True
+                user_id.set(validated_user_id(request.headers.get("X-Landit-User-Id", "")))
             if request.url.path.startswith("/api/"):
                 try:
                     correlation = str(uuid.UUID(request.headers.get("X-Request-Id", "")))
@@ -40,6 +42,8 @@ def register_internal_auth(app: FastAPI, settings: Settings) -> None:
             return await call_next(request)
         except Exception as exc:
             exc._landit_request_id = correlation
+            exc._landit_user_id = user_id.get()
             raise
         finally:
             request_id.reset(context_token)
+            user_id.reset(user_context_token)

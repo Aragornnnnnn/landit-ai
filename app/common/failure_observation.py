@@ -9,7 +9,16 @@ from app.common.failure_diagnostics import exception_diagnostics
 
 logger = logging.getLogger(__name__)
 request_id: ContextVar[str] = ContextVar("failure_request_id", default="")
+user_id: ContextVar[str] = ContextVar("failure_user_id", default="")
 _counter = metrics.get_meter(__name__).create_counter("landit.failure.outcomes")
+
+
+def validated_user_id(value: str) -> str:
+    """인증된 BE가 제공한 양의 Long 사용자 ID만 허용한다."""
+    if (not isinstance(value, str) or not value.isascii() or not value.isdecimal()
+            or not 1 <= len(value) <= 19 or value.startswith("0")):
+        return ""
+    return value if int(value) <= 9223372036854775807 else ""
 
 
 def configure_failure_metrics(provider) -> None:
@@ -72,14 +81,17 @@ def observe(*, workflow: str, failure_stage: str, reason: str,
         "attempt": str(attempt),
     }
     _counter.add(1, {k: v for k, v in tags.items() if k != "attempt"})
-    if request_id.get():
-        tags["request_id"] = request_id.get()
+    correlation = getattr(exc, "_landit_request_id", request_id.get())
+    actor = getattr(exc, "_landit_user_id", user_id.get())
+    if correlation:
+        tags["request_id"] = correlation
     log = logger.error if outcome == "failed" else logger.warning
     diagnostics = exception_diagnostics(exc)
     log("failure_observation %s diagnostics=%s",
         " ".join(f"{k}={v}" for k, v in tags.items()), diagnostics)
     if exc is not None:
         exc._landit_observation = tags
+        exc._landit_user_id = actor
     if outcome == "failed":
         failure = exc
         if failure is None:
@@ -89,4 +101,5 @@ def observe(*, workflow: str, failure_stage: str, reason: str,
                 failure = synthetic
                 failure._landit_synthetic = True
         failure._landit_observation = tags
+        failure._landit_user_id = actor
         sentry_sdk.capture_exception(failure, tags=tags)
