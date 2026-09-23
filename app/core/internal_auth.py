@@ -31,6 +31,7 @@ def register_internal_auth(app: FastAPI, settings: Settings) -> None:
                         "error": {"code": "UNAUTHORIZED", "message": "인증이 필요합니다."},
                     })
                 request.state.internal_authenticated = True
+            if request.url.path.startswith("/api/"):
                 try:
                     correlation = str(uuid.UUID(request.headers.get("X-Request-Id", "")))
                     request_id.set(correlation)

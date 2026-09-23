@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
@@ -624,7 +625,7 @@ def _submitted_turn_correction(
 ) -> Future[TurnCorrectionResult]:
     # 스레드를 띄우지 못해도 속마음은 나가야 한다. 실패를 future에 담아 기다리는 쪽에서 한 번에 처리한다.
     try:
-        return executor.submit(generate_turn_correction, payload, settings)
+        return executor.submit(copy_context().run, generate_turn_correction, payload, settings)
     except Exception as exc:  # noqa: BLE001
         failed: Future[TurnCorrectionResult] = Future()
         failed.set_exception(exc)

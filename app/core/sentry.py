@@ -4,6 +4,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.openai import OpenAIIntegration
 
 from app.core.config import Settings
+from app.common.failure_diagnostics import exception_diagnostics
 from app.common.failure_observation import request_id
 
 _SAFE_TAGS = {"workflow", "failure_stage", "reason", "outcome", "recovered", "attempt", "request_id"}
@@ -39,6 +40,14 @@ def scrub_sensitive_request_data(event: dict, hint: dict) -> dict | None:
     safe["tags"] = {key: value for key, value in tags.items() if key in _SAFE_TAGS}
     if getattr(exc, "_landit_synthetic", False):
         safe["fingerprint"] = ["functional_failure", tags["workflow"], tags["failure_stage"], tags["reason"]]
+    diagnostics = exception_diagnostics(exc)
+    if diagnostics:
+        safe["contexts"] = {"failure": diagnostics}
+        for key in ("validation_reason", "error_code", "upstream_status"):
+            if key in diagnostics:
+                safe["tags"][key] = str(diagnostics[key])
+    if "validation_reason" in diagnostics:
+        safe["fingerprint"] = ["{{ default }}", diagnostics["validation_reason"]]
     values = []
     for value in event.get("exception", {}).get("values", []):
         clean = {k: value[k] for k in ("type", "module") if k in value}
@@ -49,6 +58,8 @@ def scrub_sensitive_request_data(event: dict, hint: dict) -> dict | None:
         ]}
         values.append(clean)
     if values:
+        summary = diagnostics.get("validation_reason") or tags["reason"]
+        values[-1]["value"] = f"{tags['workflow']}: {summary}"
         safe["exception"] = {"values": values}
     else:
         safe["message"] = "unclassified_server_failure"

@@ -208,6 +208,14 @@ class AiResponseInvalidError(Exception):
         self.response_format = response_format
 
 
+class AssessmentValidationError(AiResponseInvalidError):
+    """평가 계약의 고정된 필드 경로를 원문 없이 보존한다."""
+
+    def __init__(self, reason: str, field: str) -> None:
+        super().__init__(reason)
+        self.invalid_fields = (field,)
+
+
 class AiGenerationFailedError(Exception):
     """AI 호출 자체가 실패했을 때 발생한다."""
 
@@ -1261,6 +1269,7 @@ def generate_session_level_assessment(
     user_prompt = _session_level_assessment_user_prompt(request)
     deadline = time.monotonic() + resolved_settings.session_level_assessment_budget_seconds
     data: dict[str, Any] = {}
+    failures: list[Exception] = []
     selected_response_format: dict[str, Any] | None = (
         _session_level_assessment_response_format()
     )
@@ -1274,6 +1283,7 @@ def generate_session_level_assessment(
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
+        failures.append(exc)
         selected_response_format = exc.response_format
         logger.warning(
             "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
@@ -1285,6 +1295,7 @@ def generate_session_level_assessment(
         request,
         None,
         require_session_id=True,
+        failures=failures,
     )
     retried = level_assessment is None
     if retried:
@@ -1295,10 +1306,12 @@ def generate_session_level_assessment(
             user_prompt,
             selected_response_format,
             deadline=deadline,
+            failures=failures,
         )
     if level_assessment is None:
         observe(workflow="level_assessment", failure_stage="core_validation",
-                reason="core_missing", outcome="failed", attempt=2)
+                reason="core_missing", outcome="failed", attempt=2,
+                exc=failures[-1] if failures else None)
     elif retried:
         observe(workflow="level_assessment", failure_stage="core_validation",
                 reason="core_repaired", outcome="recovered", attempt=2)
@@ -1356,6 +1369,7 @@ def _retry_session_level_assessment_core(
     user_prompt: str,
     response_format: dict[str, Any] | None | object = _USE_STRICT_RESPONSE_FORMAT,
     deadline: float | None = None,
+    failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
     selected_response_format = (
         _session_level_assessment_core_response_format()
@@ -1376,7 +1390,9 @@ def _retry_session_level_assessment_core(
             response_format=selected_response_format,
             deadline=deadline,
         )
-    except AiResponseInvalidError:
+    except AiResponseInvalidError as exc:
+        if failures is not None:
+            failures.append(exc)
         logger.warning(
             "AI 세션 수준 평가 Core 재요청 결과가 올바르지 않습니다. "
             "workflow=session_level_assessment_core_failed sessionId=%s",
@@ -1388,6 +1404,7 @@ def _retry_session_level_assessment_core(
         request,
         feedback_entries,
         require_session_id=False,
+        failures=failures,
     )
 
 
@@ -1411,16 +1428,33 @@ def _recover_session_level_assessment(
     request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     require_session_id: bool = True,
+    failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
+    try:
+        return _validate_session_level_assessment(data, request, feedback_entries, require_session_id)
+    except AiResponseInvalidError as exc:
+        if failures is not None:
+            failures.append(exc)
+        return None
+
+
+def _validate_session_level_assessment(
+    data: dict[str, Any],
+    request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry] | None,
+    require_session_id: bool = True,
+) -> SessionLevelAssessment:
     if require_session_id and data.get("sessionId") != request.sessionId:
-        return None
+        raise AssessmentValidationError("assessment_session_mismatch", "sessionId")
     raw_assessment = data.get("levelAssessment")
-    if not isinstance(raw_assessment, dict) or not request.assessmentMessages:
-        return None
+    if not isinstance(raw_assessment, dict):
+        raise AssessmentValidationError("assessment_missing", "levelAssessment")
+    if not request.assessmentMessages:
+        raise AssessmentValidationError("assessment_messages_missing", "assessmentMessages")
     try:
         core = SessionLevelAssessmentCore.model_validate(raw_assessment.get("core"))
-    except ValidationError:
-        return None
+    except ValidationError as exc:
+        raise AssessmentValidationError("assessment_core_schema", "core") from exc
     expected_messages = {
         message.messageId: message for message in request.assessmentMessages
     }
@@ -1428,25 +1462,25 @@ def _recover_session_level_assessment(
         request,
         feedback_entries,
     ):
-        return None
+        raise AssessmentValidationError("assessment_cache_mismatch", "assessmentMessages")
     if [message.messageId for message in core.messages] != request.expectedMessageIds:
-        return None
+        raise AssessmentValidationError("assessment_message_ids", "core.messages.[].messageId")
     for message in core.messages:
         expected = expected_messages.get(message.messageId)
         if expected is None:
-            return None
-        for domain in (
-            message.domains.situationPerformance,
-            message.domains.grammar,
-            message.domains.vocabulary,
-            message.domains.discourse,
-            message.domains.interactionPragmatics,
+            raise AssessmentValidationError("assessment_message_missing", "core.messages.[].messageId")
+        for domain_name in (
+            "situationPerformance", "grammar", "vocabulary", "discourse", "interactionPragmatics",
         ):
+            domain = getattr(message.domains, domain_name)
             if (
                 domain.evidenceExcerpt is not None
                 and domain.evidenceExcerpt not in expected.userMessage
             ):
-                return None
+                raise AssessmentValidationError(
+                    "assessment_evidence_mismatch",
+                    f"core.messages.[].domains.{domain_name}.evidenceExcerpt",
+                )
     try:
         details = SessionLevelAssessmentDetails.model_validate(
             raw_assessment.get("details"),

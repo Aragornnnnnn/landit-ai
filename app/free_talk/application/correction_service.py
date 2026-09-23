@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from app.core.config import Settings
+from app.common.failure_observation import observe
 from app.free_talk.domain.correction_rules import (
     is_declarative_question,
     is_effective_correction,
@@ -269,6 +270,8 @@ def unexpected_turn_correction(
             f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}" for frame in located
         ),
     )
+    observe(workflow="free_talk_turn_correction", failure_stage="execution",
+            reason="unexpected_error", outcome="failed", exc=error)
     return TurnCorrectionResult(reacted_to_partner=None, correction=None)
 
 

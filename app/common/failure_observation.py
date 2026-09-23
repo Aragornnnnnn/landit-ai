@@ -5,6 +5,8 @@ from contextvars import ContextVar
 import sentry_sdk
 from opentelemetry import metrics
 
+from app.common.failure_diagnostics import exception_diagnostics
+
 logger = logging.getLogger(__name__)
 request_id: ContextVar[str] = ContextVar("failure_request_id", default="")
 _counter = metrics.get_meter(__name__).create_counter("landit.failure.outcomes")
@@ -73,12 +75,18 @@ def observe(*, workflow: str, failure_stage: str, reason: str,
     if request_id.get():
         tags["request_id"] = request_id.get()
     log = logger.error if outcome == "failed" else logger.warning
-    log("failure_observation %s", " ".join(f"{k}={v}" for k, v in tags.items()))
+    diagnostics = exception_diagnostics(exc)
+    log("failure_observation %s diagnostics=%s",
+        " ".join(f"{k}={v}" for k, v in tags.items()), diagnostics)
     if exc is not None:
         exc._landit_observation = tags
     if outcome == "failed":
-        failure = exc or RuntimeError("functional_failure")
-        if exc is None:
-            failure._landit_synthetic = True
+        failure = exc
+        if failure is None:
+            try:
+                raise RuntimeError("functional_failure")
+            except RuntimeError as synthetic:
+                failure = synthetic
+                failure._landit_synthetic = True
         failure._landit_observation = tags
         sentry_sdk.capture_exception(failure, tags=tags)
