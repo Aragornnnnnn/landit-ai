@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Request
 
+from app.common.observation_context import ObservationRoute, for_failure, observe_operation
 from app.common.errors import ApiException, ErrorCode
 from app.common.exception_handlers import report_ai_fallback
 from app.common.response import ApiResponse, success_response
@@ -54,11 +55,16 @@ from app.models.free_talk import (
 )
 
 
-router = APIRouter(prefix="/api/v1/free-talk", tags=["free-talk"])
+router = APIRouter(
+    route_class=ObservationRoute,
+    prefix="/api/v1/free-talk",
+    tags=["free-talk"],
+)
 logger = logging.getLogger(__name__)
 
 
 @router.post("/opening", response_model=ApiResponse[FreeTalkOpeningResponse])
+@observe_operation(free_talk="sessionId")
 def create_opening(
     payload: FreeTalkOpeningRequest,
     request: Request,
@@ -67,6 +73,7 @@ def create_opening(
 
 
 @router.post("/turn", response_model=ApiResponse[FreeTalkTurnResponse])
+@observe_operation(free_talk="sessionId", message="submittedMessageId")
 def create_turn(
     payload: FreeTalkTurnRequest,
     request: Request,
@@ -78,6 +85,7 @@ def create_turn(
     "/context-summary",
     response_model=ApiResponse[ContextSummaryResponse],
 )
+@observe_operation(free_talk="sessionId")
 async def create_context_summary(
     payload: ContextSummaryRequest,
     request: Request,
@@ -95,6 +103,7 @@ async def create_context_summary(
 
 
 @router.post("/inner-thought", response_model=ApiResponse[FreeTalkInnerThoughtResponse])
+@observe_operation(free_talk="sessionId", message="submittedMessageId")
 def create_inner_thought(
     payload: FreeTalkInnerThoughtRequest,
     request: Request,
@@ -103,6 +112,7 @@ def create_inner_thought(
 
 
 @router.post("/closing", response_model=ApiResponse[FreeTalkClosingResponse])
+@observe_operation(free_talk="sessionId", message="submittedMessageId")
 def create_closing(
     payload: FreeTalkClosingRequest,
     request: Request,
@@ -119,6 +129,7 @@ def create_closing(
     "/expression-recommendations",
     response_model=ApiResponse[ExpressionRecommendationsResponse],
 )
+@observe_operation(learning="sessionId")
 def create_expression_recommendations(
     payload: ExpressionRecommendationsRequest,
     request: Request,
@@ -130,6 +141,7 @@ def create_expression_recommendations(
     "/conversation-embeddings",
     response_model=ApiResponse[ConversationEmbeddingsResponse],
 )
+@observe_operation(learning="sessionId")
 def create_conversation_embeddings(
     payload: ConversationEmbeddingsRequest,
     request: Request,
@@ -141,6 +153,7 @@ def create_conversation_embeddings(
     "/memory-candidates",
     response_model=ApiResponse[MemoryCandidatesResponse],
 )
+@observe_operation(learning="sessionId")
 def create_memory_candidates(
     payload: MemoryCandidatesRequest,
     request: Request,
@@ -163,6 +176,7 @@ def create_memory_candidates(
     "/memory-resolution",
     response_model=ApiResponse[MemoryResolutionResponse],
 )
+@observe_operation()
 def create_memory_resolution(
     payload: MemoryResolutionRequest,
     request: Request,
@@ -186,6 +200,7 @@ def create_memory_resolution(
     "/memory-query-embedding",
     response_model=ApiResponse[MemoryQueryEmbeddingResponse],
 )
+@observe_operation()
 def create_memory_query_embedding(
     payload: MemoryQueryEmbeddingRequest,
     request: Request,
@@ -211,9 +226,9 @@ def _generate(payload, request: Request, generator):
         logger.warning(
             "프리톡 AI 응답 계약 검증에 실패했습니다. "
             "event=contract_validation_failure endpoint=%s provider=%s model=%s reason=%s",
-            request.url.path,
-            request.app.state.settings.llm_provider,
-            request.app.state.settings.openrouter_model,
+            for_failure(exc).get("http_route", "UNKNOWN"),
+            for_failure(exc).get("provider", "UNKNOWN"),
+            for_failure(exc).get("model", "UNKNOWN"),
             exc.reason,
         )
         raise ApiException(502, ErrorCode.AI_RESPONSE_INVALID) from exc

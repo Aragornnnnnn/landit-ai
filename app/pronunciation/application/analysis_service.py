@@ -10,11 +10,13 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextvars import copy_context
 from dataclasses import replace
 from urllib.parse import urlparse
 
 import httpx
 
+from app.common.observation_context import preserve_failure
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.models.pronunciation import (
@@ -100,23 +102,23 @@ def analyze_pronunciation(
     # 대기 없이 닫고 결과 수거에만 남은 예산을 적용한다
     executor = ThreadPoolExecutor(max_workers=2 + len(contrasts))
     try:
-        judgment_future = executor.submit(
-            _judge,
+        judgment_future = _submit_observed(
+            executor, _judge,
             payload.referenceAudioUrl,
             decoded.judgment_wav,
             payload.accentLocale.value,
             settings,
             deadline,
         )
-        alignment_future = executor.submit(
-            align_words,
+        alignment_future = _submit_observed(
+            executor, align_words,
             decoded.alignment_wav,
             word_texts,
             settings.pronunciation_alignment_model_path,
         )
         # 억양 확인은 단어 단위 양자택일이라 서로 독립이므로 본 판정과 함께 병렬로 던진다
         accent_futures = [
-            executor.submit(_check_accent, decoded.judgment_wav, contrast, settings)
+            _submit_observed(executor, _check_accent, decoded.judgment_wav, contrast, settings)
             for contrast in contrasts
         ]
         differences, reference_wav = _required_result(judgment_future, deadline)
@@ -132,6 +134,11 @@ def analyze_pronunciation(
     results = _merge(ordered_words, spans, differences)
     _apply_accent_verdicts(results, ordered_words, verdicts)
     return PronunciationAnalyzeResponse(words=results)
+
+
+def _submit_observed(executor, function, *args):
+    # 작업마다 별도 Context를 복사하고 출력 검증까지 끝난 뒤 예외 문맥을 고정한다.
+    return executor.submit(copy_context().run, preserve_failure(function), *args)
 
 
 def _required_result(future, deadline: float):
@@ -244,22 +251,26 @@ def _describe(
 
     client = create_openai_client(settings)
     with ThreadPoolExecutor(max_workers=len(differences)) as executor:
-        described = executor.map(
-            lambda difference: _with_description(
-                difference,
-                describe_error(
-                    client,
-                    settings,
-                    reference_wav=reference_wav,
-                    user_wav=user_wav,
-                    word=difference.word,
-                    error_type=difference.type,
-                    deadline=deadline,
+        described = [
+            _submit_observed(
+                executor,
+                lambda difference: _with_description(
+                    difference,
+                    describe_error(
+                        client,
+                        settings,
+                        reference_wav=reference_wav,
+                        user_wav=user_wav,
+                        word=difference.word,
+                        error_type=difference.type,
+                        deadline=deadline,
+                    ),
                 ),
-            ),
-            differences,
-        )
-        return list(described)
+                difference,
+            )
+            for difference in differences
+        ]
+        return [future.result() for future in described]
 
 
 def _with_description(

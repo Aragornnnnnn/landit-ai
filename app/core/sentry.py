@@ -3,10 +3,16 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.openai import OpenAIIntegration
 
+from app.common.observation_context import for_failure
 from app.core.config import Settings
-from app.common.failure_observation import request_id
+from app.common.failure_diagnostics import exception_diagnostics
+from app.common.failure_observation import request_id, user_id, validated_user_id
 
-_SAFE_TAGS = {"workflow", "failure_stage", "reason", "outcome", "recovered", "attempt", "request_id"}
+_SAFE_TAGS = {
+    "workflow", "failure_stage", "reason", "outcome", "recovered", "attempt",
+    "request_id", "learning_session_id", "free_talk_session_id", "message_id",
+    "http_method", "http_route", "provider", "model",
+}
 _FRAME_FIELDS = {"filename", "function", "module", "lineno", "in_app"}
 
 
@@ -33,12 +39,24 @@ def scrub_sensitive_request_data(event: dict, hint: dict) -> dict | None:
         "outcome": "failed", "recovered": "false", "attempt": "1",
     }
     tags = dict(tags)
+    tags.update(for_failure(exc))
     correlation = getattr(exc, "_landit_request_id", None) or request_id.get()
     if correlation and "request_id" not in tags:
         tags["request_id"] = correlation
     safe["tags"] = {key: value for key, value in tags.items() if key in _SAFE_TAGS}
+    actor = validated_user_id(getattr(exc, "_landit_user_id", user_id.get()))
+    if actor:
+        safe["user"] = {"id": actor}
     if getattr(exc, "_landit_synthetic", False):
         safe["fingerprint"] = ["functional_failure", tags["workflow"], tags["failure_stage"], tags["reason"]]
+    diagnostics = exception_diagnostics(exc)
+    if diagnostics:
+        safe["contexts"] = {"failure": diagnostics}
+        for key in ("validation_reason", "error_code", "upstream_status"):
+            if key in diagnostics:
+                safe["tags"][key] = str(diagnostics[key])
+    if "validation_reason" in diagnostics:
+        safe["fingerprint"] = ["{{ default }}", diagnostics["validation_reason"]]
     values = []
     for value in event.get("exception", {}).get("values", []):
         clean = {k: value[k] for k in ("type", "module") if k in value}
@@ -49,6 +67,8 @@ def scrub_sensitive_request_data(event: dict, hint: dict) -> dict | None:
         ]}
         values.append(clean)
     if values:
+        summary = diagnostics.get("validation_reason") or tags["reason"]
+        values[-1]["value"] = f"{tags['workflow']}: {summary}"
         safe["exception"] = {"values": values}
     else:
         safe["message"] = "unclassified_server_failure"

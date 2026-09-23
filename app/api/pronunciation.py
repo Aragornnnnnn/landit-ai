@@ -1,6 +1,7 @@
 # 발음 분석 HTTP API 라우터를 정의하는 모듈
 from fastapi import APIRouter, Request
 
+from app.common.observation_context import ObservationRoute, observe_operation
 from app.common.errors import ApiException, ErrorCode
 from app.common.response import ApiResponse, success_response
 from app.models.pronunciation import (
@@ -21,10 +22,15 @@ from app.pronunciation.llm.compare import (
 )
 
 
-router = APIRouter(prefix="/api/v1/pronunciation", tags=["pronunciation"])
+router = APIRouter(
+    route_class=ObservationRoute,
+    prefix="/api/v1/pronunciation",
+    tags=["pronunciation"],
+)
 
 
 @router.post("/analyze", response_model=ApiResponse[PronunciationAnalyzeResponse])
+@observe_operation()
 def analyze(
     payload: PronunciationAnalyzeRequest,
     request: Request,

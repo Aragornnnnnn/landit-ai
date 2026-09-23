@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.observation_context import bind_model, preserve_failure
 from app.common.failure_observation import observe
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
@@ -40,6 +41,7 @@ class AiGenerationFailedError(Exception):
     """AI 호출 자체가 실패했을 때 발생한다."""
 
 
+@preserve_failure
 def request_json_completion(
     *,
     settings: Settings,
@@ -54,7 +56,9 @@ def request_json_completion(
     model: str | None = None,
     timeout_seconds: float | None = None,
 ) -> dict[str, object]:
+    bind_model(settings.llm_provider, None)
     model = _resolved_model(settings, model)
+    bind_model(settings.llm_provider, model)
     try:
         # timeout을 주면 SDK 재시도 없이 그 시간 안에 끝내거나 실패한다 (보조 판정용).
         client = create_openai_client(settings, timeout=timeout_seconds)

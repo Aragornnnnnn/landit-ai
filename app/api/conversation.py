@@ -1,6 +1,7 @@
 # 대화 생성 API 라우터를 정의하는 모듈
 from fastapi import APIRouter, Request
 
+from app.common.observation_context import ObservationRoute, observe_operation
 from app.common.errors import ApiException, ErrorCode
 from app.common.response import ApiResponse, success_response
 from app.models.conversation import (
@@ -29,13 +30,18 @@ from app.conversation.application.next_message_service import (
     generate_session_level_assessment,
 )
 
-router = APIRouter(prefix="/api/v1/conversation", tags=["conversation"])
+router = APIRouter(
+    route_class=ObservationRoute,
+    prefix="/api/v1/conversation",
+    tags=["conversation"],
+)
 
 
 @router.post(
     "/next-message",
     response_model=ApiResponse[NextMessageResponse],
 )
+@observe_operation(learning="sessionId", message="submittedMessageId")
 def create_next_message(
     payload: NextMessageRequest,
     request: Request,
@@ -60,6 +66,7 @@ def create_next_message(
     "/inner-thought",
     response_model=ApiResponse[InnerThoughtResponse],
 )
+@observe_operation(learning="sessionId", message="submittedMessageId")
 def create_inner_thought(
     payload: InnerThoughtRequest,
     request: Request,
@@ -84,6 +91,7 @@ def create_inner_thought(
     "/closing-message",
     response_model=ApiResponse[ClosingMessageResponse],
 )
+@observe_operation(learning="sessionId", message="submittedMessageId")
 def create_closing_message(
     payload: ClosingMessageRequest,
     request: Request,
@@ -110,6 +118,7 @@ def create_closing_message(
     response_model=ApiResponse[MessageFeedbackResponse],
     status_code=202,
 )
+@observe_operation(learning="sessionId", message="messageId")
 def create_message_feedback(
     payload: MessageFeedbackRequest,
     request: Request,
@@ -134,6 +143,7 @@ def create_message_feedback(
     "/session-feedback",
     response_model=ApiResponse[SessionFeedbackResponse],
 )
+@observe_operation(learning="sessionId")
 def create_session_feedback(
     payload: SessionFeedbackRequest,
     request: Request,
@@ -164,6 +174,7 @@ def create_session_feedback(
     "/session-level-assessment",
     response_model=ApiResponse[SessionLevelAssessmentResponse],
 )
+@observe_operation(learning="sessionId")
 def create_session_level_assessment(
     payload: SessionLevelAssessmentRequest,
     request: Request,
