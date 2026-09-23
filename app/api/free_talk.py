@@ -15,6 +15,10 @@ from app.free_talk.application.conversation_service import (
     generate_turn,
     safe_closing_response,
 )
+from app.free_talk.application.context_summary_service import (
+    SummaryInputTooLargeError,
+    generate_context_summary,
+)
 from app.free_talk.application.embedding_service import (
     generate_conversation_embeddings,
     generate_memory_query_embedding,
@@ -45,6 +49,8 @@ from app.models.free_talk import (
     MemoryQueryEmbeddingResponse,
     MemoryResolutionRequest,
     MemoryResolutionResponse,
+    ContextSummaryRequest,
+    ContextSummaryResponse,
 )
 
 
@@ -66,6 +72,26 @@ def create_turn(
     request: Request,
 ) -> ApiResponse[FreeTalkTurnResponse]:
     return success_response(_generate(payload, request, generate_turn))
+
+
+@router.post(
+    "/context-summary",
+    response_model=ApiResponse[ContextSummaryResponse],
+)
+async def create_context_summary(
+    payload: ContextSummaryRequest,
+    request: Request,
+) -> ApiResponse[ContextSummaryResponse]:
+    """BE가 선택한 프리톡 원문 구간을 요약한다."""
+    try:
+        response = await generate_context_summary(payload, request.app.state.settings)
+    except SummaryInputTooLargeError as exc:
+        raise ApiException(400, ErrorCode.FREE_TALK_SUMMARY_INPUT_TOO_LARGE) from exc
+    except AiResponseInvalidError as exc:
+        raise ApiException(502, ErrorCode.AI_RESPONSE_INVALID) from exc
+    except AiGenerationFailedError as exc:
+        raise ApiException(503, ErrorCode.AI_GENERATION_FAILED) from exc
+    return success_response(response)
 
 
 @router.post("/inner-thought", response_model=ApiResponse[FreeTalkInnerThoughtResponse])

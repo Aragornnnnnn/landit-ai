@@ -62,6 +62,9 @@ def init_metrics(
         views=_metric_views(),
     )
 
+    from app.common.failure_observation import configure_failure_metrics
+    configure_failure_metrics(meter_provider)
+
     os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
     FastAPIInstrumentor.instrument_app(
         fastapi_app,

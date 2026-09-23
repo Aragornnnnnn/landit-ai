@@ -374,8 +374,8 @@ class UserAudioPrivacyTests(unittest.TestCase):
 
         scrubbed = scrub_sensitive_request_data(event, {})
 
-        self.assertEqual(scrubbed["request"]["data"]["userAudio"], "[Filtered]")
-        self.assertEqual(scrubbed["request"]["data"]["accentLocale"], "EN_US")
+        self.assertNotIn("request", scrubbed)
+        self.assertNotIn(USER_AUDIO_BASE64, str(scrubbed))
 
 
 if __name__ == "__main__":
