@@ -2,6 +2,7 @@
 import logging
 import math
 
+from app.common.observation_context import bind_model, preserve_failure
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.free_talk.llm.json_completion import (
@@ -17,11 +18,13 @@ EMBEDDING_MODEL = "openai/text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 1536
 
 
+@preserve_failure
 def request_embeddings(
     *,
     settings: Settings,
     texts: list[str],
 ) -> list[list[float]]:
+    bind_model(settings.llm_provider, EMBEDDING_MODEL)
     try:
         client = create_openai_client(settings)
         response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)

@@ -6,12 +6,14 @@ import re
 import time
 from dataclasses import dataclass
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.common.observation_context import remember
 from app.common.inner_thought_contract import (
     InnerThoughtCandidate,
     InnerThoughtContractError,
@@ -280,6 +282,7 @@ def generate_opening(
             followUpId=_follow_up_id(payload.pendingFollowUp),
         )
     except (ValidationError, ValueError) as exc:
+        remember(exc)
         raise AiResponseInvalidError from exc
 
 
@@ -381,6 +384,7 @@ def generate_turn(
             },
         )
     except (TypeError, ValidationError, ValueError) as exc:
+        remember(exc)
         raise AiResponseInvalidError from exc
 
 
@@ -570,6 +574,7 @@ def generate_closing(
             emotion=None,
         )
     except (ValidationError, ValueError) as exc:
+        remember(exc)
         raise AiResponseInvalidError from exc
     allow_question = payload.closingReason == FreeTalkClosingReason.TIME_LIMIT_REACHED
     if _is_invalid_closing_message(
@@ -624,8 +629,9 @@ def _submitted_turn_correction(
 ) -> Future[TurnCorrectionResult]:
     # 스레드를 띄우지 못해도 속마음은 나가야 한다. 실패를 future에 담아 기다리는 쪽에서 한 번에 처리한다.
     try:
-        return executor.submit(generate_turn_correction, payload, settings)
+        return executor.submit(copy_context().run, generate_turn_correction, payload, settings)
     except Exception as exc:  # noqa: BLE001
+        remember(exc)
         failed: Future[TurnCorrectionResult] = Future()
         failed.set_exception(exc)
         return failed
@@ -643,6 +649,7 @@ def _awaited_turn_correction(
     except FuturesTimeoutError:
         return unavailable_turn_correction(payload, "timeout")
     except Exception as exc:  # noqa: BLE001
+        remember(exc)
         return unexpected_turn_correction(payload, exc)
 
 
@@ -687,6 +694,7 @@ def _inner_thought_result(
             )
             return fallback_inner_thought(None)
         except InnerThoughtContractError as exc:
+            remember(exc)
             report_inner_thought_fallback(
                 workflow="free_talk_inner_thought_contract_fallback",
                 session_id=payload.sessionId,
@@ -731,6 +739,7 @@ def _resolve_closing_title(
             retry_schema_violations=False,
         )
     except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+        remember(exc)
         observe(workflow="closing_title", failure_stage="generation", reason="optional_title_missing",
                 outcome="recovered", exc=exc)
         return None

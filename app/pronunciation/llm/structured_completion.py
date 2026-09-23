@@ -7,6 +7,7 @@ from typing import Literal
 from openai import OpenAI
 from pydantic import BaseModel
 
+from app.common.observation_context import bind_model, preserve_failure
 from app.core.config import Settings
 from app.core.structured_output import (
     json_schema_response_format,
@@ -31,6 +32,7 @@ class StructuredCompletionResult:
     response: object
 
 
+@preserve_failure
 def request_structured_pronunciation_completion(
     client: OpenAI,
     settings: Settings,
@@ -43,6 +45,7 @@ def request_structured_pronunciation_completion(
     start_format: OutputFormat = "json_schema",
 ) -> StructuredCompletionResult:
     """남은 시간 안에서 json_schema부터 기존 프롬프트 방식까지 시도한다."""
+    bind_model(settings.llm_provider, request.get("model"))
     format_deadline = deadline or (
         time.monotonic() + settings.pronunciation_llm_timeout_seconds
     )

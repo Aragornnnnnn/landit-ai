@@ -102,7 +102,8 @@ def report_inner_thought_fallback(
     invalid_fields: tuple[str, ...] = (),
 ) -> None:
     observe(workflow=workflow, failure_stage="output_validation", reason=reason,
-            outcome="recovered", attempt=2)
+            outcome="recovered", attempt=2,
+            exc=InnerThoughtContractError(reason, invalid_fields))
 
 
 

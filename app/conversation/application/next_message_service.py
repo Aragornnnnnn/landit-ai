@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.common.observation_context import bind_model, preserve_failure, remember
 from app.common.inner_thought_contract import (
     InnerThoughtCandidate,
     InnerThoughtContractError,
@@ -208,6 +209,14 @@ class AiResponseInvalidError(Exception):
         self.response_format = response_format
 
 
+class AssessmentValidationError(AiResponseInvalidError):
+    """평가 계약의 고정된 필드 경로를 원문 없이 보존한다."""
+
+    def __init__(self, reason: str, field: str) -> None:
+        super().__init__(reason)
+        self.invalid_fields = (field,)
+
+
 class AiGenerationFailedError(Exception):
     """AI 호출 자체가 실패했을 때 발생한다."""
 
@@ -379,6 +388,7 @@ def _repair_or_fallback_inner_thought(
                 reason="contract_repaired", outcome="recovered", attempt=2)
         return result
     except InnerThoughtContractError as exc:
+        remember(exc)
         report_inner_thought_fallback(
             workflow="scenario_inner_thought_contract_fallback",
             session_id=request.sessionId,
@@ -421,6 +431,7 @@ def _generate_closing_message_candidate(
     try:
         return ClosingMessageResponse.model_validate(data)
     except ValidationError as exc:
+        remember(exc)
         raise AiResponseInvalidError from exc
 
 
@@ -508,6 +519,7 @@ def generate_message_feedback(
                     resolved_settings,
                 )
             except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+                remember(exc)
                 reason = getattr(exc, "reason", type(exc).__name__)
                 validation_type = (
                     "GENERATION"
@@ -543,6 +555,7 @@ def generate_message_feedback(
             copy_was_fallback=copy_was_fallback,
         )
     except (AiGenerationFailedError, AiResponseInvalidError) as exc:
+        remember(exc)
         reason = getattr(exc, "reason", type(exc).__name__)
         validation_type = (
             "GENERATION"
@@ -615,6 +628,7 @@ def _generate_message_feedback_candidate(
         )
         return (*parsed, False)
     except AiResponseInvalidError as exc:
+        remember(exc)
         if candidate_data is None:
             raise
         logger.warning(
@@ -651,6 +665,7 @@ def _generate_message_feedback_candidate(
             )
             return (*parsed, True)
         except AiResponseInvalidError as repair_exc:
+            remember(repair_exc)
             fallback = None
             fallback_source = ""
             for source, fallback_data in (
@@ -738,6 +753,7 @@ def _review_message_feedback_candidate(
             False,
         )
     except AiResponseInvalidError as exc:
+        remember(exc)
         if reviewed_data is None:
             raise
         logger.warning(
@@ -821,6 +837,7 @@ def _parse_message_feedback_candidate(
             score_evidence=score_evidence,
         )
     except ValidationError as exc:
+        remember(exc)
         raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
     _validate_spoken_message_feedback(
         feedback,
@@ -853,6 +870,7 @@ def _parse_displayable_message_feedback_candidate(
             score_evidence=score_evidence,
         )
     except ValidationError as exc:
+        remember(exc)
         raise AiResponseInvalidError(_message_feedback_validation_reason(exc)) from exc
     return feedback, score_evidence, adjudication_evidence, detected_patterns
 
@@ -876,6 +894,7 @@ def _parse_message_feedback_candidate_with_consistency_warning(
             reject_generic_placeholder=reject_generic_placeholder,
         )
     except AiResponseInvalidError as exc:
+        remember(exc)
         if exc.reason not in _RECOVERABLE_MESSAGE_FEEDBACK_CONSISTENCY_REASONS:
             raise
         parsed = _parse_message_feedback_candidate(
@@ -1261,6 +1280,7 @@ def generate_session_level_assessment(
     user_prompt = _session_level_assessment_user_prompt(request)
     deadline = time.monotonic() + resolved_settings.session_level_assessment_budget_seconds
     data: dict[str, Any] = {}
+    failures: list[Exception] = []
     selected_response_format: dict[str, Any] | None = (
         _session_level_assessment_response_format()
     )
@@ -1274,6 +1294,8 @@ def generate_session_level_assessment(
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
+        remember(exc)
+        failures.append(exc)
         selected_response_format = exc.response_format
         logger.warning(
             "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
@@ -1285,6 +1307,7 @@ def generate_session_level_assessment(
         request,
         None,
         require_session_id=True,
+        failures=failures,
     )
     retried = level_assessment is None
     if retried:
@@ -1295,10 +1318,12 @@ def generate_session_level_assessment(
             user_prompt,
             selected_response_format,
             deadline=deadline,
+            failures=failures,
         )
     if level_assessment is None:
         observe(workflow="level_assessment", failure_stage="core_validation",
-                reason="core_missing", outcome="failed", attempt=2)
+                reason="core_missing", outcome="failed", attempt=2,
+                exc=failures[-1] if failures else None)
     elif retried:
         observe(workflow="level_assessment", failure_stage="core_validation",
                 reason="core_repaired", outcome="recovered", attempt=2)
@@ -1356,6 +1381,7 @@ def _retry_session_level_assessment_core(
     user_prompt: str,
     response_format: dict[str, Any] | None | object = _USE_STRICT_RESPONSE_FORMAT,
     deadline: float | None = None,
+    failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
     selected_response_format = (
         _session_level_assessment_core_response_format()
@@ -1376,7 +1402,10 @@ def _retry_session_level_assessment_core(
             response_format=selected_response_format,
             deadline=deadline,
         )
-    except AiResponseInvalidError:
+    except AiResponseInvalidError as exc:
+        remember(exc)
+        if failures is not None:
+            failures.append(exc)
         logger.warning(
             "AI 세션 수준 평가 Core 재요청 결과가 올바르지 않습니다. "
             "workflow=session_level_assessment_core_failed sessionId=%s",
@@ -1388,6 +1417,7 @@ def _retry_session_level_assessment_core(
         request,
         feedback_entries,
         require_session_id=False,
+        failures=failures,
     )
 
 
@@ -1411,16 +1441,35 @@ def _recover_session_level_assessment(
     request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     require_session_id: bool = True,
+    failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
+    try:
+        return _validate_session_level_assessment(data, request, feedback_entries, require_session_id)
+    except AiResponseInvalidError as exc:
+        remember(exc)
+        if failures is not None:
+            failures.append(exc)
+        return None
+
+
+def _validate_session_level_assessment(
+    data: dict[str, Any],
+    request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
+    feedback_entries: list[_MessageFeedbackCacheEntry] | None,
+    require_session_id: bool = True,
+) -> SessionLevelAssessment:
     if require_session_id and data.get("sessionId") != request.sessionId:
-        return None
+        raise AssessmentValidationError("assessment_session_mismatch", "sessionId")
     raw_assessment = data.get("levelAssessment")
-    if not isinstance(raw_assessment, dict) or not request.assessmentMessages:
-        return None
+    if not isinstance(raw_assessment, dict):
+        raise AssessmentValidationError("assessment_missing", "levelAssessment")
+    if not request.assessmentMessages:
+        raise AssessmentValidationError("assessment_messages_missing", "assessmentMessages")
     try:
         core = SessionLevelAssessmentCore.model_validate(raw_assessment.get("core"))
-    except ValidationError:
-        return None
+    except ValidationError as exc:
+        remember(exc)
+        raise AssessmentValidationError("assessment_core_schema", "core") from exc
     expected_messages = {
         message.messageId: message for message in request.assessmentMessages
     }
@@ -1428,25 +1477,25 @@ def _recover_session_level_assessment(
         request,
         feedback_entries,
     ):
-        return None
+        raise AssessmentValidationError("assessment_cache_mismatch", "assessmentMessages")
     if [message.messageId for message in core.messages] != request.expectedMessageIds:
-        return None
+        raise AssessmentValidationError("assessment_message_ids", "core.messages.[].messageId")
     for message in core.messages:
         expected = expected_messages.get(message.messageId)
         if expected is None:
-            return None
-        for domain in (
-            message.domains.situationPerformance,
-            message.domains.grammar,
-            message.domains.vocabulary,
-            message.domains.discourse,
-            message.domains.interactionPragmatics,
+            raise AssessmentValidationError("assessment_message_missing", "core.messages.[].messageId")
+        for domain_name in (
+            "situationPerformance", "grammar", "vocabulary", "discourse", "interactionPragmatics",
         ):
+            domain = getattr(message.domains, domain_name)
             if (
                 domain.evidenceExcerpt is not None
                 and domain.evidenceExcerpt not in expected.userMessage
             ):
-                return None
+                raise AssessmentValidationError(
+                    "assessment_evidence_mismatch",
+                    f"core.messages.[].domains.{domain_name}.evidenceExcerpt",
+                )
     try:
         details = SessionLevelAssessmentDetails.model_validate(
             raw_assessment.get("details"),
@@ -1643,6 +1692,7 @@ def _json_schema_response_format(
     }
 
 
+@preserve_failure
 def _request_json_completion(
     settings: Settings,
     system_prompt: str,
@@ -1657,7 +1707,9 @@ def _request_json_completion(
     max_attempts: int = 2,
     retry_schema_violations: bool = True,
 ) -> dict[str, Any]:
+    bind_model(settings.llm_provider, None)
     resolved_model = model or _required_openrouter_model(settings)
+    bind_model(settings.llm_provider, resolved_model)
     try:
         remaining = None if deadline is None else deadline - time.monotonic()
         if remaining is not None and remaining <= 0:
@@ -1692,6 +1744,7 @@ def _request_json_completion(
             try:
                 completion = client.chat.completions.create(**request)
             except Exception as exc:
+                remember(exc)
                 if not structured_outputs_unsupported(exc):
                     raise
                 logger.warning(
@@ -1709,6 +1762,7 @@ def _request_json_completion(
                 try:
                     completion = client.chat.completions.create(**request)
                 except Exception as fallback_exc:
+                    remember(fallback_exc)
                     if not structured_outputs_unsupported(fallback_exc):
                         raise
                     logger.warning(
@@ -1731,6 +1785,7 @@ def _request_json_completion(
             try:
                 data = _parse_strict_json_object(_extract_message_content(completion))
             except AiResponseInvalidError as exc:
+                remember(exc)
                 logger.warning(
                     "Structured Outputs JSON 형식 검증에 실패했습니다. "
                     "event=json_format_failure workflow=%s provider=%s model=%s "
@@ -1759,6 +1814,7 @@ def _request_json_completion(
             try:
                 response_model.model_validate(data)
             except ValidationError as exc:
+                remember(exc)
                 schema_valid = False
                 reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
                 logger.warning(
@@ -1793,6 +1849,7 @@ def _request_json_completion(
     except AiResponseInvalidError:
         raise
     except Exception as exc:
+        remember(exc)
         raise AiGenerationFailedError from exc
 
 
@@ -1817,6 +1874,7 @@ def _request_recoverable_json_completion(
             workflow=workflow,
         )
     except AiResponseInvalidError as exc:
+        remember(exc)
         raise AiGenerationFailedError from exc
 
 
@@ -1851,9 +1909,11 @@ def _request_json_completion_with_format_fallback(
                 current_format,
             )
         except AiResponseInvalidError as exc:
+            remember(exc)
             exc.response_format = current_format
             raise
         except AiGenerationFailedError as exc:
+            remember(exc)
             if index == len(response_formats) - 1 or not _is_response_format_unsupported(exc):
                 raise
     raise AiGenerationFailedError("No JSON response format was available.")
@@ -1907,6 +1967,7 @@ def _extract_message_content(completion: Any) -> str:
     try:
         content = completion.choices[0].message.content
     except (AttributeError, IndexError) as exc:
+        remember(exc)
         raise AiResponseInvalidError("completion_content_missing") from exc
 
     if not isinstance(content, str) or not content.strip():
@@ -1925,6 +1986,7 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
         try:
             data = json.loads(raw[start : end + 1])
         except JSONDecodeError as exc:
+            remember(exc)
             raise AiResponseInvalidError("json_object_invalid") from exc
 
     if not isinstance(data, dict):
@@ -1936,6 +1998,7 @@ def _parse_strict_json_object(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
     except JSONDecodeError as exc:
+        remember(exc)
         raise AiResponseInvalidError("json_object_invalid") from exc
     if not isinstance(data, dict):
         raise AiResponseInvalidError("json_object_required")
