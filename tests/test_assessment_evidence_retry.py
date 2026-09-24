@@ -119,3 +119,54 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         prompt = service._session_level_assessment_retry_system_prompt(failure)
         self.assertNotIn("private-", prompt)
         self.assertIn("<field>", prompt)
+
+    def _retry_raw_initial_response(self, initial, combined):
+        valid = valid_level_assessment()
+        fake = FakeOpenAI(contents=[
+            initial, json.dumps({"levelAssessment": {"core": valid["core"]}}),
+        ])
+        with patch("app.core.openai_client.OpenAI", return_value=fake):
+            if combined:
+                request = SessionFeedbackRequest.model_validate(self.payload)
+                entries = [
+                    SimpleNamespace(feedback=SimpleNamespace(messageId=m["messageId"]),
+                                    user_message=m["userMessage"])
+                    for m in self.payload["assessmentMessages"]
+                ]
+                _, assessment = service._request_session_feedback_with_level_assessment(
+                    self.settings, request, entries, "system", "user",
+                )
+                core = assessment.core.model_dump(mode="json")
+            else:
+                response = make_client(create_app(self.settings)).post(
+                    "/api/v1/conversation/session-level-assessment", json=self.payload,
+                )
+                self.assertEqual(response.status_code, 200)
+                core = response.json()["data"]["levelAssessment"]["core"]
+        self.assertEqual(core, valid["core"])
+        self.assertEqual(len(fake.completions.calls), 2)
+        return fake.completions.calls[1]["messages"][0]["content"]
+
+    def test_initial_parse_failure_is_not_replaced_by_empty_response_validation(self):
+        cases = (
+            ('{"sessionId":', "json_object_missing"),
+            ('{"sessionId":}', "json_object_invalid"),
+            ('[]', "json_object_required"),
+            (' ', "completion_content_blank"),
+        )
+        for combined in (False, True):
+            for initial, reason in cases:
+                with self.subTest(combined=combined, reason=reason):
+                    prompt = self._retry_raw_initial_response(initial, combined)
+                    diagnostics = json.loads(
+                        prompt.split("Server validation JSON: ")[1].splitlines()[0],
+                    )
+                    self.assertEqual(diagnostics["validation_reason"], reason)
+                    self.assertNotIn("assessment_session_mismatch", prompt)
+                    self.assertNotIn("assessment_missing", prompt)
+
+    def test_successfully_parsed_empty_response_still_receives_contract_validation(self):
+        for combined in (False, True):
+            with self.subTest(combined=combined):
+                prompt = self._retry_raw_initial_response('{}', combined)
+                self.assertIn("assessment_session_mismatch", prompt)

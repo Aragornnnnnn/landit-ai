@@ -1280,7 +1280,7 @@ def generate_session_level_assessment(
     resolved_settings = settings or Settings()
     user_prompt = _session_level_assessment_user_prompt(request)
     deadline = time.monotonic() + resolved_settings.session_level_assessment_budget_seconds
-    data: dict[str, Any] = {}
+    level_assessment: SessionLevelAssessment | None = None
     failures: list[Exception] = []
     selected_response_format: dict[str, Any] | None = (
         _session_level_assessment_response_format()
@@ -1303,13 +1303,14 @@ def generate_session_level_assessment(
             "workflow=session_level_assessment_core_retry sessionId=%s",
             request.sessionId,
         )
-    level_assessment = _recover_session_level_assessment(
-        data,
-        request,
-        None,
-        require_session_id=True,
-        failures=failures,
-    )
+    else:
+        level_assessment = _recover_session_level_assessment(
+            data,
+            request,
+            None,
+            require_session_id=True,
+            failures=failures,
+        )
     retried = level_assessment is None
     if retried:
         level_assessment = _retry_session_level_assessment_core(
@@ -1344,6 +1345,7 @@ def _request_session_feedback_with_level_assessment(
     system_prompt: str,
     user_prompt: str,
 ) -> tuple[dict[str, Any], SessionLevelAssessment | None]:
+    level_assessment: SessionLevelAssessment | None = None
     failures: list[Exception] = []
     try:
         data = _request_json_completion(
@@ -1361,13 +1363,13 @@ def _request_session_feedback_with_level_assessment(
             request.sessionId,
         )
         data = {}
-
-    level_assessment = _recover_session_level_assessment(
-        data,
-        request,
-        feedback_entries,
-        failures=failures,
-    )
+    else:
+        level_assessment = _recover_session_level_assessment(
+            data,
+            request,
+            feedback_entries,
+            failures=failures,
+        )
     if level_assessment is not None:
         return data, level_assessment
     return data, _retry_session_level_assessment_core(
