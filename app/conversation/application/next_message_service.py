@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from app.common.observation_context import bind_model, preserve_failure, remember
+from app.common.failure_diagnostics import exception_diagnostics
 from app.common.inner_thought_contract import (
     InnerThoughtCandidate,
     InnerThoughtContractError,
@@ -1343,6 +1344,7 @@ def _request_session_feedback_with_level_assessment(
     system_prompt: str,
     user_prompt: str,
 ) -> tuple[dict[str, Any], SessionLevelAssessment | None]:
+    failures: list[Exception] = []
     try:
         data = _request_json_completion(
             settings,
@@ -1351,7 +1353,8 @@ def _request_session_feedback_with_level_assessment(
             max_tokens=2048,
             response_format=_session_feedback_response_format(True),
         )
-    except AiResponseInvalidError:
+    except AiResponseInvalidError as exc:
+        failures.append(exc)
         logger.warning(
             "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
             "workflow=session_level_assessment_core_retry sessionId=%s",
@@ -1363,6 +1366,7 @@ def _request_session_feedback_with_level_assessment(
         data,
         request,
         feedback_entries,
+        failures=failures,
     )
     if level_assessment is not None:
         return data, level_assessment
@@ -1371,6 +1375,7 @@ def _request_session_feedback_with_level_assessment(
         request,
         feedback_entries,
         user_prompt,
+        failures=failures,
     )
 
 
@@ -1396,7 +1401,9 @@ def _retry_session_level_assessment_core(
     try:
         retry_data = _request_json_completion(
             settings,
-            system_prompt=_session_level_assessment_retry_system_prompt(),
+            system_prompt=_session_level_assessment_retry_system_prompt(
+                failures[-1] if failures else None,
+            ),
             user_prompt=user_prompt,
             max_tokens=1536,
             response_format=selected_response_format,
@@ -2617,7 +2624,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
     ] if section)
 
 
-def _session_level_assessment_retry_system_prompt() -> str:
+def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
@@ -2629,7 +2636,32 @@ def _session_level_assessment_retry_system_prompt() -> str:
         "in evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED "
         "or INSUFFICIENT_EVIDENCE. Apply the same rubric as the initial assessment.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}"
+        f"{_session_level_assessment_retry_feedback(failure)}"
     )
+
+
+def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
+    """재시도에 서버가 확인한 사유·필드만 전달하고 모델 출력이나 예외 원문은 제외한다."""
+    diagnostics = exception_diagnostics(failure)
+    if not diagnostics:
+        return ""
+    feedback = (
+        "\nThe previous assessment failed server validation. Correct the reported "
+        "problem and recheck every message and domain before returning the core.\n"
+        f"Server validation JSON: {json.dumps(diagnostics, ensure_ascii=False)}"
+    )
+    if diagnostics.get("validation_reason") == "assessment_evidence_mismatch":
+        feedback += (
+            "\nAn evidenceExcerpt was not found verbatim in its corresponding userMessage. "
+            "Copy one exact contiguous span from that message, including its original "
+            "spelling, grammar, capitalization, punctuation, and whitespace. Do not "
+            "paraphrase, correct, translate, combine separate spans, or insert ellipses. "
+            "Do not quote evaluationContext, requiredElements, or another message. "
+            "A full userMessage is allowed when the whole utterance supports the judgment. "
+            "Keep the rubric and evidence-status rules unchanged; do not lower a level "
+            "or mark observable performance as unobserved merely to avoid a quote error."
+        )
+    return feedback
 
 
 def _session_level_assessment_system_prompt() -> str:
