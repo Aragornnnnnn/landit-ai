@@ -44,6 +44,7 @@ class LevelAssessmentRequestBudgetTests(unittest.TestCase):
         from unittest.mock import Mock
         request = Mock(spec=SessionLevelAssessmentRequest)
         request.sessionId = 1
+        request.assessmentMessages = []
         module = "app.conversation.application.next_message_service."
         with patch(module + "time.monotonic", return_value=10), patch(
             module + "_session_level_assessment_user_prompt", return_value="JSON"
