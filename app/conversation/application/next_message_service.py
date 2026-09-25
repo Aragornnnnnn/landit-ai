@@ -31,6 +31,14 @@ from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
 from app.common.failure_observation import observe
+from app.conversation.llm.assessment_budget import assessment_output_budget
+from app.conversation.llm.assessment_observation import (
+    begin_core_retry,
+    completion_metadata,
+    observe_assessment,
+    observe_completion,
+    record_validation_failure,
+)
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -1272,6 +1280,7 @@ def generate_session_feedback(
     return response
 
 
+@observe_assessment
 def generate_session_level_assessment(
     request: SessionLevelAssessmentRequest,
     settings: Settings | None = None,
@@ -1290,13 +1299,14 @@ def generate_session_level_assessment(
             resolved_settings,
             system_prompt=_session_level_assessment_system_prompt(),
             user_prompt=user_prompt,
-            max_tokens=2048,
+            max_tokens=assessment_output_budget(request.assessmentMessages),
             response_format=_session_level_assessment_response_format(),
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
         remember(exc)
         failures.append(exc)
+        record_validation_failure(exc)
         selected_response_format = exc.response_format
         logger.warning(
             "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
@@ -1390,6 +1400,7 @@ def _retry_session_level_assessment_core(
     deadline: float | None = None,
     failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
+    begin_core_retry()
     selected_response_format = (
         _session_level_assessment_core_response_format()
         if response_format is _USE_STRICT_RESPONSE_FORMAT
@@ -1407,12 +1418,13 @@ def _retry_session_level_assessment_core(
                 failures[-1] if failures else None,
             ),
             user_prompt=user_prompt,
-            max_tokens=1536,
+            max_tokens=assessment_output_budget(request.assessmentMessages or []),
             response_format=selected_response_format,
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
         remember(exc)
+        record_validation_failure(exc)
         if failures is not None:
             failures.append(exc)
         logger.warning(
@@ -1456,6 +1468,7 @@ def _recover_session_level_assessment(
         return _validate_session_level_assessment(data, request, feedback_entries, require_session_id)
     except AiResponseInvalidError as exc:
         remember(exc)
+        record_validation_failure(exc)
         if failures is not None:
             failures.append(exc)
         return None
@@ -1740,10 +1753,16 @@ def _request_json_completion(
         if response_model is None:
             if response_format is not None:
                 request["response_format"] = response_format
-            completion = client.chat.completions.create(**request)
-            if deadline is not None and time.monotonic() >= deadline:
-                raise AiGenerationFailedError("assessment_deadline_exceeded")
-            return _parse_json_object(_extract_message_content(completion))
+            with observe_completion(max_tokens, response_format) as observation:
+                completion = client.chat.completions.create(**request)
+                if observation is not None:
+                    observation.update(completion_metadata(completion))
+                    if (observation["finish_reason"] == "length"
+                            or observation["native_finish_reason"] == "max_output_tokens"):
+                        raise AiResponseInvalidError("completion_output_limit")
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise AiGenerationFailedError("assessment_deadline_exceeded")
+                return _parse_json_object(_extract_message_content(completion))
 
         request["response_format"] = json_schema_response_format(
             response_model,

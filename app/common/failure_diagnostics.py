@@ -32,6 +32,7 @@ SAFE_REASONS = frozenset({
     'completion content is missing',
     'completion is not valid JSON',
     'completion must be a JSON object',
+    'completion_output_limit',
     'completion_content_blank',
     'completion_content_missing',
     'context policy requires a supported tokenizer model',
