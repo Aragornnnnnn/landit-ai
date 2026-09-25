@@ -16,3 +16,6 @@ def configure_logging() -> None:
         logger.handlers.clear()
         logger.setLevel(logging.INFO)
         logger.propagate = True
+
+    # 성공한 평가도 호출 메타데이터만 남겨 재시도 전후를 비교할 수 있게 한다.
+    logging.getLogger("app.conversation.llm.assessment_observation").setLevel(logging.INFO)

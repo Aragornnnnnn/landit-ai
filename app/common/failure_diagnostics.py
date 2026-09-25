@@ -35,6 +35,7 @@ SAFE_REASONS = frozenset({
     'completion_token_limit',
     'memory_deadline_exceeded',
     'memory_call_limit',
+    'completion_output_limit',
     'completion_content_blank',
     'completion_content_missing',
     'context policy requires a supported tokenizer model',
