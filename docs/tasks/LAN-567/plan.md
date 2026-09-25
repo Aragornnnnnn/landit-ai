@@ -36,6 +36,7 @@
 - 최초 인용 검증 실패와 재시도 출력 한도 소진을 함께 보존하며, JSON·schema·메시지 ID 오류가 서로 다른 사유로 남는다. 메타데이터 누락·오염, 요청 간 분리, 원문·시크릿 미포함을 검증했다.
 - 메시지 1·3·10개와 짧은 발화·긴 인용·따옴표·줄바꿈·한글을 조합한 합성 JSON을 실제 파서와 정합성 검증에 통과시켰다. 긴 입력의 최대 16384토큰 제한도 확인했다.
 - 로컬 HTTP에서 최초 지연 timeout, Core 재시도의 남은 시간 사용, SDK 추가 재시도 없음, 형식 전환을 포함한 최대 4회 호출을 확인했다.
+- PR #117 리뷰 반영: 호출 생성 시 진단 필드를 null로 초기화한다. HTTP 400 형식 거부와 timeout에서도 7개 메타데이터 키가 유지되고 성공 시 실제 값으로 갱신되는지 확인했다. 관련 11개 테스트와 AI 전체 802개 테스트(7개 skip)를 다시 통과했다.
 - BE 기존 평가·FALLBACK 관련 테스트 156개 성공: `./gradlew test --tests '*LearningLevelPolicyTest' --tests '*SessionLevelAssessmentRecoveryTest' --tests '*SessionLevelAssessmentProfileTest' --tests '*ScenarioSessionApiIntegrationTests'`. BE 소스 변경은 없으며 전체 `./gradlew check`는 실행하지 않았다.
 - `origin/main` 8ba7010과 OpenAPI가 동일하다. SHA-256: `d54355f09e42a78a58dd61b0f35958e8f8536cec168feabc166b09067f49e513`.
 - `pip check`, `git diff --check` 성공. 최초 전체 실행의 프리톡 로그 개수 검증 실패는 단독 실행과 이후 두 차례 전체 실행에서 재현되지 않았다. 이 테스트나 프리톡 구현은 변경하지 않았다.

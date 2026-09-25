@@ -53,6 +53,12 @@ def local_provider(responses):
 
 
 class AssessmentHttpBudgetTests(unittest.TestCase):
+    def assert_missing_metadata_is_null(self, call):
+        for key in ("generation_id", "provider_request_id", "finish_reason",
+                    "native_finish_reason", "prompt_tokens", "completion_tokens", "reasoning_tokens"):
+            self.assertIn(key, call)
+            self.assertIsNone(call[key])
+
     def settings(self, base_url, budget):
         return make_settings(openrouter_base_url=base_url, openrouter_api_key="local-test",
                              openrouter_model="test", session_level_assessment_budget_seconds=budget)
@@ -78,6 +84,9 @@ class AssessmentHttpBudgetTests(unittest.TestCase):
             self.assertLess(elapsed, 0.65)
             self.assertIn("assessment_session_mismatch", logs.output[-1])
             self.assertIn("terminal_failure", logs.output[-1])
+            diagnostic = json.loads(logs.records[-1].getMessage().split("assessment_diagnostics ", 1)[1])
+            self.assert_missing_metadata_is_null(diagnostic["calls"][1])
+            self.assertEqual(diagnostic["calls"][1]["failure"]["provider_error"], "timeout")
 
     def test_format_fallback_and_core_retry_make_at_most_four_requests(self):
         unsupported = {"error": {"message": "response_format is not supported"}}
@@ -94,3 +103,7 @@ class AssessmentHttpBudgetTests(unittest.TestCase):
             diagnostic = json.loads(logs.records[-1].getMessage().split("assessment_diagnostics ", 1)[1])
             self.assertEqual([c["attempt"] for c in diagnostic["calls"]], [1, 2, 3, 4])
             self.assertEqual([c["stage"] for c in diagnostic["calls"]], [1, 1, 1, 2])
+            for call in diagnostic["calls"][:2]:
+                self.assert_missing_metadata_is_null(call)
+                self.assertEqual(call["failure"]["upstream_status"], 400)
+            self.assertEqual(diagnostic["calls"][3]["generation_id"], "gen-local-test")

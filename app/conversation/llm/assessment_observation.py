@@ -97,6 +97,7 @@ def observe_completion(max_tokens: int, response_format: dict | None):
         return
     kind = response_format.get("type") if isinstance(response_format, dict) else None
     call = {
+        **completion_metadata(None),
         "attempt": len(state["calls"]) + 1, "stage": state["stage"],
         "max_tokens": max_tokens,
         "format": kind if kind in ("json_schema", "json_object") else "prompt",
