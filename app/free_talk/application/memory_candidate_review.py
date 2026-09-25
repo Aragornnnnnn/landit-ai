@@ -132,7 +132,8 @@ def review_memory_candidates(
         return []
     context = json.loads(context_json)
     data = request_json_completion(
-        settings=settings, system_prompt=_REVIEW_PROMPT, reasoning_effort="medium",
+        settings=settings, system_prompt=_REVIEW_PROMPT, reasoning_effort="low",
+        workflow="free_talk_memory_review",
         user_prompt=json.dumps({"conversation": context, "candidates": [
             draft.model_dump(mode="json", exclude={"embedding", "embeddingModel"})
             for draft in drafts

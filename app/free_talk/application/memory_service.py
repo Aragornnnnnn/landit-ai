@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from app.core.config import Settings
+from app.free_talk.llm.memory_budget import memory_generation_budget
 from app.free_talk.application.follow_up_service import generate_follow_up_question
 from app.free_talk.application.memory_candidate_review import review_memory_candidates
 from app.free_talk.llm.embeddings import (
@@ -49,7 +50,7 @@ _DUPLICATE_SUPERSEDE_CORRECTION = (
     "Re-evaluate the remaining candidates: IGNORE redundant facts and ADD only genuinely "
     "independent facts. Do not invent facts or memory IDs to avoid the conflict."
 )
-EXTRACTOR_VERSION = "memory-candidate-v10"
+EXTRACTOR_VERSION = "memory-candidate-v11"
 _CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
 _DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
     r"\b(?:you\s+and\s+I|I\s+and\s+you|with\s+you|"
@@ -302,6 +303,7 @@ class _MemoryResolutionResponseWithEvidence(BaseModel):
     resolutions: list[_MemoryResolutionWithEvidence] = Field(min_length=1, max_length=5)
 
 
+@memory_generation_budget(50, max_calls=9)
 def generate_memory_candidates(
     payload: MemoryCandidatesRequest,
     settings: Settings,
@@ -339,7 +341,7 @@ def _extract_memory_candidate_drafts(
             settings=settings,
             system_prompt=_candidate_system_prompt(),
             user_prompt=_candidate_user_prompt(payload),
-            reasoning_effort="medium",
+            reasoning_effort="low",
             response_model=_MemoryCandidateDraftResponse,
             schema_name="free_talk_memory_candidates",
             workflow="free_talk_memory_candidates",
@@ -369,6 +371,7 @@ class _DuplicateMemorySupersedeError(AiResponseInvalidError):
     """여러 후보가 같은 기존 기억을 대체하도록 생성됐을 때 발생한다."""
 
 
+@memory_generation_budget(20, max_calls=7)
 def generate_memory_resolution(
     payload: MemoryResolutionRequest,
     settings: Settings,

@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     free_talk_correction_model: str | None = None
     # 표현 재사용 판정·후속 질문 같은 잡 보조 호출의 SDK 타임아웃(재시도 0회).
     # 보조 결과라 상한을 넘기면 빈 값으로 내려가고 이미 계산한 본 응답은 그대로 반환한다.
-    # 본 처리(후보 추출·검토·임베딩) 뒤에 돌므로 BE LANDIT_AI_REQUEST_TIMEOUT(기본 60초) 예산을 남겨야 한다.
+    # 기억 생성에서는 후보 추출·검토·임베딩과 공유하는 전체 50초 예산에도 제한된다.
     free_talk_auxiliary_timeout_seconds: float = Field(
         default=10.0, gt=0.0, allow_inf_nan=False
     )

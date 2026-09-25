@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.common.observation_context import bind_model, preserve_failure
 from app.common.failure_observation import observe
+from app.free_talk.llm.completion_attempts import CompletionAttempts
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -47,7 +48,7 @@ def request_json_completion(
     settings: Settings,
     system_prompt: str,
     user_prompt: str,
-    reasoning_effort: Literal["medium"] | None = None,
+    reasoning_effort: Literal["low", "medium"] | None = None,
     response_model: type[BaseModel] | None = None,
     schema_name: str = "free_talk_json_response",
     workflow: str = "free_talk_json_completion",
@@ -59,6 +60,7 @@ def request_json_completion(
     bind_model(settings.llm_provider, None)
     model = _resolved_model(settings, model)
     bind_model(settings.llm_provider, model)
+    attempts = CompletionAttempts(workflow)
     try:
         # timeout을 주면 SDK 재시도 없이 그 시간 안에 끝내거나 실패한다 (보조 판정용).
         client = create_openai_client(settings, timeout=timeout_seconds)
@@ -73,9 +75,11 @@ def request_json_completion(
         if reasoning_effort is not None:
             request["extra_body"] = {"reasoning": {"effort": reasoning_effort, "exclude": True}}
             request["max_completion_tokens"] = 4096
+        if attempts.enabled:
+            request["max_completion_tokens"] = 4096
         if response_model is None:
             request["response_format"] = {"type": "json_object"}
-            completion = client.chat.completions.create(**request)
+            completion = _create_completion(client, request, attempts)
             return _parse_json_object(_extract_content(completion))
 
         request["response_format"] = json_schema_response_format(
@@ -84,7 +88,7 @@ def request_json_completion(
         )
         for attempt in range(1, max_attempts + 1):
             try:
-                completion = client.chat.completions.create(**request)
+                completion = _create_completion(client, request, attempts)
             except Exception as exc:
                 if not structured_outputs_unsupported(exc):
                     raise
@@ -101,7 +105,7 @@ def request_json_completion(
                 )
                 request["response_format"] = {"type": "json_object"}
                 try:
-                    completion = client.chat.completions.create(**request)
+                    completion = _create_completion(client, request, attempts)
                 except Exception as fallback_exc:
                     if not structured_outputs_unsupported(fallback_exc):
                         raise
@@ -117,7 +121,7 @@ def request_json_completion(
                         max_attempts,
                     )
                     request.pop("response_format", None)
-                    completion = client.chat.completions.create(**request)
+                    completion = _create_completion(client, request, attempts)
                 data = _parse_json_object(_extract_content(completion))
                 observe(workflow=workflow, failure_stage="output_format", reason="format_fallback",
                         outcome="recovered", attempt=attempt)
@@ -125,6 +129,7 @@ def request_json_completion(
             try:
                 data = _parse_json_object(_extract_content(completion))
             except AiResponseInvalidError as exc:
+                attempts.failure(exc.reason)
                 logger.warning(
                     "Structured Outputs JSON 형식 검증에 실패했습니다. "
                     "event=json_format_failure workflow=%s provider=%s model=%s "
@@ -153,6 +158,7 @@ def request_json_completion(
             try:
                 response_model.model_validate(data)
             except ValidationError as exc:
+                attempts.failure("schema_validation")
                 schema_valid = False
                 reason = exc.errors()[0]["type"] if exc.errors() else "validation_error"
                 logger.warning(
@@ -182,7 +188,8 @@ def request_json_completion(
                 observe(workflow=workflow, failure_stage="output_validation", reason="json_repaired",
                         outcome="recovered", attempt=attempt)
             return data
-    except AiResponseInvalidError:
+    except AiResponseInvalidError as exc:
+        attempts.failure(exc.reason)
         raise
     except Exception as exc:
         logger.warning(
@@ -191,8 +198,17 @@ def request_json_completion(
             model,
         )
         raise AiGenerationFailedError from exc
+    finally:
+        attempts.log()
 
     raise AiGenerationFailedError
+
+
+def _create_completion(client, request, attempts):
+    completion = attempts.create(client, request)
+    if attempts.exhausted():
+        raise AiResponseInvalidError("completion_token_limit")
+    return completion
 
 
 def _resolved_model(settings: Settings, override: str | None) -> str:
