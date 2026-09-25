@@ -8,7 +8,7 @@ from tests.test_free_talk_api import FakeOpenAI, make_settings
 
 class JsonCompletionReasoningTests(unittest.TestCase):
     def test_reasoning_is_opt_in_and_output_is_bounded(self):
-        for effort in (None, "medium"):
+        for effort in (None, "low", "medium"):
             with self.subTest(effort=effort):
                 fake = FakeOpenAI(contents=['{"ok": true}'])
                 with patch("app.core.openai_client.OpenAI", return_value=fake):
@@ -24,5 +24,5 @@ class JsonCompletionReasoningTests(unittest.TestCase):
                     self.assertNotIn("max_completion_tokens", call)
                 else:
                     self.assertEqual(call["extra_body"],
-                                     {"reasoning": {"effort": "medium", "exclude": True}})
+                                     {"reasoning": {"effort": effort, "exclude": True}})
                     self.assertEqual(call["max_completion_tokens"], 4096)

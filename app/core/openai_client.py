@@ -2,6 +2,7 @@
 from openai import AsyncOpenAI, OpenAI
 
 from app.core.config import Settings
+from app.core.request_budget import budget_client_options
 
 
 def create_openai_client(
@@ -22,7 +23,7 @@ def create_openai_client(
     return OpenAI(
         api_key=resolved_settings.openrouter_api_key.get_secret_value(),
         base_url=resolved_settings.openrouter_base_url,
-        **({"timeout": timeout, "max_retries": 0} if timeout is not None else {}),
+        **budget_client_options(timeout),
     )
 
 
