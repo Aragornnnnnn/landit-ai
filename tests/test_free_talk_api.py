@@ -2350,7 +2350,7 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(candidate["candidateIndex"], 0)
         self.assertEqual(
             response.json()["data"]["extractorVersion"],
-            "memory-candidate-v10",
+            "memory-candidate-v11",
         )
         self.assertEqual(candidate["embeddingModel"], "openai/text-embedding-3-small")
         self.assertEqual(len(candidate["embedding"]), 1536)
@@ -2509,6 +2509,16 @@ class FreeTalkApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
 
+    def test_memory_candidates_blank_response_fails_without_embedding(self):
+        fake = FakeOpenAI(contents=["", ""])
+        response = self._post(
+            "/api/v1/free-talk/memory-candidates", valid_memory_candidates_payload(), fake,
+        )
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "AI_RESPONSE_INVALID")
+        self.assertEqual(len(fake.completions.calls), 2)
+        self.assertEqual(fake.embeddings.calls, [])
+
     def test_memory_candidates_allows_empty_candidate_list(self):
         fake_openai = FakeOpenAI(contents=[json.dumps({"candidates": []})])
 
@@ -2523,7 +2533,7 @@ class FreeTalkApiTests(unittest.TestCase):
             response.json()["data"],
             {
                 "candidates": [],
-                "extractorVersion": "memory-candidate-v10",
+                "extractorVersion": "memory-candidate-v11",
                 "followUpQuestion": {
                     "memoryId": None,
                     "candidateIndex": None,

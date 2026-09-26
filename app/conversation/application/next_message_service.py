@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from json import JSONDecodeError
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from app.common.observation_context import bind_model, preserve_failure, remember
+from app.common.failure_diagnostics import exception_diagnostics
 from app.common.inner_thought_contract import (
     InnerThoughtCandidate,
     InnerThoughtContractError,
@@ -30,6 +31,14 @@ from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
 from app.common.failure_observation import observe
+from app.conversation.llm.assessment_budget import assessment_output_budget
+from app.conversation.llm.assessment_observation import (
+    begin_core_retry,
+    completion_metadata,
+    observe_assessment,
+    observe_completion,
+    record_validation_failure,
+)
 from app.core.config import Settings
 from app.core.openai_client import create_openai_client
 from app.core.structured_output import (
@@ -53,6 +62,7 @@ from app.models.conversation import (
     MessageFeedbackCandidate,
     MessageFeedbackContent,
     MessageFeedbackData,
+    MessageFeedbackCoverageEvidence,
     MessageFeedbackCoverageStatus,
     MessageFeedbackIssueDimension,
     MessageFeedbackRequest,
@@ -235,7 +245,20 @@ class _DetectedPattern(BaseModel):
     evidence: str
 
 
+class _AnsweredCoverageEvidence(MessageFeedbackCoverageEvidence):
+    status: Literal[MessageFeedbackCoverageStatus.ANSWERED]
+    answerExcerpt: str
+
+
+class _MissingCoverageEvidence(MessageFeedbackCoverageEvidence):
+    status: Literal[MessageFeedbackCoverageStatus.MISSING]
+    answerExcerpt: None
+
+
 class _MessageFeedbackStructuredOutput(MessageFeedbackCandidate):
+    coverageEvidence: list[
+        _AnsweredCoverageEvidence | _MissingCoverageEvidence
+    ] = Field(min_length=1)
     detectedPatterns: list[_DetectedPattern]
 
 
@@ -1271,6 +1294,7 @@ def generate_session_feedback(
     return response
 
 
+@observe_assessment
 def generate_session_level_assessment(
     request: SessionLevelAssessmentRequest,
     settings: Settings | None = None,
@@ -1279,7 +1303,7 @@ def generate_session_level_assessment(
     resolved_settings = settings or Settings()
     user_prompt = _session_level_assessment_user_prompt(request)
     deadline = time.monotonic() + resolved_settings.session_level_assessment_budget_seconds
-    data: dict[str, Any] = {}
+    level_assessment: SessionLevelAssessment | None = None
     failures: list[Exception] = []
     selected_response_format: dict[str, Any] | None = (
         _session_level_assessment_response_format()
@@ -1289,26 +1313,28 @@ def generate_session_level_assessment(
             resolved_settings,
             system_prompt=_session_level_assessment_system_prompt(),
             user_prompt=user_prompt,
-            max_tokens=2048,
+            max_tokens=assessment_output_budget(request.assessmentMessages),
             response_format=_session_level_assessment_response_format(),
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
         remember(exc)
         failures.append(exc)
+        record_validation_failure(exc)
         selected_response_format = exc.response_format
         logger.warning(
             "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
             "workflow=session_level_assessment_core_retry sessionId=%s",
             request.sessionId,
         )
-    level_assessment = _recover_session_level_assessment(
-        data,
-        request,
-        None,
-        require_session_id=True,
-        failures=failures,
-    )
+    else:
+        level_assessment = _recover_session_level_assessment(
+            data,
+            request,
+            None,
+            require_session_id=True,
+            failures=failures,
+        )
     retried = level_assessment is None
     if retried:
         level_assessment = _retry_session_level_assessment_core(
@@ -1343,6 +1369,8 @@ def _request_session_feedback_with_level_assessment(
     system_prompt: str,
     user_prompt: str,
 ) -> tuple[dict[str, Any], SessionLevelAssessment | None]:
+    level_assessment: SessionLevelAssessment | None = None
+    failures: list[Exception] = []
     try:
         data = _request_json_completion(
             settings,
@@ -1351,19 +1379,21 @@ def _request_session_feedback_with_level_assessment(
             max_tokens=2048,
             response_format=_session_feedback_response_format(True),
         )
-    except AiResponseInvalidError:
+    except AiResponseInvalidError as exc:
+        failures.append(exc)
         logger.warning(
             "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
             "workflow=session_level_assessment_core_retry sessionId=%s",
             request.sessionId,
         )
         data = {}
-
-    level_assessment = _recover_session_level_assessment(
-        data,
-        request,
-        feedback_entries,
-    )
+    else:
+        level_assessment = _recover_session_level_assessment(
+            data,
+            request,
+            feedback_entries,
+            failures=failures,
+        )
     if level_assessment is not None:
         return data, level_assessment
     return data, _retry_session_level_assessment_core(
@@ -1371,6 +1401,7 @@ def _request_session_feedback_with_level_assessment(
         request,
         feedback_entries,
         user_prompt,
+        failures=failures,
     )
 
 
@@ -1383,6 +1414,7 @@ def _retry_session_level_assessment_core(
     deadline: float | None = None,
     failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
+    begin_core_retry()
     selected_response_format = (
         _session_level_assessment_core_response_format()
         if response_format is _USE_STRICT_RESPONSE_FORMAT
@@ -1396,14 +1428,17 @@ def _retry_session_level_assessment_core(
     try:
         retry_data = _request_json_completion(
             settings,
-            system_prompt=_session_level_assessment_retry_system_prompt(),
+            system_prompt=_session_level_assessment_retry_system_prompt(
+                failures[-1] if failures else None,
+            ),
             user_prompt=user_prompt,
-            max_tokens=1536,
+            max_tokens=assessment_output_budget(request.assessmentMessages or []),
             response_format=selected_response_format,
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
         remember(exc)
+        record_validation_failure(exc)
         if failures is not None:
             failures.append(exc)
         logger.warning(
@@ -1447,6 +1482,7 @@ def _recover_session_level_assessment(
         return _validate_session_level_assessment(data, request, feedback_entries, require_session_id)
     except AiResponseInvalidError as exc:
         remember(exc)
+        record_validation_failure(exc)
         if failures is not None:
             failures.append(exc)
         return None
@@ -1731,10 +1767,16 @@ def _request_json_completion(
         if response_model is None:
             if response_format is not None:
                 request["response_format"] = response_format
-            completion = client.chat.completions.create(**request)
-            if deadline is not None and time.monotonic() >= deadline:
-                raise AiGenerationFailedError("assessment_deadline_exceeded")
-            return _parse_json_object(_extract_message_content(completion))
+            with observe_completion(max_tokens, response_format) as observation:
+                completion = client.chat.completions.create(**request)
+                if observation is not None:
+                    observation.update(completion_metadata(completion))
+                    if (observation["finish_reason"] == "length"
+                            or observation["native_finish_reason"] == "max_output_tokens"):
+                        raise AiResponseInvalidError("completion_output_limit")
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise AiGenerationFailedError("assessment_deadline_exceeded")
+                return _parse_json_object(_extract_message_content(completion))
 
         request["response_format"] = json_schema_response_format(
             response_model,
@@ -2617,7 +2659,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
     ] if section)
 
 
-def _session_level_assessment_retry_system_prompt() -> str:
+def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
@@ -2629,7 +2671,32 @@ def _session_level_assessment_retry_system_prompt() -> str:
         "in evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED "
         "or INSUFFICIENT_EVIDENCE. Apply the same rubric as the initial assessment.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}"
+        f"{_session_level_assessment_retry_feedback(failure)}"
     )
+
+
+def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
+    """재시도에 서버가 확인한 사유·필드만 전달하고 모델 출력이나 예외 원문은 제외한다."""
+    diagnostics = exception_diagnostics(failure)
+    if not diagnostics:
+        return ""
+    feedback = (
+        "\nThe previous assessment failed server validation. Correct the reported "
+        "problem and recheck every message and domain before returning the core.\n"
+        f"Server validation JSON: {json.dumps(diagnostics, ensure_ascii=False)}"
+    )
+    if diagnostics.get("validation_reason") == "assessment_evidence_mismatch":
+        feedback += (
+            "\nAn evidenceExcerpt was not found verbatim in its corresponding userMessage. "
+            "Copy one exact contiguous span from that message, including its original "
+            "spelling, grammar, capitalization, punctuation, and whitespace. Do not "
+            "paraphrase, correct, translate, combine separate spans, or insert ellipses. "
+            "Do not quote evaluationContext, requiredElements, or another message. "
+            "A full userMessage is allowed when the whole utterance supports the judgment. "
+            "Keep the rubric and evidence-status rules unchanged; do not lower a level "
+            "or mark observable performance as unobserved merely to avoid a quote error."
+        )
+    return feedback
 
 
 def _session_level_assessment_system_prompt() -> str:
@@ -2769,6 +2836,9 @@ def _message_feedback_evidence_policy() -> str:
         "coverageEvidence must contain the core requested information in the current evaluation context. "
         "Every requestExcerpt is an exact substring of the evaluation context. "
         "ANSWERED requires an answerExcerpt that is an exact substring of the user utterance; MISSING requires answerExcerpt null. "
+        "Each answerExcerpt must occur exactly once after ignoring case, punctuation, and whitespace. "
+        "If a short answerExcerpt repeats, extend it with surrounding words or copy the full user utterance; "
+        "do not paraphrase, correct, or join separate spans. "
         "Every ignoredSpeechArtifacts item and actionableIssues.sourceExcerpt is an exact substring of the user utterance. "
         "An ignored speech artifact cannot be an actionable issue. "
         "contextFit below 2 requires MISSING coverage, and contextFit 2 requires no MISSING coverage. "
@@ -2930,6 +3000,15 @@ def _message_feedback_repair_user_prompt(
 def _message_feedback_repair_instruction(error: Exception) -> str:
     reason = getattr(error, "reason", type(error).__name__)
     evidence_instructions = {
+        "message_feedback_answer_evidence": (
+            "Every ANSWERED answerExcerpt must be one contiguous span copied from "
+            "the User utterance, not the evaluation context or a corrected answer. "
+            "Do not paraphrase, translate, or join separate spans. It must occur "
+            "exactly once after ignoring case, punctuation, and whitespace. "
+            "If a short quote repeats, include surrounding words to make it unique; "
+            "the full user utterance is allowed. Keep the evidence-based judgment; "
+            "do not change ANSWERED to MISSING merely to avoid an invalid quote."
+        ),
         "message_feedback_context_evidence": (
             "contextFit is 2 only when every coverageEvidence item is ANSWERED; "
             "contextFit below 2 requires at least one MISSING item."
