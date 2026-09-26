@@ -104,3 +104,14 @@ class MessageFeedbackCoverageTests(unittest.TestCase):
             "do not change ANSWERED to MISSING",
         ):
             self.assertIn(requirement, instruction)
+
+    def test_generation_and_review_require_unique_answer_quotes(self):
+        request = valid_message_feedback_payload()
+        for build_prompt in (
+            service._message_feedback_system_prompt,
+            service._message_feedback_review_system_prompt,
+        ):
+            prompt = build_prompt(request["evaluationContext"]["type"])
+            self.assertIn("Each answerExcerpt must occur exactly once", prompt)
+            self.assertIn("copy the full user utterance", prompt)
+            self.assertIn("do not paraphrase, correct, or join separate spans", prompt)
