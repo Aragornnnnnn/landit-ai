@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from json import JSONDecodeError
 from pathlib import Path
 from threading import RLock
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from app.common.observation_context import bind_model, preserve_failure, remember
 from app.common.failure_diagnostics import exception_diagnostics
@@ -62,6 +62,7 @@ from app.models.conversation import (
     MessageFeedbackCandidate,
     MessageFeedbackContent,
     MessageFeedbackData,
+    MessageFeedbackCoverageEvidence,
     MessageFeedbackCoverageStatus,
     MessageFeedbackIssueDimension,
     MessageFeedbackRequest,
@@ -244,7 +245,20 @@ class _DetectedPattern(BaseModel):
     evidence: str
 
 
+class _AnsweredCoverageEvidence(MessageFeedbackCoverageEvidence):
+    status: Literal[MessageFeedbackCoverageStatus.ANSWERED]
+    answerExcerpt: str
+
+
+class _MissingCoverageEvidence(MessageFeedbackCoverageEvidence):
+    status: Literal[MessageFeedbackCoverageStatus.MISSING]
+    answerExcerpt: None
+
+
 class _MessageFeedbackStructuredOutput(MessageFeedbackCandidate):
+    coverageEvidence: list[
+        _AnsweredCoverageEvidence | _MissingCoverageEvidence
+    ] = Field(min_length=1)
     detectedPatterns: list[_DetectedPattern]
 
 
@@ -2983,6 +2997,15 @@ def _message_feedback_repair_user_prompt(
 def _message_feedback_repair_instruction(error: Exception) -> str:
     reason = getattr(error, "reason", type(error).__name__)
     evidence_instructions = {
+        "message_feedback_answer_evidence": (
+            "Every ANSWERED answerExcerpt must be one contiguous span copied from "
+            "the User utterance, not the evaluation context or a corrected answer. "
+            "Do not paraphrase, translate, or join separate spans. It must occur "
+            "exactly once after ignoring case, punctuation, and whitespace. "
+            "If a short quote repeats, include surrounding words to make it unique; "
+            "the full user utterance is allowed. Keep the evidence-based judgment; "
+            "do not change ANSWERED to MISSING merely to avoid an invalid quote."
+        ),
         "message_feedback_context_evidence": (
             "contextFit is 2 only when every coverageEvidence item is ANSWERED; "
             "contextFit below 2 requires at least one MISSING item."
