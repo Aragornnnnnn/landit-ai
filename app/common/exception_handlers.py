@@ -94,6 +94,10 @@ def _observe_request_error(request: Request, exc: Exception, reason: str) -> Non
 
 
 def _report_ai_failure(request: Request, exc: ApiException) -> None:
+    if getattr(exc.__cause__, "_memory_source_correction_failed", False):
+        observe(workflow="free_talk_memory_candidates", failure_stage="source_validation",
+                reason="candidate_source_correction_failed", outcome="failed", exc=exc, attempt=2)
+        return
     observe(workflow="ai_request_failed", failure_stage="generation",
             reason=exc.error_code.value.lower(), outcome="failed", exc=exc)
 
