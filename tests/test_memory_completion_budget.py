@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from pydantic import BaseModel
 
+from app.free_talk.llm.completion_attempts import CompletionAttempts
 from app.free_talk.llm.json_completion import (
     AiGenerationFailedError, AiResponseInvalidError, request_json_completion,
 )
@@ -22,7 +23,7 @@ def completion(content, finish="stop", **metadata):
 
 
 class MemoryCompletionBudgetTests(unittest.TestCase):
-    def invoke(self, responses):
+    def invoke(self, responses, **overrides):
         self.client = Mock()
         self.client.chat.completions.create.side_effect = responses
         with patch("app.core.openai_client.OpenAI", return_value=self.client):
@@ -31,6 +32,7 @@ class MemoryCompletionBudgetTests(unittest.TestCase):
                 system_prompt="PRIVATE_PROMPT", user_prompt="PRIVATE_USER",
                 reasoning_effort="low", response_model=Candidates,
                 workflow="free_talk_memory_candidates",
+                **overrides,
             )
 
     def test_length_exhaustion_never_retries_even_valid_or_partial_json(self):
@@ -65,3 +67,12 @@ class MemoryCompletionBudgetTests(unittest.TestCase):
         with self.assertLogs("app.free_talk.llm", level="INFO") as logs:
             self.invoke([completion('{"candidates":[]}', id="PRIVATE_USER\n", usage=None)])
         self.assertNotIn("PRIVATE_USER", " ".join(logs.output))
+
+    def test_caller_owned_diagnostics_wait_for_domain_validation(self):
+        diagnostics = CompletionAttempts("free_talk_memory_candidates")
+        with patch.object(diagnostics, "log") as log:
+            self.invoke([completion('{"candidates":[]}')], diagnostics=diagnostics)
+        log.assert_not_called()
+        diagnostics.failure("candidate source must be a user message")
+        self.assertEqual(len(diagnostics.attempts), 1)
+        self.assertEqual(diagnostics.first_failure, "candidate source must be a user message")
