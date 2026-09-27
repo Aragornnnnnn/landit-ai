@@ -15,6 +15,8 @@ from pydantic import (
 )
 
 from app.core.config import Settings
+from app.common.failure_observation import observe
+from app.free_talk.llm.completion_attempts import CompletionAttempts
 from app.free_talk.llm.memory_budget import memory_generation_budget
 from app.free_talk.application.follow_up_service import generate_follow_up_question
 from app.free_talk.application.memory_candidate_review import review_memory_candidates
@@ -50,7 +52,15 @@ _DUPLICATE_SUPERSEDE_CORRECTION = (
     "Re-evaluate the remaining candidates: IGNORE redundant facts and ADD only genuinely "
     "independent facts. Do not invent facts or memory IDs to avoid the conflict."
 )
-EXTRACTOR_VERSION = "memory-candidate-v11"
+_INVALID_CANDIDATE_SOURCE = "candidate source must be a user message"
+_SOURCE_CORRECTION = (
+    "The previous response cited a missing or non-USER message. Regenerate all candidates "
+    "from the original USER evidence using only allowedSourceMessageIds. AI messages are "
+    "context only, never evidence. Recheck each fact against its cited USER messages; "
+    "do not just replace IDs or invent evidence. Omit unsupported facts. "
+    "Return an empty candidates array if no supported facts remain."
+)
+EXTRACTOR_VERSION = "memory-candidate-v12"
 _CHARACTER_KOREAN_NAMES = {"chloe": "클로이", "marco": "마르코", "teddy": "테디"}
 _DIRECT_SHARED_EXPERIENCE_PATTERN = re.compile(
     r"\b(?:you\s+and\s+I|I\s+and\s+you|with\s+you|"
@@ -143,7 +153,8 @@ _CANDIDATE_PROMPT_PARTS = (
         "sourceMessageIds, confidence, validFrom, and validTo. candidateIndex must start "
         "at zero and be contiguous. For contentLocale, copy the request baseLocale exactly "
         "without converting the code. Write ordinary words entirely in baseLocale and keep "
-        "only proper nouns unchanged. Use only USER message IDs as sources. Each candidate "
+        "only proper nouns unchanged. Use only USER IDs listed in allowedSourceMessageIds "
+        "as sources. AI messages are context only, never evidence. Each candidate "
         "must contain one independently updatable fact. Split facts that could later change "
         "or be invalidated separately, even when they appear in one USER message. Do not "
         "split a cause and its behavioral restatement when both express the same durable "
@@ -336,22 +347,53 @@ def _extract_memory_candidate_drafts(
     payload: MemoryCandidatesRequest, settings: Settings,
 ) -> list[MemoryCandidate]:
     """추출과 원문 대조를 마친 후보를 반환하며 임베딩 I/O는 호출자가 담당한다."""
-    drafts = _validated_candidate_drafts(
-        request_json_completion(
-            settings=settings,
-            system_prompt=_candidate_system_prompt(),
-            user_prompt=_candidate_user_prompt(payload),
-            reasoning_effort="low",
-            response_model=_MemoryCandidateDraftResponse,
-            schema_name="free_talk_memory_candidates",
-            workflow="free_talk_memory_candidates",
-        ),
-        payload,
-    )
+    diagnostics = CompletionAttempts("free_talk_memory_candidates")
+    try:
+        drafts = _candidate_drafts_with_correction(payload, settings, diagnostics)
+    finally:
+        diagnostics.log()
     drafts = _filtered_candidate_drafts(
         review_memory_candidates(drafts, _candidate_user_prompt(payload), settings), payload,
     )
     return drafts
+
+
+def _candidate_drafts_with_correction(
+    payload: MemoryCandidatesRequest, settings: Settings, diagnostics: CompletionAttempts,
+) -> list[MemoryCandidate]:
+    try:
+        return _request_candidate_drafts(payload, settings, diagnostics)
+    except AiResponseInvalidError as exc:
+        if exc.reason != _INVALID_CANDIDATE_SOURCE:
+            raise
+        source_failure = exc
+    try:
+        drafts = _request_candidate_drafts(payload, settings, diagnostics, correction=True)
+    except Exception as exc:
+        exc._memory_source_correction_failed = True
+        raise
+    observe(workflow="free_talk_memory_candidates", failure_stage="source_validation",
+            reason="candidate_source_corrected", outcome="recovered", exc=source_failure, attempt=2)
+    return drafts
+
+
+def _request_candidate_drafts(
+    payload: MemoryCandidatesRequest, settings: Settings,
+    diagnostics: CompletionAttempts, correction: bool = False,
+) -> list[MemoryCandidate]:
+    data = request_json_completion(
+        settings=settings,
+        system_prompt=_candidate_system_prompt() + (" " + _SOURCE_CORRECTION if correction else ""),
+        user_prompt=_candidate_user_prompt(payload), reasoning_effort="low",
+        response_model=_MemoryCandidateDraftResponse,
+        schema_name="free_talk_memory_candidates", workflow="free_talk_memory_candidates",
+        max_attempts=1 if correction else 2, diagnostics=diagnostics,
+    )
+    try:
+        return _validated_candidate_drafts(data, payload)
+    except AiResponseInvalidError as exc:
+        diagnostics.failure(exc.reason)
+        raise
 
 
 def _candidates_with_embeddings(
@@ -600,7 +642,7 @@ def _validate_candidate_sources(
             or messages_by_id[source_message_id].role != "USER"
             for source_message_id in draft.sourceMessageIds
         ):
-            raise AiResponseInvalidError("candidate source must be a user message")
+            raise AiResponseInvalidError(_INVALID_CANDIDATE_SOURCE)
 
 
 def _validate_resolutions(
@@ -770,6 +812,9 @@ def _candidate_user_prompt(payload: MemoryCandidatesRequest) -> str:
         exclude={"existingMemories", "askedMemoryIds", "sessionEndedBy"},
     )
     timezone = ZoneInfo(payload.timezone)
+    data["allowedSourceMessageIds"] = [
+        message.messageId for message in payload.conversationHistory if message.role == "USER"
+    ]
     for message, source in zip(data["conversationHistory"], payload.conversationHistory):
         message["occurredAt"] = source.occurredAt.astimezone(timezone).isoformat()
     return json.dumps(data, ensure_ascii=False)

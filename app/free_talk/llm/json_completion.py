@@ -56,11 +56,13 @@ def request_json_completion(
     retry_schema_violations: bool = True,
     model: str | None = None,
     timeout_seconds: float | None = None,
+    diagnostics: CompletionAttempts | None = None,
 ) -> dict[str, object]:
     bind_model(settings.llm_provider, None)
     model = _resolved_model(settings, model)
     bind_model(settings.llm_provider, model)
-    attempts = CompletionAttempts(workflow)
+    # 호출자가 진단을 제공하면 JSON 이후 도메인 검증과 교정까지 같은 기록을 유지한다.
+    attempts = diagnostics if diagnostics is not None else CompletionAttempts(workflow)
     try:
         # timeout을 주면 SDK 재시도 없이 그 시간 안에 끝내거나 실패한다 (보조 판정용).
         client = create_openai_client(settings, timeout=timeout_seconds)
@@ -199,7 +201,8 @@ def request_json_completion(
         )
         raise AiGenerationFailedError from exc
     finally:
-        attempts.log()
+        if diagnostics is None:
+            attempts.log()
 
     raise AiGenerationFailedError
 

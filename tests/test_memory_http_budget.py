@@ -10,7 +10,12 @@ from openai import APIConnectionError, APITimeoutError
 
 from app.core.openai_client import create_openai_client
 from app.core.request_budget import request_budget
-from tests.test_free_talk_api import make_settings
+from app.free_talk.application.memory_service import _extract_memory_candidate_drafts
+from app.free_talk.llm.json_completion import AiGenerationFailedError
+from app.models.free_talk import MemoryCandidatesRequest
+from tests.test_free_talk_api import (
+    make_settings, valid_memory_candidate_completion, valid_memory_candidates_payload,
+)
 
 
 class MemoryHttpBudgetTests(unittest.TestCase):
@@ -19,6 +24,7 @@ class MemoryHttpBudgetTests(unittest.TestCase):
         self.drip = False
         self.compressed = False
         self.calls = 0
+        self.content = '{"candidates":[]}'
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -31,7 +37,7 @@ class MemoryHttpBudgetTests(unittest.TestCase):
                 self.rfile.read(int(self.headers["Content-Length"]))
                 time.sleep(owner.delays[index])
                 body = json.dumps({"id": "gen-local", "choices": [{
-                    "message": {"content": '{"candidates":[]}'}, "finish_reason": "stop",
+                    "message": {"content": owner.content}, "finish_reason": "stop",
                 }]}).encode()
                 if owner.compressed:
                     body = gzip.compress(body)
@@ -111,3 +117,23 @@ class MemoryHttpBudgetTests(unittest.TestCase):
         self.compressed = True
         with request_budget(2):
             self.assertEqual(self.call().choices[0].message.content, '{"candidates":[]}')
+
+    def test_source_correction_shares_remaining_time(self):
+        self.content = json.dumps(valid_memory_candidate_completion(sourceMessageIds=[3001]))
+        self.delays = [0.12, 0.7]
+        start = time.monotonic()
+        with request_budget(0.4, per_call_seconds=1), self.assertRaises(AiGenerationFailedError):
+            _extract_memory_candidate_drafts(
+                MemoryCandidatesRequest(**valid_memory_candidates_payload()), self.settings,
+            )
+        self.assertLess(time.monotonic() - start, 0.7)
+        self.assertEqual(self.calls, 2)
+
+    def test_source_correction_cannot_bypass_http_call_limit(self):
+        self.content = json.dumps(valid_memory_candidate_completion(sourceMessageIds=[3001]))
+        self.delays = [0]
+        with request_budget(2, max_calls=1), self.assertRaises(AiGenerationFailedError):
+            _extract_memory_candidate_drafts(
+                MemoryCandidatesRequest(**valid_memory_candidates_payload()), self.settings,
+            )
+        self.assertEqual(self.calls, 1)
