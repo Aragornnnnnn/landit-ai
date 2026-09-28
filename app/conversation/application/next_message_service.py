@@ -32,6 +32,7 @@ from app.conversation.application.session_assessment_rubric import (
 )
 from app.common.failure_observation import observe
 from app.conversation.llm.assessment_budget import assessment_output_budget
+from app.conversation.llm.session_feedback_budget import session_feedback_output_budget
 from app.conversation.llm.assessment_observation import (
     begin_assessment_retry,
     completion_metadata,
@@ -1275,7 +1276,9 @@ def generate_session_feedback(
         resolved_settings,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        max_tokens=512,
+        max_tokens=session_feedback_output_budget(
+            request, [entry.user_message for entry in feedback_entries],
+        ),
         response_model=SessionFeedbackSummary,
         schema_name="scenario_session_feedback",
         workflow="scenario_session_feedback",
