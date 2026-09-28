@@ -438,11 +438,12 @@ class QualityEvaluationTests(unittest.TestCase):
                 strict=True,
             )
         ]
+        summary_message = "자기소개와 취미는 자연스러웠고 수 일치를 다듬으면 좋아요."
         session_response = SessionFeedbackResponse(
             sessionId=14,
             nativeScore=87,
             starRating=2.5,
-            summaryMessage="자기소개와 취미는 자연스러웠고 수 일치를 다듬으면 좋아요.",
+            summaryMessage=summary_message,
             messageFeedbacks=feedbacks,
         )
 
@@ -485,12 +486,46 @@ class QualityEvaluationTests(unittest.TestCase):
         self.assertEqual(result["nativeScore"], 87)
         self.assertTrue(result["nativeScoreWithinExpectation"])
         self.assertTrue(result["starRatingMatchesExpectation"])
+        self.assertEqual(result["summaryMessage"], summary_message)
         self.assertEqual(result["foundForbiddenSessionTerms"], [])
         self.assertEqual(len(result["messageLatenciesMs"]), 3)
         self.assertTrue(all(value >= 0 for value in result["messageLatenciesMs"]))
         self.assertGreaterEqual(result["sessionFeedbackLatencyMs"], 0)
         self.assertGreaterEqual(result["totalLatencyMs"], 0)
         self.assertIsNone(result["validationError"])
+
+        # 금칙어 검출이 summaryMessage를 실제로 검사하는지 양성 케이스로 확인한다.
+        overpraising_response = session_response.model_copy(
+            update={"summaryMessage": "모든 답변을 완벽하게 말했어요."},
+        )
+        with (
+            patch(
+                "scripts.evaluate_conversation_quality.generate_message_feedback",
+                return_value=MessageFeedbackResponse(
+                    sessionId=14,
+                    messageId=60,
+                    feedbackStatus=FeedbackStatus.PREPARING,
+                ),
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality._get_expected_message_feedback_entries",
+                return_value=entries,
+            ),
+            patch(
+                "scripts.evaluate_conversation_quality.generate_session_feedback",
+                return_value=overpraising_response,
+            ),
+        ):
+            overpraising_results = evaluate_cases(
+                [feedback_session_case()],
+                runs=1,
+                kind="feedback-session",
+                settings=Settings(_env_file=None),
+            )
+        self.assertEqual(
+            overpraising_results[0]["foundForbiddenSessionTerms"],
+            ["완벽하게"],
+        )
 
     def test_feedback_session_result_records_generation_error(self):
         with patch(

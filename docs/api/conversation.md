@@ -104,11 +104,10 @@ AI 서버 캐시에 저장된 메시지별 피드백을 `expectedMessageIds` 기
 - `sessionId`
 - `nativeScore`
 - `starRating`
-- `highlightMessage`
 - `summaryMessage`
 - `messageFeedbacks`
 
-`highlightMessage`와 `summaryMessage`는 LLM이 생성합니다. `nativeScore`와 `starRating`은 LLM이 생성하지 않고 AI 서버가 deterministic하게 계산합니다.
+`summaryMessage`는 LLM이 생성합니다. `nativeScore`와 `starRating`은 LLM이 생성하지 않고 AI 서버가 deterministic하게 계산합니다. 별점 구간별 강조 문구는 AI 서버가 아니라 BE가 시나리오 문구 테이블에서 채웁니다.
 
 메시지별 피드백 준비 여부와 캐시 정책은 다음과 같습니다.
 
