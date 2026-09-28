@@ -442,7 +442,6 @@ class QualityEvaluationTests(unittest.TestCase):
             sessionId=14,
             nativeScore=87,
             starRating=2.5,
-            highlightMessage="자기소개와 취미를 자연스럽게 이어 간 사람",
             summaryMessage="자기소개와 취미는 자연스러웠고 수 일치를 다듬으면 좋아요.",
             messageFeedbacks=feedbacks,
         )

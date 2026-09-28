@@ -383,10 +383,7 @@ def _evaluate_feedback_session_case(
             (perf_counter() - session_started_at) * 1000,
             1,
         )
-        session_text = (
-            f"{session_feedback.highlightMessage}\n"
-            f"{session_feedback.summaryMessage}"
-        )
+        session_text = session_feedback.summaryMessage
         found_forbidden_session_terms = [
             term
             for term in case.get("forbiddenSessionTerms", [])
@@ -414,7 +411,6 @@ def _evaluate_feedback_session_case(
             "starRatingMatchesExpectation": (
                 session_feedback.starRating == case["expectedStarRating"]
             ),
-            "highlightMessage": session_feedback.highlightMessage,
             "summaryMessage": session_feedback.summaryMessage,
             "messageFeedbacks": [
                 feedback.model_dump(mode="json")

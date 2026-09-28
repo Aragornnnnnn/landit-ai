@@ -678,10 +678,9 @@ class SessionFeedbackSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     sessionId: int = Field(gt=0)
-    highlightMessage: str
     summaryMessage: str
 
-    @field_validator("highlightMessage", "summaryMessage")
+    @field_validator("summaryMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
@@ -693,7 +692,6 @@ class SessionFeedbackResponse(BaseModel):
     sessionId: int = Field(gt=0)
     nativeScore: int = Field(ge=0, le=100)
     starRating: float
-    highlightMessage: str
     summaryMessage: str
     messageFeedbacks: list[MessageFeedbackData]
 
@@ -704,7 +702,7 @@ class SessionFeedbackResponse(BaseModel):
             raise ValueError("starRating must be one of 1.0, 1.5, 2.0, 2.5, 3.0")
         return value
 
-    @field_validator("highlightMessage", "summaryMessage")
+    @field_validator("summaryMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)

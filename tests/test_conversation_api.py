@@ -2485,7 +2485,6 @@ class MessageFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "대화 의도를 전달했어요.",
                     "summaryMessage": "메시지별 피드백을 확인해 보세요.",
                 },
             ),
@@ -3873,7 +3872,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "대화 의도를 정확히 전달했어요.",
                     "summaryMessage": "상황에 맞게 대화를 이어갔어요.",
                 },
             ),
@@ -4019,7 +4017,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         ai_response = {
             "sessionId": 100,
-            "highlightMessage": "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
             "summaryMessage": "전체적으로 의도 전달이 명확했고 이유를 덧붙이려는 점이 좋았어요.",
             "nativeScore": 100,
             "starRating": 3.0,
@@ -4040,10 +4037,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(body["data"]["sessionId"], 100)
         self.assertEqual(body["data"]["nativeScore"], 93)
         self.assertEqual(body["data"]["starRating"], 3.0)
-        self.assertEqual(
-            body["data"]["highlightMessage"],
-            "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
-        )
+        self.assertNotIn("highlightMessage", body["data"])
         self.assertEqual(
             body["data"]["summaryMessage"],
             "전체적으로 의도 전달이 명확했고 이유를 덧붙이려는 점이 좋았어요.",
@@ -4133,7 +4127,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         retry_assessment.pop("details")
         fake_openai = FakeOpenAI(
             contents=[
-                '{"sessionId":100,"highlightMessage":"좋아요"',
+                '{"sessionId":100,"summaryMessage":"좋아요"',
                 json.dumps({"levelAssessment": retry_assessment}),
             ],
         )
@@ -4155,7 +4149,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
             "session_level_assessment_core",
         )
         self.assertNotIn(
-            "highlightMessage",
+            "summaryMessage",
             retry_format["json_schema"]["schema"]["properties"],
         )
 
@@ -4226,7 +4220,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
         assessment["details"] = {"strength": "", "improvement": 3}
         ai_response = {
             "sessionId": 100,
-            "highlightMessage": "대화 목적을 잘 달성했어요.",
             "summaryMessage": "이유를 분명하게 전달했어요.",
             "levelAssessment": assessment,
         }
@@ -4294,7 +4287,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "대화를 완료했어요.",
                     "summaryMessage": "답변을 이어갔어요.",
                     "levelAssessment": assessment,
                 },
@@ -4480,9 +4472,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
     def test_session_feedback_prompt_rejects_absolute_praise_for_mixed_feedback(self):
         prompt = next_message_service._session_feedback_system_prompt()
 
-        self.assertIn("NEEDS_IMPROVEMENT count is greater than 0", prompt)
+        self.assertIn("When any message needs improvement", prompt)
         self.assertIn(
-            "do not claim that every answer was natural or perfect",
+            "take strengths only from cached GOOD feedback",
             prompt,
         )
 
@@ -4534,7 +4526,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
                 },
             ),
         )
