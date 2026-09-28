@@ -11,6 +11,7 @@ from tests.test_conversation_api import valid_session_feedback_payload
 
 class SessionFeedbackBudgetTests(unittest.TestCase):
     def request(self, count=0, previous=False):
+        """예산 경계 검증을 위해 표현 후보 수와 직전 교정 포함 여부를 조합한다."""
         payload = valid_session_feedback_payload()
         payload["learnedExpressions"] = [
             {"expressionId": i + 1, "text": "take a break", "meaning": "잠깐 쉬다"}
@@ -24,9 +25,11 @@ class SessionFeedbackBudgetTests(unittest.TestCase):
         return SessionFeedbackRequest.model_validate(payload)
 
     def test_legacy_summary_keeps_existing_budget(self):
+        """비교 후보가 없는 기존 총평 요청은 512토큰 예산을 유지한다."""
         self.assertEqual(session_feedback_output_budget(self.request(), ["Hello."]), 512)
 
     def test_valid_growth_and_fifty_matches_fit_expanded_budget(self):
+        """성장 카드와 표현 50개를 포함한 유효 JSON이 확대된 예산 안에 들어간다."""
         sentence = "Yesterday I decided to take a break with my friends."
         result = SessionFeedbackSummary.model_validate({
             "sessionId": 100, "highlightMessage": "배운 표현을 활용했어요.",
@@ -48,5 +51,6 @@ class SessionFeedbackBudgetTests(unittest.TestCase):
         self.assertGreater(budget, len(encoded))
 
     def test_large_quotes_have_a_bounded_budget(self):
+        """긴 원문과 많은 후보가 있어도 출력 예산은 16K를 넘지 않는다."""
         budget = session_feedback_output_budget(self.request(50, previous=True), ["word " * 10000])
         self.assertEqual(budget, 16384)

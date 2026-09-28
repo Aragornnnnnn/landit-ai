@@ -746,6 +746,7 @@ class SessionFeedbackRequest(BaseModel):
 
     @model_validator(mode="after")
     def supplemental_evidence_ids_must_be_unique(self) -> Self:
+        """같은 ID가 서로 다른 비교 근거로 해석되지 않도록 후보 중복을 거부한다."""
         mistake_ids = [mistake.messageId for mistake in self.previousMistakes]
         if len(mistake_ids) != len(set(mistake_ids)):
             raise ValueError("previousMistakes must not contain duplicate message IDs")

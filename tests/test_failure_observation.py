@@ -178,6 +178,7 @@ class FailureObservationTests(unittest.TestCase):
         self.assertEqual(self.transport.events[0]["tags"]["workflow"], "message_feedback")
 
     def test_missing_assessment_reports_even_inside_success_response(self):
+        """외부 응답이 성공이어도 수준 평가 유실은 별도 실패 관측으로 남긴다."""
         request = SimpleNamespace(sessionId=1, assessmentMessages=[])
         with (patch.object(service, "_session_level_assessment_user_prompt", return_value=""),
               patch.object(service, "_request_json_completion_with_format_fallback", return_value=({}, None)),

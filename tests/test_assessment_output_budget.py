@@ -120,6 +120,7 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
             self.assertEqual(service._request_json_completion(self.settings, "system", "user", 10), {})
 
     def test_output_budget_handles_multiple_messages_and_long_escaped_evidence(self):
+        """여러 발화와 긴 이스케이프 인용 및 필수 설명이 출력 예산에 들어가는지 확인한다."""
         encoding = tiktoken.get_encoding("o200k_base")
         for count in (1, 3, 10):
             for utterance in ("Please email me tomorrow.", 'I said "yes".\n서울 at 9:00. ' * 8):

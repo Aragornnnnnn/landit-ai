@@ -16,6 +16,7 @@ def session_feedback_output_budget(
     encoding = tiktoken.get_encoding("o200k_base")
 
     def token_count(value: str) -> int:
+        """발화에 특수 토큰 문자열이 있어도 일반 텍스트로 계산해 예산을 추정한다."""
         return len(encoding.encode(value, disallowed_special=()))
 
     current = max(user_messages, key=token_count, default="")

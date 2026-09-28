@@ -1261,6 +1261,7 @@ def generate_session_feedback(
     request: SessionFeedbackRequest,
     settings: Settings | None = None,
 ) -> SessionFeedbackResponse:
+    """메시지별 평가를 재사용하고 부가 카드 오류를 격리해 총평을 반환한다."""
     feedback_entries = (
         [_entry_from_completed_feedback(entry) for entry in request.completedFeedbacks]
         if request.completedFeedbacks is not None
@@ -1374,6 +1375,7 @@ def _request_session_feedback_with_level_assessment(
     system_prompt: str,
     user_prompt: str,
 ) -> tuple[dict[str, Any], SessionLevelAssessment | None]:
+    """구버전 통합 호출의 총평을 보존하고 평가가 없으면 설명까지 재요청한다."""
     level_assessment: SessionLevelAssessment | None = None
     failures: list[Exception] = []
     try:
@@ -1419,6 +1421,7 @@ def _retry_session_level_assessment(
     deadline: float | None = None,
     failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
+    """남은 제한 시간 안에서 점수 근거와 두 설명을 함께 재생성하고 검증한다."""
     begin_assessment_retry()
     selected_response_format = (
         _session_level_assessment_retry_response_format()
@@ -1499,6 +1502,7 @@ def _validate_session_level_assessment(
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     require_session_id: bool = True,
 ) -> SessionLevelAssessment:
+    """세션·발화 근거와 필수 설명을 검증한 뒤 언어 안전 필터를 적용한다."""
     if require_session_id and data.get("sessionId") != request.sessionId:
         raise AssessmentValidationError("assessment_session_mismatch", "sessionId")
     raw_assessment = data.get("levelAssessment")
@@ -1655,6 +1659,7 @@ def _get_expected_message_feedback_entries(
 def _session_feedback_response_format(
     include_level_assessment: bool = False,
 ) -> dict[str, Any]:
+    """총평 스키마에 선택적으로 필수 설명을 가진 평가 후보 스키마를 결합한다."""
     summary_schema = _strict_output_schema(SessionFeedbackSummary.model_json_schema())
     properties = summary_schema.pop("properties")
     definitions = summary_schema.pop("$defs", None)
@@ -1681,6 +1686,7 @@ def _session_feedback_response_format(
 
 
 def _session_level_assessment_retry_response_format() -> dict[str, Any]:
+    """재시도에서도 core와 details를 모두 요구하는 구조화 출력 계약을 만든다."""
     assessment_schema = _strict_output_schema(
         SessionLevelAssessmentCandidate.model_json_schema(),
     )
@@ -1697,6 +1703,7 @@ def _session_level_assessment_retry_response_format() -> dict[str, Any]:
 
 
 def _session_level_assessment_response_format() -> dict[str, Any]:
+    """최초 수준 평가에 세션 식별자와 필수 설명을 포함한 후보 계약을 적용한다."""
     assessment_schema = _strict_output_schema(
         SessionLevelAssessmentCandidate.model_json_schema(),
     )
@@ -2616,6 +2623,7 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
 
 
 def _session_feedback_system_prompt(include_level_assessment: bool = True) -> str:
+    """총평과 비교 카드의 근거 규칙을 지정하고 요청에 따라 평가 정책을 붙인다."""
     return "\n\n".join(section for section in [
         (
             "Role:\n"
@@ -2700,6 +2708,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
 
 
 def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
+    """실패 필드 정보를 전달해 평가와 필수 설명을 함께 복구하도록 요청한다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
@@ -2740,6 +2749,7 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
 
 
 def _session_level_assessment_system_prompt() -> str:
+    """질문별 수행 근거와 관찰 가능한 발화를 기준으로 수준과 설명을 생성시킨다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
@@ -2784,6 +2794,7 @@ def _session_feedback_user_prompt(
     feedback_entries: list[_MessageFeedbackCacheEntry],
     include_level_assessment: bool,
 ) -> str:
+    """현재 피드백과 이전 교정·학습 표현 후보를 총평 생성 입력으로 구성한다."""
     message_feedbacks = [entry.feedback for entry in feedback_entries]
     good_count = sum(
         1

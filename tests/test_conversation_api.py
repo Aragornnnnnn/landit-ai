@@ -4006,6 +4006,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["starRating"], 2.5)
 
     def test_session_feedback_returns_summary_score_star_and_cached_feedbacks(self):
+        """총평 문구와 서버 계산 점수·별점 및 기존 메시지 피드백을 함께 반환한다."""
         app = self._app()
         self._cache_feedback(
             app,
@@ -4082,6 +4083,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(fake_openai.completions.kwargs["max_tokens"], 512)
 
     def test_session_feedback_returns_evidence_backed_growth_and_expression_reuse(self):
+        """전달된 비교·표현 후보를 프롬프트에 넣고 생성한 카드를 API 응답에 포함한다."""
         app = self._app()
         self._cache_feedback(
             app,
@@ -4254,6 +4256,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("extra_body", fake_openai.completions.calls[0])
 
     def test_session_level_assessment_retries_core_and_required_details_after_invalid_json(self):
+        """최초 JSON 오류 뒤에 core와 필수 설명을 함께 재요청한다."""
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
@@ -4326,6 +4329,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("response_format", fake_openai.completions.calls[2])
 
     def test_session_level_assessment_returns_without_level_when_retry_is_invalid(self):
+        """재시도까지 잘못된 평가를 반환하면 유효하지 않은 수준을 응답에 넣지 않는다."""
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["expectedMessageIds"] = [1001]
@@ -4343,6 +4347,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(len(fake_openai.completions.calls), 2)
 
     def test_session_level_assessment_retries_invalid_required_details(self):
+        """잘못된 필수 설명을 그대로 수용하지 않고 평가 전체를 재시도한다."""
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
