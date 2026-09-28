@@ -203,6 +203,15 @@ class SessionLevelAssessment(BaseModel):
     details: SessionLevelAssessmentDetails | None = None
 
 
+class SessionLevelAssessmentCandidate(BaseModel):
+    """LLM 응답에서 필수로 받아야 하는 수준 평가와 설명이다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    core: SessionLevelAssessmentCore
+    details: SessionLevelAssessmentDetails
+
+
 class NextFixedQuestion(BaseModel):
     questionId: int = Field(gt=0)
     sequence: int = Field(gt=0)

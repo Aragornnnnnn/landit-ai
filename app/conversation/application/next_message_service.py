@@ -33,7 +33,7 @@ from app.conversation.application.session_assessment_rubric import (
 from app.common.failure_observation import observe
 from app.conversation.llm.assessment_budget import assessment_output_budget
 from app.conversation.llm.assessment_observation import (
-    begin_core_retry,
+    begin_assessment_retry,
     completion_metadata,
     observe_assessment,
     observe_completion,
@@ -74,6 +74,7 @@ from app.models.conversation import (
     SessionFeedbackResponse,
     SessionFeedbackSummary,
     SessionLevelAssessment,
+    SessionLevelAssessmentCandidate,
     SessionLevelAssessmentCore,
     SessionLevelAssessmentDetails,
     SessionLevelAssessmentRequest,
@@ -1323,8 +1324,8 @@ def generate_session_level_assessment(
         record_validation_failure(exc)
         selected_response_format = exc.response_format
         logger.warning(
-            "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
-            "workflow=session_level_assessment_core_retry sessionId=%s",
+            "AI 세션 수준 평가 JSON이 올바르지 않아 평가와 설명을 재요청합니다. "
+            "workflow=session_level_assessment_retry sessionId=%s",
             request.sessionId,
         )
     else:
@@ -1337,7 +1338,7 @@ def generate_session_level_assessment(
         )
     retried = level_assessment is None
     if retried:
-        level_assessment = _retry_session_level_assessment_core(
+        level_assessment = _retry_session_level_assessment(
             resolved_settings,
             request,
             None,
@@ -1353,9 +1354,6 @@ def generate_session_level_assessment(
     elif retried:
         observe(workflow="level_assessment", failure_stage="core_validation",
                 reason="core_repaired", outcome="recovered", attempt=2)
-    elif level_assessment.details is None:
-        observe(workflow="level_assessment", failure_stage="details_validation",
-                reason="optional_details_missing", outcome="recovered")
     return SessionLevelAssessmentResponse(
         sessionId=request.sessionId,
         levelAssessment=level_assessment,
@@ -1382,8 +1380,8 @@ def _request_session_feedback_with_level_assessment(
     except AiResponseInvalidError as exc:
         failures.append(exc)
         logger.warning(
-            "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
-            "workflow=session_level_assessment_core_retry sessionId=%s",
+            "AI 세션 수준 평가 JSON이 올바르지 않아 평가와 설명을 재요청합니다. "
+            "workflow=session_level_assessment_retry sessionId=%s",
             request.sessionId,
         )
         data = {}
@@ -1396,7 +1394,7 @@ def _request_session_feedback_with_level_assessment(
         )
     if level_assessment is not None:
         return data, level_assessment
-    return data, _retry_session_level_assessment_core(
+    return data, _retry_session_level_assessment(
         settings,
         request,
         feedback_entries,
@@ -1405,7 +1403,7 @@ def _request_session_feedback_with_level_assessment(
     )
 
 
-def _retry_session_level_assessment_core(
+def _retry_session_level_assessment(
     settings: Settings,
     request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
@@ -1414,9 +1412,9 @@ def _retry_session_level_assessment_core(
     deadline: float | None = None,
     failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
-    begin_core_retry()
+    begin_assessment_retry()
     selected_response_format = (
-        _session_level_assessment_core_response_format()
+        _session_level_assessment_retry_response_format()
         if response_format is _USE_STRICT_RESPONSE_FORMAT
         else response_format
     )
@@ -1424,7 +1422,7 @@ def _retry_session_level_assessment_core(
         isinstance(selected_response_format, dict)
         and selected_response_format.get("type") == "json_schema"
     ):
-        selected_response_format = _session_level_assessment_core_response_format()
+        selected_response_format = _session_level_assessment_retry_response_format()
     try:
         retry_data = _request_json_completion(
             settings,
@@ -1442,8 +1440,8 @@ def _retry_session_level_assessment_core(
         if failures is not None:
             failures.append(exc)
         logger.warning(
-            "AI 세션 수준 평가 Core 재요청 결과가 올바르지 않습니다. "
-            "workflow=session_level_assessment_core_failed sessionId=%s",
+            "AI 세션 수준 평가 재요청 결과가 올바르지 않습니다. "
+            "workflow=session_level_assessment_retry_failed sessionId=%s",
             request.sessionId,
         )
         return None
@@ -1533,11 +1531,11 @@ def _validate_session_level_assessment(
                     f"core.messages.[].domains.{domain_name}.evidenceExcerpt",
                 )
     try:
-        details = SessionLevelAssessmentDetails.model_validate(
-            raw_assessment.get("details"),
-        )
-    except ValidationError:
-        details = None
+        candidate = SessionLevelAssessmentCandidate.model_validate(raw_assessment)
+    except ValidationError as exc:
+        remember(exc)
+        raise AssessmentValidationError("assessment_details_schema", "details") from exc
+    details = candidate.details
     filtered_core = filter_non_latin_assessment_evidence(core, expected_messages)
     if filtered_core is not core:
         details = None
@@ -1637,7 +1635,7 @@ def _session_feedback_response_format(
     name = "session_feedback_summary"
     if include_level_assessment:
         assessment_schema = _strict_output_schema(
-            SessionLevelAssessment.model_json_schema(),
+            SessionLevelAssessmentCandidate.model_json_schema(),
         )
         definitions = assessment_schema.pop("$defs", None)
         properties["levelAssessment"] = assessment_schema
@@ -1648,31 +1646,25 @@ def _session_feedback_response_format(
     return _json_schema_response_format(name, schema)
 
 
-def _session_level_assessment_core_response_format() -> dict[str, Any]:
-    core_schema = _strict_output_schema(
-        SessionLevelAssessmentCore.model_json_schema(),
+def _session_level_assessment_retry_response_format() -> dict[str, Any]:
+    assessment_schema = _strict_output_schema(
+        SessionLevelAssessmentCandidate.model_json_schema(),
     )
-    definitions = core_schema.pop("$defs", None)
-    level_assessment_schema = {
-        "type": "object",
-        "properties": {"core": core_schema},
-        "required": ["core"],
-        "additionalProperties": False,
-    }
+    definitions = assessment_schema.pop("$defs", None)
     schema: dict[str, Any] = {
         "type": "object",
-        "properties": {"levelAssessment": level_assessment_schema},
+        "properties": {"levelAssessment": assessment_schema},
         "required": ["levelAssessment"],
         "additionalProperties": False,
     }
     if definitions is not None:
         schema["$defs"] = definitions
-    return _json_schema_response_format("session_level_assessment_core", schema)
+    return _json_schema_response_format("session_level_assessment_retry", schema)
 
 
 def _session_level_assessment_response_format() -> dict[str, Any]:
     assessment_schema = _strict_output_schema(
-        SessionLevelAssessment.model_json_schema(),
+        SessionLevelAssessmentCandidate.model_json_schema(),
     )
     definitions = assessment_schema.pop("$defs", None)
     schema: dict[str, Any] = {
@@ -2632,7 +2624,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
             "Use null level and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
             f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
-            "details is optional Korean strength and improvement text; never omit or weaken core because details is unavailable."
+            "details is required Korean strength and improvement text. Ground both in observed conversation evidence and cached feedback. When no specific error is observed, state a cautious next step without inventing a mistake."
         ) if include_level_assessment else "",
         (
             "Self-check before final JSON:\n"
@@ -2663,7 +2655,7 @@ def _session_level_assessment_retry_system_prompt(failure: Exception | None = No
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
-        "Return only levelAssessment.core for the assessment messages. "
+        "Return the complete levelAssessment with core and details for the assessment messages. "
         "Judge taskPerformance against requiredElements. "
         "Assess situationPerformance, grammar, vocabulary, discourse, and "
         "interactionPragmatics. Each domain must use level 1 through 5 only when "
@@ -2682,7 +2674,7 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
         return ""
     feedback = (
         "\nThe previous assessment failed server validation. Correct the reported "
-        "problem and recheck every message and domain before returning the core.\n"
+        "problem and recheck every message, domain, and both Korean details before returning the complete assessment.\n"
         f"Server validation JSON: {json.dumps(diagnostics, ensure_ascii=False)}"
     )
     if diagnostics.get("validation_reason") == "assessment_evidence_mismatch":
@@ -2709,7 +2701,7 @@ def _session_level_assessment_system_prompt() -> str:
         "vocabulary, discourse, and interactionPragmatics. Each domain must use level 1 through 5 "
         "only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in "
         "evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED or "
-        "INSUFFICIENT_EVIDENCE. Details is optional and must be Korean.\n"
+        "INSUFFICIENT_EVIDENCE. Details is required and must be Korean. Ground both fields in observed conversation evidence; never invent an error.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
         "Output Schema: Return ONLY valid JSON matching this shape: "
         '{"sessionId":1,"levelAssessment":{"core":{"messages":[]},'

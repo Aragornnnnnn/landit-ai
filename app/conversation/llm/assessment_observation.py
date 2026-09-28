@@ -44,7 +44,7 @@ def observe_assessment(function):
     return wrapped
 
 
-def begin_core_retry() -> None:
+def begin_assessment_retry() -> None:
     state = _current.get()
     if state is not None:
         state["stage"] = 2
