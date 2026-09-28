@@ -139,7 +139,10 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
                         for domain in row["domains"].values():
                             domain["evidenceExcerpt"] = utterance
                         rows.append(row)
-                    data = {"sessionId": 100, "levelAssessment": {"core": {"messages": rows}}}
+                    data = {"sessionId": 100, "levelAssessment": {
+                        "core": {"messages": rows},
+                        "details": valid_level_assessment()["details"],
+                    }}
                     budget = assessment_output_budget(messages)
                     tokens = len(encoding.encode(json.dumps(data, ensure_ascii=False)))
                     self.assertLess(tokens, budget)

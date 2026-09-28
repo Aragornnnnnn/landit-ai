@@ -4079,6 +4079,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("Assessment messages JSON", messages[1]["content"])
         self.assertEqual(fake_openai.completions.kwargs["max_tokens"], 512)
 
+
     def test_session_level_assessment_returns_question_level_assessment_core(self):
         app = self._app()
         ai_response = {
@@ -4125,12 +4126,11 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertNotIn("extra_body", fake_openai.completions.calls[0])
 
-    def test_session_level_assessment_retries_only_level_core_after_invalid_json(self):
+    def test_session_level_assessment_retries_core_and_required_details_after_invalid_json(self):
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         retry_assessment = valid_level_assessment()
-        retry_assessment.pop("details")
         fake_openai = FakeOpenAI(
             contents=[
                 '{"sessionId":100,"highlightMessage":"좋아요"',
@@ -4147,12 +4147,12 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()["data"]
         self.assertIsNotNone(body["levelAssessment"]["core"])
-        self.assertIsNone(body["levelAssessment"]["details"])
+        self.assertIsNotNone(body["levelAssessment"]["details"])
         self.assertEqual(len(fake_openai.completions.calls), 2)
         retry_format = fake_openai.completions.calls[1]["response_format"]
         self.assertEqual(
             retry_format["json_schema"]["name"],
-            "session_level_assessment_core",
+            "session_level_assessment_retry",
         )
         self.assertNotIn(
             "highlightMessage",
@@ -4198,7 +4198,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertNotIn("response_format", fake_openai.completions.calls[2])
 
-    def test_session_level_assessment_returns_without_level_when_core_retry_is_invalid(self):
+    def test_session_level_assessment_returns_without_level_when_retry_is_invalid(self):
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["expectedMessageIds"] = [1001]
@@ -4215,7 +4215,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIsNone(response.json()["data"]["levelAssessment"])
         self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_session_level_assessment_drops_invalid_details_without_losing_core(self):
+    def test_session_level_assessment_retries_invalid_required_details(self):
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
@@ -4224,16 +4224,19 @@ class SessionFeedbackApiTests(unittest.TestCase):
         assessment = valid_level_assessment()
         assessment["core"]["messages"] = [assessment["core"]["messages"][0]]
         assessment["details"] = {"strength": "", "improvement": 3}
-        ai_response = {
+        valid_response = {
             "sessionId": 100,
             "highlightMessage": "대화 목적을 잘 달성했어요.",
             "summaryMessage": "이유를 분명하게 전달했어요.",
             "levelAssessment": assessment,
         }
+        retry_assessment = valid_level_assessment()
+        retry_assessment["core"]["messages"] = [retry_assessment["core"]["messages"][0]]
+        retry_response = {"levelAssessment": retry_assessment}
 
         with patch(
             "app.core.openai_client.OpenAI",
-            return_value=FakeOpenAI(content=json.dumps(ai_response)),
+            return_value=FakeOpenAI(contents=[json.dumps(valid_response), json.dumps(retry_response)]),
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
@@ -4244,7 +4247,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("levelAssessment", response.json()["data"])
         assessment_response = response.json()["data"]["levelAssessment"]
         self.assertIsNotNone(assessment_response["core"])
-        self.assertIsNone(assessment_response["details"])
+        self.assertEqual(assessment_response["details"]["strength"], "이유를 덧붙여 답변했어요.")
 
     def test_session_level_assessment_drops_core_with_evidence_not_found_in_user_message(self):
         app = self._app()

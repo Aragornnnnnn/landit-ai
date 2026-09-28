@@ -43,10 +43,10 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
                 valid = valid_level_assessment()
                 result, calls = self._request(
                     {"sessionId": 100, "levelAssessment": invalid},
-                    {"levelAssessment": {"core": valid["core"]}},
+                    {"levelAssessment": valid},
                 )
                 self.assertEqual(result["core"], valid["core"])
-                self.assertIsNone(result["details"])
+                self.assertEqual(result["details"], valid["details"])
                 self.assertEqual(len(calls), 2)
                 self.assertEqual(calls[0]["messages"][1], calls[1]["messages"][1])
                 prompt = calls[1]["messages"][0]["content"]
@@ -82,7 +82,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         valid = valid_level_assessment()
         result, calls = self._request(
             {"sessionId": 100, "levelAssessment": invalid},
-            {"levelAssessment": {"core": valid["core"]}},
+            {"levelAssessment": valid},
         )
         self.assertEqual(result["core"], valid["core"])
         prompt = calls[1]["messages"][0]["content"]
@@ -103,7 +103,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         ]
         fake = FakeOpenAI(contents=[
             json.dumps({"sessionId": 100, "levelAssessment": invalid}),
-            json.dumps({"levelAssessment": {"core": valid["core"]}}),
+            json.dumps({"levelAssessment": valid}),
         ])
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             _, assessment = service._request_session_feedback_with_level_assessment(
@@ -123,7 +123,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
     def _retry_raw_initial_response(self, initial, combined):
         valid = valid_level_assessment()
         fake = FakeOpenAI(contents=[
-            initial, json.dumps({"levelAssessment": {"core": valid["core"]}}),
+            initial, json.dumps({"levelAssessment": valid}),
         ])
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             if combined:
