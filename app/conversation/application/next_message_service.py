@@ -1290,6 +1290,8 @@ def generate_session_feedback(
         highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
+        growthFeedback=summary.growthFeedback,
+        usedExpressions=summary.usedExpressions,
     )
     # 구버전 BE도 응답 유실 뒤 다시 요청할 수 있도록 TTL까지 유지한다.
     return response
@@ -1558,6 +1560,8 @@ def _recover_session_feedback_summary(
             "summaryMessage",
             "메시지별 피드백을 참고해 다음 대화에서 한 문장씩 더 구체적으로 말해 보세요.",
         ),
+        growthFeedback=data.get("growthFeedback"),
+        usedExpressions=data.get("usedExpressions", []),
     )
 
 
@@ -1621,11 +1625,9 @@ def _get_expected_message_feedback_entries(
 def _session_feedback_response_format(
     include_level_assessment: bool = False,
 ) -> dict[str, Any]:
-    properties: dict[str, Any] = {
-        "sessionId": {"type": "integer"},
-        "highlightMessage": {"type": "string"},
-        "summaryMessage": {"type": "string"},
-    }
+    summary_schema = _strict_output_schema(SessionFeedbackSummary.model_json_schema())
+    properties = summary_schema.pop("properties")
+    definitions = summary_schema.pop("$defs", None)
     schema: dict[str, Any] = {
         "type": "object",
         "properties": properties,
@@ -1637,12 +1639,14 @@ def _session_feedback_response_format(
         assessment_schema = _strict_output_schema(
             SessionLevelAssessmentCandidate.model_json_schema(),
         )
-        definitions = assessment_schema.pop("$defs", None)
+        assessment_definitions = assessment_schema.pop("$defs", None)
         properties["levelAssessment"] = assessment_schema
         schema["required"] = list(properties)
-        if definitions is not None:
-            schema["$defs"] = definitions
+        if assessment_definitions is not None:
+            definitions = {**(definitions or {}), **assessment_definitions}
         name = "session_feedback_with_level_assessment"
+    if definitions is not None:
+        schema["$defs"] = definitions
     return _json_schema_response_format(name, schema)
 
 
@@ -2616,6 +2620,18 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Do not introduce corrections or examples that are not present in cached message feedback."
         ),
         (
+            "Comparison and Learned Expression Policy:\n"
+            "growthFeedback is null unless the supplied previousMistakes contains a real correction and a current user message contains a clear use of the same watchable pattern. "
+            "Compare only the supplied previous completed session; do not infer or claim a comparison when previousMistakes is empty. "
+            "Use one of TENSE, SUBJECT_VERB_AGREEMENT, VERB_FORM, ARTICLE, PLURAL, PRONOUN, PREPOSITION, NEGATION, or QUESTION_FORM. "
+            "previousMessageId must identify the supplied prior correction; previousSentence and previousWrongSpan must be exact substrings of that prior userMessage. "
+            "currentMessageId must identify a current cached user message; currentSentence and currentSpan must be exact substrings of its userMessage. "
+            "Set succeeded to whether the current form is correct. If no current usage of the prior pattern is clear, return growthFeedback null. "
+            "usedExpressions must contain only learnedExpressions that the learner actually used in a current user message. "
+            "Return the candidate expressionId, the exact current messageId, and matchedText copied exactly from that user's utterance. "
+            "Do not treat a related idea or a similar expression as reuse. Return an empty array when no candidate was used."
+        ),
+        (
             "Level Assessment Policy:\n"
             "For every Assessment messages JSON item, return one core.messages entry in the same order. "
             "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
@@ -2624,16 +2640,18 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
             "Use null level and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
             f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
-            "details is required Korean strength and improvement text. Ground both in observed conversation evidence and cached feedback. When no specific error is observed, state a cautious next step without inventing a mistake."
+            "details is required Korean strength and improvement text. Ground both in observed conversation evidence and cached feedback. "
+            "When no specific error is observed, state a cautious next step without inventing a mistake."
         ) if include_level_assessment else "",
         (
             "Self-check before final JSON:\n"
             "1. highlightMessage is Korean and badge-like. "
             "2. summaryMessage is Korean and sounds natural to a learner. "
             "3. Both fields are grounded in cached message feedback. "
-            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+            "4. Comparison cards use only supplied prior correction and current utterance evidence; learned expression matches use exact copied text. "
+            "5. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
             + (
-                " 5. levelAssessment.core is grounded in the exact assessment messages."
+                " 6. levelAssessment.core is grounded in the exact assessment messages."
                 if include_level_assessment
                 else ""
             )
@@ -2642,9 +2660,9 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
             + (
-                '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
+                '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","growthFeedback":null,"usedExpressions":[],"levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
                 if include_level_assessment
-                else '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"..."}. '
+                else '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","growthFeedback":null,"usedExpressions":[]}. '
             )
             + "Return one JSON object, not an array."
         ),
@@ -2780,7 +2798,11 @@ def _session_feedback_user_prompt(
         f"Cached message feedback counts: GOOD={good_count}, NEEDS_IMPROVEMENT={needs_count}\n\n"
         f"Cached message feedback JSON:\n{feedback_json}\n\n"
         f"Cached user message JSON:\n{user_message_json}\n\n"
-        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}"
+        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}\n\n"
+        f"Previous completed session mistake evidence JSON:\n"
+        f"{json.dumps([mistake.model_dump(mode='json') for mistake in request.previousMistakes], ensure_ascii=False, separators=(',', ':'))}\n\n"
+        f"Learned expression candidates JSON:\n"
+        f"{json.dumps([expression.model_dump(mode='json') for expression in request.learnedExpressions], ensure_ascii=False, separators=(',', ':'))}"
     )
     if not include_level_assessment:
         return prompt
