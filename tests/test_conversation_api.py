@@ -4138,6 +4138,75 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn('"messageId":9001', user_prompt)
         self.assertIn('"expressionId":812', user_prompt)
 
+    def test_session_feedback_recovers_invalid_cards_in_all_output_formats(self):
+        """스키마 재시도와 출력 형식 fallback 모두 정상 총평 문구를 보존한다."""
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        for format_name in ("json_schema", "json_object", "prompt"):
+            for invalid_value in (None, "invalid", {"unexpected": True}):
+                with self.subTest(format=format_name, invalid=invalid_value):
+                    errors = []
+                    if format_name != "json_schema":
+                        error = RuntimeError("response_format json_schema is not supported")
+                        error.status_code = 400
+                        errors.append(error)
+                    if format_name == "prompt":
+                        error = RuntimeError("response_format json_object is not supported")
+                        error.status_code = 400
+                        errors.append(error)
+                    ai_response = {
+                        "sessionId": 100,
+                        "highlightMessage": "잘한 점을 유지해요.",
+                        "summaryMessage": "정상적으로 생성한 총평을 보존해요.",
+                        "growthFeedback": invalid_value,
+                        "usedExpressions": invalid_value,
+                    }
+                    fake_openai = FakeOpenAI(content=json.dumps(ai_response), errors=errors)
+                    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                        response = make_client(app).post(
+                            "/api/v1/conversation/session-feedback", json=payload,
+                        )
+                    self.assertEqual(response.status_code, 200)
+                    data = response.json()["data"]
+                    self.assertEqual(data["highlightMessage"], ai_response["highlightMessage"])
+                    self.assertEqual(data["summaryMessage"], ai_response["summaryMessage"])
+                    self.assertIsNone(data["growthFeedback"])
+                    self.assertEqual(data["usedExpressions"], [])
+                    self.assertEqual(len(data["messageFeedbacks"]), 1)
+                    expected_calls = 3 if format_name == "prompt" else 2
+                    self.assertEqual(len(fake_openai.completions.calls), expected_calls)
+
+    def test_session_feedback_preserves_valid_cards_among_invalid_expression_items(self):
+        """표현 일부가 잘못되어도 유효한 비교 카드와 나머지 표현은 그대로 반환한다."""
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        growth = {
+            "pattern": "TENSE", "previousMessageId": 9001,
+            "previousSentence": "I go yesterday.", "previousWrongSpan": "go",
+            "currentMessageId": 1001, "currentSentence": "I went yesterday.",
+            "currentSpan": "went", "succeeded": True,
+        }
+        valid = {"expressionId": 812, "messageId": 1001, "matchedText": "used to"}
+        fake_openai = FakeOpenAI(content=json.dumps({
+            "sessionId": 100, "highlightMessage": "강조", "summaryMessage": "총평",
+            "growthFeedback": growth,
+            "usedExpressions": [None, {"expressionId": -1}, valid, "invalid"],
+        }))
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback", json=payload,
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["growthFeedback"], growth)
+        self.assertEqual(data["usedExpressions"], [valid])
+        self.assertEqual(data["highlightMessage"], "강조")
+        self.assertEqual(data["summaryMessage"], "총평")
+
     def test_session_level_assessment_returns_question_level_assessment_core(self):
         app = self._app()
         ai_response = {

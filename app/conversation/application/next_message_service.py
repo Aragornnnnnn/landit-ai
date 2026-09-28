@@ -74,6 +74,8 @@ from app.models.conversation import (
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
+    SessionFeedbackGrowthCandidate,
+    SessionFeedbackUsedExpression,
     SessionLevelAssessment,
     SessionLevelAssessmentCandidate,
     SessionLevelAssessmentCore,
@@ -1551,6 +1553,7 @@ def _recover_session_feedback_summary(
     data: dict[str, Any],
     session_id: int,
 ) -> SessionFeedbackSummary:
+    """총평 문구를 보존하면서 형식이 잘못된 부가 카드만 독립적으로 제외한다."""
     return SessionFeedbackSummary(
         sessionId=session_id,
         highlightMessage=_response_text(
@@ -1563,9 +1566,33 @@ def _recover_session_feedback_summary(
             "summaryMessage",
             "메시지별 피드백을 참고해 다음 대화에서 한 문장씩 더 구체적으로 말해 보세요.",
         ),
-        growthFeedback=data.get("growthFeedback"),
-        usedExpressions=data.get("usedExpressions", []),
+        growthFeedback=_recover_growth_feedback(data.get("growthFeedback")),
+        usedExpressions=_recover_used_expressions(data.get("usedExpressions")),
     )
+
+
+def _recover_growth_feedback(value: Any) -> SessionFeedbackGrowthCandidate | None:
+    """비교 카드의 형식 검증에 실패하면 총평을 실패시키지 않고 카드를 생략한다."""
+    if value is None:
+        return None
+    try:
+        return SessionFeedbackGrowthCandidate.model_validate(value)
+    except ValidationError as exc:
+        remember(exc)
+        return None
+
+
+def _recover_used_expressions(value: Any) -> list[SessionFeedbackUsedExpression]:
+    """목록이 아니면 빈 결과로 복구하고, 목록 안에서는 잘못된 항목만 제외한다."""
+    if not isinstance(value, list):
+        return []
+    recovered = []
+    for item in value:
+        try:
+            recovered.append(SessionFeedbackUsedExpression.model_validate(item))
+        except ValidationError as exc:
+            remember(exc)
+    return recovered
 
 
 def clear_message_feedback_cache() -> None:
