@@ -4133,6 +4133,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(body["growthFeedback"]["previousMessageId"], 9001)
         self.assertEqual(body["usedExpressions"][0]["expressionId"], 812)
         self.assertEqual(body["usedExpressions"][0]["matchedText"], "used to go")
+        self.assertGreater(fake_openai.completions.kwargs["max_tokens"], 512)
         user_prompt = fake_openai.completions.kwargs["messages"][1]["content"]
         self.assertIn('"messageId":9001', user_prompt)
         self.assertIn('"expressionId":812', user_prompt)
