@@ -4048,6 +4048,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
             body["data"]["summaryMessage"],
             "전체적으로 의도 전달이 명확했고 이유를 덧붙이려는 점이 좋았어요.",
         )
+        self.assertIsNone(body["data"]["growthFeedback"])
+        self.assertEqual(body["data"]["usedExpressions"], [])
         self.assertEqual(
             [feedback["messageId"] for feedback in body["data"]["messageFeedbacks"]],
             [1001, 1003],
@@ -4079,6 +4081,61 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertNotIn("Assessment messages JSON", messages[1]["content"])
         self.assertEqual(fake_openai.completions.kwargs["max_tokens"], 512)
 
+    def test_session_feedback_returns_evidence_backed_growth_and_expression_reuse(self):
+        app = self._app()
+        self._cache_feedback(
+            app,
+            good_message_feedback(1001),
+            user_message="I used to go to work by bus.",
+        )
+        ai_response = {
+            "sessionId": 100,
+            "highlightMessage": "표현을 실제 대화에 활용했어요.",
+            "summaryMessage": "지난번보다 시제를 정확히 사용했고 배운 표현도 대화에 활용했어요.",
+            "growthFeedback": {
+                "pattern": "TENSE",
+                "previousMessageId": 9001,
+                "previousSentence": "I go to work yesterday.",
+                "previousWrongSpan": "go",
+                "currentMessageId": 1001,
+                "currentSentence": "I used to go to work by bus.",
+                "currentSpan": "used to go",
+                "succeeded": True,
+            },
+            "usedExpressions": [
+                {"expressionId": 812, "messageId": 1001, "matchedText": "used to go"},
+            ],
+        }
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        payload["previousMistakes"] = [
+            {
+                "messageId": 9001,
+                "userMessage": "I go to work yesterday.",
+                "correctionExpression": "I went to work yesterday.",
+                "correctionReason": "과거의 일을 말할 때는 동사를 과거형으로 써요.",
+            },
+        ]
+        payload["learnedExpressions"] = [
+            {"expressionId": 812, "text": "used to", "meaning": "예전에 ~하곤 했다"},
+        ]
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()["data"]
+        self.assertEqual(body["growthFeedback"]["pattern"], "TENSE")
+        self.assertEqual(body["growthFeedback"]["previousMessageId"], 9001)
+        self.assertEqual(body["usedExpressions"][0]["expressionId"], 812)
+        self.assertEqual(body["usedExpressions"][0]["matchedText"], "used to go")
+        user_prompt = fake_openai.completions.kwargs["messages"][1]["content"]
+        self.assertIn('"messageId":9001', user_prompt)
+        self.assertIn('"expressionId":812', user_prompt)
 
     def test_session_level_assessment_returns_question_level_assessment_core(self):
         app = self._app()
