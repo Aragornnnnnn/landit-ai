@@ -7,7 +7,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Literal
 
@@ -242,7 +242,7 @@ def write_manifest(args: argparse.Namespace) -> None:
         "referencePromptSha256": hashlib.sha256(
             reference_prompt({"answers": [""] * 4}).encode()
         ).hexdigest(),
-        "assessmentVersion": "text-level-v1.2",
+        "assessmentVersion": "text-score-v2.0",
     }
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -274,10 +274,10 @@ def reference_prompt(case: dict[str, Any]) -> str:
         "Independently assess this Korean learner's English text. You do not know "
         "the author's intended level or any product result.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n\n"
-        "Return only JSON with assessable (boolean), allowedLevelRange ([min,max]), and notes. "
+        "Return only JSON with assessable (boolean), allowedLevelRange ([min,max] learning levels 1-5, using score boundaries 20/40/60/80), and notes. "
         "Also return messages in input order; each message must contain "
         "taskPerformance and all five domains. "
-        "Each domain contains level 1-5 or null, evidenceStatus, and an exact "
+        "Each domain contains integer score 1-100 or null, evidenceStatus, and an exact "
         "evidenceExcerpt or null. The allowed range is your independent session-level "
         "judgment, not a simple average.\n\n"
         f"Conversation JSON:\n{json.dumps(visible, ensure_ascii=False)}"
@@ -319,11 +319,11 @@ def parse_reference(raw: str, case: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(domain, dict):
                 raise ValueError("reference domain must be an object")
             status = domain.get("evidenceStatus")
-            level = domain.get("level")
+            level = domain.get("score")
             excerpt = domain.get("evidenceExcerpt")
             if status == "OBSERVED":
-                if type(level) is not int or not 1 <= level <= 5:
-                    raise ValueError("observed reference level is invalid")
+                if type(level) is not int or not 1 <= level <= 100:
+                    raise ValueError("observed reference score is invalid")
                 if not isinstance(excerpt, str) or excerpt not in answer:
                     raise ValueError("reference evidence is not an exact answer substring")
             elif status in {"NOT_OBSERVED", "INSUFFICIENT_EVIDENCE"}:
@@ -436,9 +436,9 @@ def be_policy(level_assessment: dict[str, Any] | None) -> dict[str, Any]:
         observed_count = 0
         for question, message in zip(QUESTIONS, messages, strict=True):
             domain = message["domains"][name]
-            if domain["evidenceStatus"] == "OBSERVED" and domain["level"] is not None:
+            if domain["evidenceStatus"] == "OBSERVED" and domain["score"] is not None:
                 weight = DEMAND_WEIGHTS[question["demand"]]
-                weighted += weight * Decimal(domain["level"])
+                weighted += weight * Decimal(domain["score"])
                 observed_weight += weight
                 observed_count += 1
         score = None if not observed_weight else weighted / observed_weight
@@ -456,12 +456,12 @@ def be_policy(level_assessment: dict[str, Any] | None) -> dict[str, Any]:
             Decimal(domains[name]["score"]) * weight
             for name, weight in DOMAIN_WEIGHTS.items()
         )
-        overall = min(overall, Decimal("5.00"))
+        overall = min(overall, Decimal("100.00")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     sufficient = all(domain["sufficient"] for domain in domains.values())
     assessed = (
         None
         if overall is None
-        else int(overall.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        else int((overall / Decimal("20")).quantize(Decimal("1"), rounding=ROUND_CEILING))
     )
     return {
         "source": "MODEL",
@@ -697,8 +697,8 @@ def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
             ):
                 product_domain = product_message["domains"][name]
                 reference_domain = reference_message["domains"][name]
-                product_level = product_domain["level"]
-                reference_level = reference_domain["level"]
+                product_level = product_domain["score"]
+                reference_level = reference_domain["score"]
                 if reference_level is not None and product_level is None:
                     product_missing += 1
                 if reference_level is None and product_level is not None:
