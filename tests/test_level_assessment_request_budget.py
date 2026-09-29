@@ -24,13 +24,13 @@ class LevelAssessmentRequestBudgetTests(unittest.TestCase):
         ):
             with self.subTest(prompt=prompt[:40]):
                 self.assertIn("A concise choice, time, or contact preference", prompt)
-                self.assertIn("Discourse 1 requires disconnected ideas", prompt)
+                self.assertIn("The discourse 1-20 band requires disconnected ideas", prompt)
                 self.assertIn("PARTIAL requires an identifiable missing required element", prompt)
                 self.assertIn("Please send it by email", prompt)
                 self.assertIn("Asked 'When, and why that time?'", prompt)
                 self.assertIn("the same answer is PARTIAL", prompt)
                 self.assertIn("do not add unstated reasons", prompt)
-                self.assertIn("Appropriate short answers do not automatically earn levels 4 or 5", prompt)
+                self.assertIn("Appropriate short answers do not automatically earn scores in 61-100", prompt)
 
     def test_initial_and_retry_prompts_treat_utterances_as_data(self):
         for prompt in (

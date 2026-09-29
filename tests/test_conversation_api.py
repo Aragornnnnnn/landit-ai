@@ -201,27 +201,27 @@ def valid_assessment_messages():
 def valid_level_assessment():
     domains = {
         "situationPerformance": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza because it is spicy.",
         },
         "grammar": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "because it is spicy",
         },
         "vocabulary": {
-            "level": 3,
+            "score": 50,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "pizza",
         },
         "discourse": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza because it is spicy.",
         },
         "interactionPragmatics": {
-            "level": 3,
+            "score": 50,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza",
         },
@@ -239,7 +239,7 @@ def valid_level_assessment():
                     "taskPerformance": "ACHIEVED",
                     "domains": {
                         name: {
-                            "level": 3,
+                            "score": 50,
                             "evidenceStatus": "OBSERVED",
                             "evidenceExcerpt": "I ate pasta yesterday.",
                         }
@@ -3768,10 +3768,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 "interactionPragmatics",
             },
         )
-        level_schema = schemas["SessionAssessmentDomain"]["properties"]["level"]
+        level_schema = schemas["SessionAssessmentDomain"]["properties"]["score"]
         self.assertEqual(
             level_schema["anyOf"][0]["maximum"],
-            5,
+            100,
         )
         self.assertEqual(
             level_schema["anyOf"][0]["minimum"],
@@ -3782,7 +3782,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             conversation_models.SessionAssessmentDomain.model_validate(
                 {
-                    "level": True,
+                    "score": True,
                     "evidenceStatus": "OBSERVED",
                     "evidenceExcerpt": "answer",
                 },
@@ -3794,7 +3794,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                     "taskPerformance": "ACHIEVED",
                     "domains": {
                         name: {
-                            "level": 1,
+                            "score": 10,
                             "evidenceStatus": "OBSERVED",
                             "evidenceExcerpt": "answer",
                         }
@@ -4105,8 +4105,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
             [1001, 1003],
         )
         self.assertEqual(
-            assessment["core"]["messages"][0]["domains"]["grammar"]["level"],
-            4,
+            assessment["core"]["messages"][0]["domains"]["grammar"]["score"],
+            70,
         )
         self.assertEqual(assessment["details"]["strength"], "이유를 덧붙여 답변했어요.")
         response_format = fake_openai.completions.calls[0]["response_format"]
@@ -4335,7 +4335,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 self.assertIsNotNone(actual)
                 for domain in actual["core"]["messages"][0]["domains"].values():
                     self.assertEqual(domain, {
-                        "level": None, "evidenceStatus": "NOT_OBSERVED",
+                        "score": None, "evidenceStatus": "NOT_OBSERVED",
                         "evidenceExcerpt": None,
                     })
                 self.assertEqual(actual["core"]["messages"][1], assessment["core"]["messages"][1])
@@ -4371,10 +4371,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
         actual = next_message_service._recover_session_level_assessment(
             {"sessionId": 100, "levelAssessment": assessment}, request, None,
         )
-        self.assertIsNone(actual.core.messages[0].domains.vocabulary.level)
-        self.assertEqual(actual.core.messages[0].domains.grammar.level, 4)
+        self.assertIsNone(actual.core.messages[0].domains.vocabulary.score)
+        self.assertEqual(actual.core.messages[0].domains.grammar.score, 70)
         self.assertIsNone(actual.details)
-        self.assertEqual(domains["vocabulary"]["level"], 3)
+        self.assertEqual(domains["vocabulary"]["score"], 50)
 
     def test_assessment_excludes_non_latin_scripts_but_keeps_source_validation(self):
         for text in ("저는 개발자예요.", "ㅈㅓㄴㅡㄴ ㅎㅏㄱㅅㅐㅇ", "我喜欢旅行。", "Я люблю путешествия."):
@@ -4387,7 +4387,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
             request = conversation_models.SessionLevelAssessmentRequest.model_validate(payload)
             data = {"sessionId": 100, "levelAssessment": assessment}
             actual = next_message_service._recover_session_level_assessment(data, request, None)
-            self.assertIsNone(actual.core.messages[0].domains.grammar.level)
+            self.assertIsNone(actual.core.messages[0].domains.grammar.score)
             assessment["core"]["messages"][0]["domains"]["grammar"]["evidenceExcerpt"] = "없는 근거"
             self.assertIsNone(next_message_service._recover_session_level_assessment(data, request, None))
 
@@ -4409,7 +4409,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIsNotNone(actual)
         self.assertIsNone(actual["details"])
         self.assertTrue(all(
-            domain["level"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
+            domain["score"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
             for message in actual["core"]["messages"] for domain in message["domains"].values()
         ))
         self.assertEqual(len(fake.completions.calls), 1)

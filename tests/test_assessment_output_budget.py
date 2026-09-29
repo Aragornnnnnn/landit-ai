@@ -149,7 +149,7 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
 
     def test_schema_and_message_id_failures_remain_distinct_from_json_failures(self):
         schema_invalid = deepcopy(self.valid)
-        schema_invalid["levelAssessment"]["core"]["messages"][0]["domains"]["grammar"]["level"] = 99
+        schema_invalid["levelAssessment"]["core"]["messages"][0]["domains"]["grammar"]["score"] = 101
         message_invalid = deepcopy(self.valid)
         message_invalid["levelAssessment"]["core"]["messages"][0]["messageId"] = 9999
         for value, reason in (

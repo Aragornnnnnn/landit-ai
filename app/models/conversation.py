@@ -145,18 +145,21 @@ class SessionAssessmentMessage(BaseModel):
 class SessionAssessmentDomain(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    level: int | None = Field(default=None, strict=True, ge=1, le=5)
+    score: int | None = Field(
+        default=None, strict=True, ge=1, le=100,
+        description="Observed domain score from 1 to 100; not the learning level",
+    )
     evidenceStatus: AssessmentEvidenceStatus
     evidenceExcerpt: str | None = None
 
     @model_validator(mode="after")
-    def evidence_and_level_must_match_status(self) -> Self:
+    def evidence_and_score_must_match_status(self) -> Self:
         if self.evidenceStatus == AssessmentEvidenceStatus.OBSERVED:
-            if self.level is None or not self.evidenceExcerpt or not self.evidenceExcerpt.strip():
-                raise ValueError("observed domain requires level and evidenceExcerpt")
+            if self.score is None or not self.evidenceExcerpt or not self.evidenceExcerpt.strip():
+                raise ValueError("observed domain requires score and evidenceExcerpt")
             return self
-        if self.level is not None or self.evidenceExcerpt is not None:
-            raise ValueError("unobserved domain must not contain level or evidenceExcerpt")
+        if self.score is not None or self.evidenceExcerpt is not None:
+            raise ValueError("unobserved domain must not contain score or evidenceExcerpt")
         return self
 
 

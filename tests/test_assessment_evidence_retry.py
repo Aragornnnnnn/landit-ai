@@ -78,7 +78,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
 
     def test_schema_retry_contains_field_and_type_but_no_invalid_output(self):
         invalid = valid_level_assessment()
-        invalid["core"]["messages"][0]["domains"]["grammar"]["level"] = "private-response"
+        invalid["core"]["messages"][0]["domains"]["grammar"]["score"] = "private-response"
         valid = valid_level_assessment()
         result, calls = self._request(
             {"sessionId": 100, "levelAssessment": invalid},
@@ -87,7 +87,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         self.assertEqual(result["core"], valid["core"])
         prompt = calls[1]["messages"][0]["content"]
         self.assertIn("assessment_core_schema", prompt)
-        self.assertIn("domains.grammar.level", prompt)
+        self.assertIn("domains.grammar.score", prompt)
         self.assertNotIn("private-response", prompt)
         self.assertNotIn("An evidenceExcerpt was not found", prompt)
 

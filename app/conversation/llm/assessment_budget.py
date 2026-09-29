@@ -17,7 +17,7 @@ def assessment_output_budget(messages: list[SessionAssessmentMessage]) -> int:
             "messageId": message.messageId,
             "taskPerformance": "ACHIEVED",
             "domains": {name: {
-                "level": 5, "evidenceStatus": "OBSERVED", "evidenceExcerpt": message.userMessage,
+                "score": 100, "evidenceStatus": "OBSERVED", "evidenceExcerpt": message.userMessage,
             } for name in domains},
         }
         for message in messages
