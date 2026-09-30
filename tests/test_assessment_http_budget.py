@@ -72,7 +72,8 @@ class AssessmentHttpBudgetTests(unittest.TestCase):
             self.assertEqual(len(requests), 1)
             self.assertLess(elapsed, 0.6)
 
-    def test_core_retry_uses_remaining_budget_instead_of_resetting_it(self):
+    def test_assessment_retry_uses_remaining_budget_instead_of_resetting_it(self):
+        """평가 재시도가 최초 요청과 같은 시간 예산의 잔여분을 사용하는지 확인한다."""
         with local_provider([(0.15, 200, http_completion('{}')),
                              (0.7, 200, http_completion('{}'))]) as (url, requests):
             started = time.monotonic()
@@ -88,7 +89,8 @@ class AssessmentHttpBudgetTests(unittest.TestCase):
             self.assert_missing_metadata_is_null(diagnostic["calls"][1])
             self.assertEqual(diagnostic["calls"][1]["failure"]["provider_error"], "timeout")
 
-    def test_format_fallback_and_core_retry_make_at_most_four_requests(self):
+    def test_format_fallback_and_assessment_retry_make_at_most_four_requests(self):
+        """형식 fallback과 평가 재시도를 합쳐도 모델 호출이 네 번을 넘지 않는다."""
         unsupported = {"error": {"message": "response_format is not supported"}}
         valid = {"sessionId": 100, "levelAssessment": valid_level_assessment()}
         with local_provider([(0, 400, unsupported), (0, 400, unsupported),
