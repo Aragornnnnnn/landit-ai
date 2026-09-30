@@ -34,6 +34,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         return response.json()["data"]["levelAssessment"], fake.completions.calls
 
     def test_retry_receives_mismatched_field_and_preserves_valid_core(self):
+        """근거 불일치 필드를 재시도에 전달하고 정상 core와 필수 설명을 복구한다."""
         for domain in valid_level_assessment()["core"]["messages"][0]["domains"]:
             with self.subTest(domain=domain):
                 invalid = valid_level_assessment()
@@ -43,10 +44,10 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
                 valid = valid_level_assessment()
                 result, calls = self._request(
                     {"sessionId": 100, "levelAssessment": invalid},
-                    {"levelAssessment": {"core": valid["core"]}},
+                    {"levelAssessment": valid},
                 )
                 self.assertEqual(result["core"], valid["core"])
-                self.assertIsNone(result["details"])
+                self.assertEqual(result["details"], valid["details"])
                 self.assertEqual(len(calls), 2)
                 self.assertEqual(calls[0]["messages"][1], calls[1]["messages"][1])
                 prompt = calls[1]["messages"][0]["content"]
@@ -77,12 +78,13 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         self.assertNotIn("Server validation JSON", calls[0]["messages"][0]["content"])
 
     def test_schema_retry_contains_field_and_type_but_no_invalid_output(self):
+        """재시도 진단은 실패 필드·타입만 전달하고 잘못된 원문 출력은 노출하지 않는다."""
         invalid = valid_level_assessment()
         invalid["core"]["messages"][0]["domains"]["grammar"]["level"] = "private-response"
         valid = valid_level_assessment()
         result, calls = self._request(
             {"sessionId": 100, "levelAssessment": invalid},
-            {"levelAssessment": {"core": valid["core"]}},
+            {"levelAssessment": valid},
         )
         self.assertEqual(result["core"], valid["core"])
         prompt = calls[1]["messages"][0]["content"]
@@ -92,6 +94,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         self.assertNotIn("An evidenceExcerpt was not found", prompt)
 
     def test_combined_feedback_path_also_passes_validation_failure_to_retry(self):
+        """구버전 총평·평가 통합 경로도 검증 실패 원인을 재시도에 전달한다."""
         request = SessionFeedbackRequest.model_validate(self.payload)
         valid = valid_level_assessment()
         invalid = deepcopy(valid)
@@ -103,7 +106,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         ]
         fake = FakeOpenAI(contents=[
             json.dumps({"sessionId": 100, "levelAssessment": invalid}),
-            json.dumps({"levelAssessment": {"core": valid["core"]}}),
+            json.dumps({"levelAssessment": valid}),
         ])
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             _, assessment = service._request_session_feedback_with_level_assessment(
@@ -121,9 +124,10 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         self.assertIn("<field>", prompt)
 
     def _retry_raw_initial_response(self, initial, combined):
+        """잘못된 최초 응답 뒤에 정상 평가를 제공해 재시도 입력과 결과를 수집한다."""
         valid = valid_level_assessment()
         fake = FakeOpenAI(contents=[
-            initial, json.dumps({"levelAssessment": {"core": valid["core"]}}),
+            initial, json.dumps({"levelAssessment": valid}),
         ])
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             if combined:

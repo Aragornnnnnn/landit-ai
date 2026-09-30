@@ -32,8 +32,9 @@ from app.conversation.application.session_assessment_rubric import (
 )
 from app.common.failure_observation import observe
 from app.conversation.llm.assessment_budget import assessment_output_budget
+from app.conversation.llm.session_feedback_budget import session_feedback_output_budget
 from app.conversation.llm.assessment_observation import (
-    begin_core_retry,
+    begin_assessment_retry,
     completion_metadata,
     observe_assessment,
     observe_completion,
@@ -73,7 +74,10 @@ from app.models.conversation import (
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionFeedbackSummary,
+    SessionFeedbackGrowthCandidate,
+    SessionFeedbackUsedExpression,
     SessionLevelAssessment,
+    SessionLevelAssessmentCandidate,
     SessionLevelAssessmentCore,
     SessionLevelAssessmentDetails,
     SessionLevelAssessmentRequest,
@@ -1257,6 +1261,7 @@ def generate_session_feedback(
     request: SessionFeedbackRequest,
     settings: Settings | None = None,
 ) -> SessionFeedbackResponse:
+    """메시지별 평가를 재사용하고 부가 카드 오류를 격리해 총평을 반환한다."""
     feedback_entries = (
         [_entry_from_completed_feedback(entry) for entry in request.completedFeedbacks]
         if request.completedFeedbacks is not None
@@ -1274,7 +1279,9 @@ def generate_session_feedback(
         resolved_settings,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        max_tokens=512,
+        max_tokens=session_feedback_output_budget(
+            request, [entry.user_message for entry in feedback_entries],
+        ),
         response_model=SessionFeedbackSummary,
         schema_name="scenario_session_feedback",
         workflow="scenario_session_feedback",
@@ -1288,6 +1295,8 @@ def generate_session_feedback(
         starRating=_star_rating_from_native_score(native_score),
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
+        growthFeedback=summary.growthFeedback,
+        usedExpressions=summary.usedExpressions,
     )
     # 구버전 BE도 응답 유실 뒤 다시 요청할 수 있도록 TTL까지 유지한다.
     return response
@@ -1322,8 +1331,8 @@ def generate_session_level_assessment(
         record_validation_failure(exc)
         selected_response_format = exc.response_format
         logger.warning(
-            "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
-            "workflow=session_level_assessment_core_retry sessionId=%s",
+            "AI 세션 수준 평가 JSON이 올바르지 않아 평가와 설명을 재요청합니다. "
+            "workflow=session_level_assessment_retry sessionId=%s",
             request.sessionId,
         )
     else:
@@ -1336,7 +1345,7 @@ def generate_session_level_assessment(
         )
     retried = level_assessment is None
     if retried:
-        level_assessment = _retry_session_level_assessment_core(
+        level_assessment = _retry_session_level_assessment(
             resolved_settings,
             request,
             None,
@@ -1352,9 +1361,6 @@ def generate_session_level_assessment(
     elif retried:
         observe(workflow="level_assessment", failure_stage="core_validation",
                 reason="core_repaired", outcome="recovered", attempt=2)
-    elif level_assessment.details is None:
-        observe(workflow="level_assessment", failure_stage="details_validation",
-                reason="optional_details_missing", outcome="recovered")
     return SessionLevelAssessmentResponse(
         sessionId=request.sessionId,
         levelAssessment=level_assessment,
@@ -1368,6 +1374,7 @@ def _request_session_feedback_with_level_assessment(
     system_prompt: str,
     user_prompt: str,
 ) -> tuple[dict[str, Any], SessionLevelAssessment | None]:
+    """구버전 통합 호출의 총평을 보존하고 평가가 없으면 설명까지 재요청한다."""
     level_assessment: SessionLevelAssessment | None = None
     failures: list[Exception] = []
     try:
@@ -1381,8 +1388,8 @@ def _request_session_feedback_with_level_assessment(
     except AiResponseInvalidError as exc:
         failures.append(exc)
         logger.warning(
-            "AI 세션 수준 평가 JSON이 올바르지 않아 Core만 재요청합니다. "
-            "workflow=session_level_assessment_core_retry sessionId=%s",
+            "AI 세션 수준 평가 JSON이 올바르지 않아 평가와 설명을 재요청합니다. "
+            "workflow=session_level_assessment_retry sessionId=%s",
             request.sessionId,
         )
         data = {}
@@ -1395,7 +1402,7 @@ def _request_session_feedback_with_level_assessment(
         )
     if level_assessment is not None:
         return data, level_assessment
-    return data, _retry_session_level_assessment_core(
+    return data, _retry_session_level_assessment(
         settings,
         request,
         feedback_entries,
@@ -1404,7 +1411,7 @@ def _request_session_feedback_with_level_assessment(
     )
 
 
-def _retry_session_level_assessment_core(
+def _retry_session_level_assessment(
     settings: Settings,
     request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
@@ -1413,9 +1420,10 @@ def _retry_session_level_assessment_core(
     deadline: float | None = None,
     failures: list[Exception] | None = None,
 ) -> SessionLevelAssessment | None:
-    begin_core_retry()
+    """남은 제한 시간 안에서 점수 근거와 두 설명을 함께 재생성하고 검증한다."""
+    begin_assessment_retry()
     selected_response_format = (
-        _session_level_assessment_core_response_format()
+        _session_level_assessment_retry_response_format()
         if response_format is _USE_STRICT_RESPONSE_FORMAT
         else response_format
     )
@@ -1423,7 +1431,7 @@ def _retry_session_level_assessment_core(
         isinstance(selected_response_format, dict)
         and selected_response_format.get("type") == "json_schema"
     ):
-        selected_response_format = _session_level_assessment_core_response_format()
+        selected_response_format = _session_level_assessment_retry_response_format()
     try:
         retry_data = _request_json_completion(
             settings,
@@ -1441,8 +1449,8 @@ def _retry_session_level_assessment_core(
         if failures is not None:
             failures.append(exc)
         logger.warning(
-            "AI 세션 수준 평가 Core 재요청 결과가 올바르지 않습니다. "
-            "workflow=session_level_assessment_core_failed sessionId=%s",
+            "AI 세션 수준 평가 재요청 결과가 올바르지 않습니다. "
+            "workflow=session_level_assessment_retry_failed sessionId=%s",
             request.sessionId,
         )
         return None
@@ -1493,6 +1501,7 @@ def _validate_session_level_assessment(
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     require_session_id: bool = True,
 ) -> SessionLevelAssessment:
+    """세션·발화 근거와 필수 설명을 검증한 뒤 언어 안전 필터를 적용한다."""
     if require_session_id and data.get("sessionId") != request.sessionId:
         raise AssessmentValidationError("assessment_session_mismatch", "sessionId")
     raw_assessment = data.get("levelAssessment")
@@ -1532,11 +1541,11 @@ def _validate_session_level_assessment(
                     f"core.messages.[].domains.{domain_name}.evidenceExcerpt",
                 )
     try:
-        details = SessionLevelAssessmentDetails.model_validate(
-            raw_assessment.get("details"),
-        )
-    except ValidationError:
-        details = None
+        candidate = SessionLevelAssessmentCandidate.model_validate(raw_assessment)
+    except ValidationError as exc:
+        remember(exc)
+        raise AssessmentValidationError("assessment_details_schema", "details") from exc
+    details = candidate.details
     filtered_core = filter_non_latin_assessment_evidence(core, expected_messages)
     if filtered_core is not core:
         details = None
@@ -1547,6 +1556,7 @@ def _recover_session_feedback_summary(
     data: dict[str, Any],
     session_id: int,
 ) -> SessionFeedbackSummary:
+    """총평 문구를 보존하면서 형식이 잘못된 부가 카드만 독립적으로 제외한다."""
     return SessionFeedbackSummary(
         sessionId=session_id,
         summaryMessage=_response_text(
@@ -1554,7 +1564,33 @@ def _recover_session_feedback_summary(
             "summaryMessage",
             "메시지별 피드백을 참고해 다음 대화에서 한 문장씩 더 구체적으로 말해 보세요.",
         ),
+        growthFeedback=_recover_growth_feedback(data.get("growthFeedback")),
+        usedExpressions=_recover_used_expressions(data.get("usedExpressions")),
     )
+
+
+def _recover_growth_feedback(value: Any) -> SessionFeedbackGrowthCandidate | None:
+    """비교 카드의 형식 검증에 실패하면 총평을 실패시키지 않고 카드를 생략한다."""
+    if value is None:
+        return None
+    try:
+        return SessionFeedbackGrowthCandidate.model_validate(value)
+    except ValidationError as exc:
+        remember(exc)
+        return None
+
+
+def _recover_used_expressions(value: Any) -> list[SessionFeedbackUsedExpression]:
+    """목록이 아니면 빈 결과로 복구하고, 목록 안에서는 잘못된 항목만 제외한다."""
+    if not isinstance(value, list):
+        return []
+    recovered = []
+    for item in value:
+        try:
+            recovered.append(SessionFeedbackUsedExpression.model_validate(item))
+        except ValidationError as exc:
+            remember(exc)
+    return recovered
 
 
 def clear_message_feedback_cache() -> None:
@@ -1617,10 +1653,10 @@ def _get_expected_message_feedback_entries(
 def _session_feedback_response_format(
     include_level_assessment: bool = False,
 ) -> dict[str, Any]:
-    properties: dict[str, Any] = {
-        "sessionId": {"type": "integer"},
-        "summaryMessage": {"type": "string"},
-    }
+    """총평 스키마에 선택적으로 필수 설명을 가진 평가 후보 스키마를 결합한다."""
+    summary_schema = _strict_output_schema(SessionFeedbackSummary.model_json_schema())
+    properties = summary_schema.pop("properties")
+    definitions = summary_schema.pop("$defs", None)
     schema: dict[str, Any] = {
         "type": "object",
         "properties": properties,
@@ -1630,42 +1666,40 @@ def _session_feedback_response_format(
     name = "session_feedback_summary"
     if include_level_assessment:
         assessment_schema = _strict_output_schema(
-            SessionLevelAssessment.model_json_schema(),
+            SessionLevelAssessmentCandidate.model_json_schema(),
         )
-        definitions = assessment_schema.pop("$defs", None)
+        assessment_definitions = assessment_schema.pop("$defs", None)
         properties["levelAssessment"] = assessment_schema
         schema["required"] = list(properties)
-        if definitions is not None:
-            schema["$defs"] = definitions
+        if assessment_definitions is not None:
+            definitions = {**(definitions or {}), **assessment_definitions}
         name = "session_feedback_with_level_assessment"
+    if definitions is not None:
+        schema["$defs"] = definitions
     return _json_schema_response_format(name, schema)
 
 
-def _session_level_assessment_core_response_format() -> dict[str, Any]:
-    core_schema = _strict_output_schema(
-        SessionLevelAssessmentCore.model_json_schema(),
+def _session_level_assessment_retry_response_format() -> dict[str, Any]:
+    """재시도에서도 core와 details를 모두 요구하는 구조화 출력 계약을 만든다."""
+    assessment_schema = _strict_output_schema(
+        SessionLevelAssessmentCandidate.model_json_schema(),
     )
-    definitions = core_schema.pop("$defs", None)
-    level_assessment_schema = {
-        "type": "object",
-        "properties": {"core": core_schema},
-        "required": ["core"],
-        "additionalProperties": False,
-    }
+    definitions = assessment_schema.pop("$defs", None)
     schema: dict[str, Any] = {
         "type": "object",
-        "properties": {"levelAssessment": level_assessment_schema},
+        "properties": {"levelAssessment": assessment_schema},
         "required": ["levelAssessment"],
         "additionalProperties": False,
     }
     if definitions is not None:
         schema["$defs"] = definitions
-    return _json_schema_response_format("session_level_assessment_core", schema)
+    return _json_schema_response_format("session_level_assessment_retry", schema)
 
 
 def _session_level_assessment_response_format() -> dict[str, Any]:
+    """최초 수준 평가에 세션 식별자와 필수 설명을 포함한 후보 계약을 적용한다."""
     assessment_schema = _strict_output_schema(
-        SessionLevelAssessment.model_json_schema(),
+        SessionLevelAssessmentCandidate.model_json_schema(),
     )
     definitions = assessment_schema.pop("$defs", None)
     schema: dict[str, Any] = {
@@ -2583,6 +2617,7 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
 
 
 def _session_feedback_system_prompt(include_level_assessment: bool = True) -> str:
+    """총평과 비교 카드의 근거 규칙을 지정하고 요청에 따라 평가 정책을 붙인다."""
     return "\n\n".join(section for section in [
         (
             "Role:\n"
@@ -2605,6 +2640,18 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Do not introduce corrections or examples that are not present in cached message feedback."
         ),
         (
+            "Comparison and Learned Expression Policy:\n"
+            "growthFeedback is null unless the supplied previousMistakes contains a real correction and a current user message contains a clear use of the same watchable pattern. "
+            "Compare only the supplied previous completed session; do not infer or claim a comparison when previousMistakes is empty. "
+            "Use one of TENSE, SUBJECT_VERB_AGREEMENT, VERB_FORM, ARTICLE, PLURAL, PRONOUN, PREPOSITION, NEGATION, or QUESTION_FORM. "
+            "previousMessageId must identify the supplied prior correction; previousSentence and previousWrongSpan must be exact substrings of that prior userMessage. "
+            "currentMessageId must identify a current cached user message; currentSentence and currentSpan must be exact substrings of its userMessage. "
+            "Set succeeded to whether the current form is correct. If no current usage of the prior pattern is clear, return growthFeedback null. "
+            "usedExpressions must contain only learnedExpressions that the learner actually used in a current user message. "
+            "Return the candidate expressionId, the exact current messageId, and matchedText copied exactly from that user's utterance. "
+            "Do not treat a related idea or a similar expression as reuse. Return an empty array when no candidate was used."
+        ),
+        (
             "Level Assessment Policy:\n"
             "For every Assessment messages JSON item, return one core.messages entry in the same order. "
             "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
@@ -2613,15 +2660,17 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
             "Use null level and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
             f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
-            "details is optional Korean strength and improvement text; never omit or weaken core because details is unavailable."
+            "details is required Korean strength and improvement text. Ground both in observed conversation evidence and cached feedback. "
+            "When no specific error is observed, state a cautious next step without inventing a mistake."
         ) if include_level_assessment else "",
         (
             "Self-check before final JSON:\n"
             "1. summaryMessage is Korean and sounds natural to a learner. "
             "2. It is grounded in cached message feedback. "
-            "3. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+            "3. Comparison cards use only supplied prior correction and current utterance evidence; learned expression matches use exact copied text. "
+            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
             + (
-                " 4. levelAssessment.core is grounded in the exact assessment messages."
+                " 5. levelAssessment.core is grounded in the exact assessment messages."
                 if include_level_assessment
                 else ""
             )
@@ -2630,9 +2679,9 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
             + (
-                '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
+                '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[],"levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
                 if include_level_assessment
-                else '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"..."}. '
+                else '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[]}. '
             )
             + "Return one JSON object, not an array."
         ),
@@ -2640,10 +2689,11 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
 
 
 def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
+    """실패 필드 정보를 전달해 평가와 필수 설명을 함께 복구하도록 요청한다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
-        "Return only levelAssessment.core for the assessment messages. "
+        "Return the complete levelAssessment with core and details for the assessment messages. "
         "Judge taskPerformance against requiredElements. "
         "Assess situationPerformance, grammar, vocabulary, discourse, and "
         "interactionPragmatics. Each domain must use level 1 through 5 only when "
@@ -2662,7 +2712,7 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
         return ""
     feedback = (
         "\nThe previous assessment failed server validation. Correct the reported "
-        "problem and recheck every message and domain before returning the core.\n"
+        "problem and recheck every message, domain, and both Korean details before returning the complete assessment.\n"
         f"Server validation JSON: {json.dumps(diagnostics, ensure_ascii=False)}"
     )
     if diagnostics.get("validation_reason") == "assessment_evidence_mismatch":
@@ -2680,6 +2730,7 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
 
 
 def _session_level_assessment_system_prompt() -> str:
+    """질문별 수행 근거와 관찰 가능한 발화를 기준으로 수준과 설명을 생성시킨다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
@@ -2689,7 +2740,7 @@ def _session_level_assessment_system_prompt() -> str:
         "vocabulary, discourse, and interactionPragmatics. Each domain must use level 1 through 5 "
         "only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in "
         "evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED or "
-        "INSUFFICIENT_EVIDENCE. Details is optional and must be Korean.\n"
+        "INSUFFICIENT_EVIDENCE. Details is required and must be Korean. Ground both fields in observed conversation evidence; never invent an error.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
         "Output Schema: Return ONLY valid JSON matching this shape: "
         '{"sessionId":1,"levelAssessment":{"core":{"messages":[]},'
@@ -2724,6 +2775,7 @@ def _session_feedback_user_prompt(
     feedback_entries: list[_MessageFeedbackCacheEntry],
     include_level_assessment: bool,
 ) -> str:
+    """현재 피드백과 이전 교정·학습 표현 후보를 총평 생성 입력으로 구성한다."""
     message_feedbacks = [entry.feedback for entry in feedback_entries]
     good_count = sum(
         1
@@ -2762,7 +2814,11 @@ def _session_feedback_user_prompt(
         f"Expected message IDs: {request.expectedMessageIds}\n\n"
         f"Cached message feedback counts: GOOD={good_count}, NEEDS_IMPROVEMENT={needs_count}\n\n"
         f"Cached message feedback JSON:\n{feedback_json}\n\n"
-        f"Cached user message JSON:\n{user_message_json}"
+        f"Cached user message JSON:\n{user_message_json}\n\n"
+        f"Previous completed session mistake evidence JSON:\n"
+        f"{json.dumps([mistake.model_dump(mode='json') for mistake in request.previousMistakes], ensure_ascii=False, separators=(',', ':'))}\n\n"
+        f"Learned expression candidates JSON:\n"
+        f"{json.dumps([expression.model_dump(mode='json') for expression in request.learnedExpressions], ensure_ascii=False, separators=(',', ':'))}"
     )
     if not include_level_assessment:
         return prompt

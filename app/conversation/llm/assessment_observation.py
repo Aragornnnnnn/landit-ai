@@ -44,7 +44,8 @@ def observe_assessment(function):
     return wrapped
 
 
-def begin_core_retry() -> None:
+def begin_assessment_retry() -> None:
+    """후속 진단이 점수와 설명을 모두 복구하는 평가 재시도임을 표시한다."""
     state = _current.get()
     if state is not None:
         state["stage"] = 2

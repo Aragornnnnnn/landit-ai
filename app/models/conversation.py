@@ -203,6 +203,75 @@ class SessionLevelAssessment(BaseModel):
     details: SessionLevelAssessmentDetails | None = None
 
 
+class SessionLevelAssessmentCandidate(BaseModel):
+    """LLM 응답에서 필수로 받아야 하는 수준 평가와 설명이다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    core: SessionLevelAssessmentCore
+    details: SessionLevelAssessmentDetails
+
+
+class SessionFeedbackMistakePattern(StrEnum):
+    """직전 대화와 비교할 수 있는 대표 문법 실수 유형이다."""
+
+    TENSE = "TENSE"
+    SUBJECT_VERB_AGREEMENT = "SUBJECT_VERB_AGREEMENT"
+    VERB_FORM = "VERB_FORM"
+    ARTICLE = "ARTICLE"
+    PLURAL = "PLURAL"
+    PRONOUN = "PRONOUN"
+    PREPOSITION = "PREPOSITION"
+    NEGATION = "NEGATION"
+    QUESTION_FORM = "QUESTION_FORM"
+
+
+class SessionFeedbackPreviousMistake(BaseModel):
+    """직전 완료 세션에서 교정된 실제 발화와 교정 근거다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    messageId: int = Field(gt=0)
+    userMessage: str = Field(min_length=1)
+    correctionExpression: str = Field(min_length=1)
+    correctionReason: str = Field(min_length=1)
+
+
+class SessionFeedbackLearnedExpression(BaseModel):
+    """실제 재사용 여부를 판정할 학습 완료 표현 후보다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expressionId: int = Field(gt=0)
+    text: str = Field(min_length=1)
+    meaning: str = Field(min_length=1)
+
+
+class SessionFeedbackGrowthCandidate(BaseModel):
+    """직전 교정과 현재 발화가 실제로 이어질 때 표시할 비교 근거다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: SessionFeedbackMistakePattern
+    previousMessageId: int = Field(gt=0)
+    previousSentence: str = Field(min_length=1)
+    previousWrongSpan: str | None = None
+    currentMessageId: int = Field(gt=0)
+    currentSentence: str = Field(min_length=1)
+    currentSpan: str | None = None
+    succeeded: bool
+
+
+class SessionFeedbackUsedExpression(BaseModel):
+    """AI가 실제로 사용했다고 판정한 학습 표현과 발화 내 근거다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expressionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    matchedText: str = Field(min_length=1)
+
+
 class NextFixedQuestion(BaseModel):
     questionId: int = Field(gt=0)
     sequence: int = Field(gt=0)
@@ -644,6 +713,8 @@ class SessionFeedbackRequest(BaseModel):
     expectedMessageIds: list[int]
     assessmentMessages: list[SessionAssessmentMessage] = Field(default_factory=list)
     completedFeedbacks: list[CompletedMessageFeedback] | None = None
+    previousMistakes: list[SessionFeedbackPreviousMistake] = Field(default_factory=list)
+    learnedExpressions: list[SessionFeedbackLearnedExpression] = Field(default_factory=list)
 
     @field_validator("expectedMessageIds")
     @classmethod
@@ -673,12 +744,25 @@ class SessionFeedbackRequest(BaseModel):
             raise ValueError("assessmentMessages must match expectedMessageIds in order")
         return self
 
+    @model_validator(mode="after")
+    def supplemental_evidence_ids_must_be_unique(self) -> Self:
+        """같은 ID가 서로 다른 비교 근거로 해석되지 않도록 후보 중복을 거부한다."""
+        mistake_ids = [mistake.messageId for mistake in self.previousMistakes]
+        if len(mistake_ids) != len(set(mistake_ids)):
+            raise ValueError("previousMistakes must not contain duplicate message IDs")
+        expression_ids = [expression.expressionId for expression in self.learnedExpressions]
+        if len(expression_ids) != len(set(expression_ids)):
+            raise ValueError("learnedExpressions must not contain duplicate expression IDs")
+        return self
+
 
 class SessionFeedbackSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     sessionId: int = Field(gt=0)
     summaryMessage: str
+    growthFeedback: SessionFeedbackGrowthCandidate | None = None
+    usedExpressions: list[SessionFeedbackUsedExpression] = Field(default_factory=list)
 
     @field_validator("summaryMessage")
     @classmethod
@@ -694,6 +778,8 @@ class SessionFeedbackResponse(BaseModel):
     starRating: float
     summaryMessage: str
     messageFeedbacks: list[MessageFeedbackData]
+    growthFeedback: SessionFeedbackGrowthCandidate | None = None
+    usedExpressions: list[SessionFeedbackUsedExpression] = Field(default_factory=list)
 
     @field_validator("starRating")
     @classmethod
