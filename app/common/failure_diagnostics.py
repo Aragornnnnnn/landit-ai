@@ -77,7 +77,7 @@ SAFE_REASONS = frozenset({
 SAFE_FIELDS = frozenset("""
 body query path sessionId messageId submittedMessageId expectedMessageIds
 assessmentMessages levelAssessment core messages domains situationPerformance grammar
-vocabulary discourse interactionPragmatics evidenceStatus evidenceExcerpt level
+vocabulary discourse interactionPragmatics evidenceStatus evidenceExcerpt level score
 taskPerformance details strength improvement innerThought innerThoughtType
 answerCoverage relationshipTone directedAttack aiMessage translatedMessage emotion
 feedbackType feedbackDetail positiveFeedback correctionExpression correctionReason

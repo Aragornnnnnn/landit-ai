@@ -199,29 +199,30 @@ def valid_assessment_messages():
 
 
 def valid_level_assessment():
+    """원문 인용과 100점 영역 점수를 갖춘 유효한 평가 응답 fixture를 만든다."""
     domains = {
         "situationPerformance": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza because it is spicy.",
         },
         "grammar": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "because it is spicy",
         },
         "vocabulary": {
-            "level": 3,
+            "score": 50,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "pizza",
         },
         "discourse": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza because it is spicy.",
         },
         "interactionPragmatics": {
-            "level": 3,
+            "score": 50,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza",
         },
@@ -239,7 +240,7 @@ def valid_level_assessment():
                     "taskPerformance": "ACHIEVED",
                     "domains": {
                         name: {
-                            "level": 3,
+                            "score": 50,
                             "evidenceStatus": "OBSERVED",
                             "evidenceExcerpt": "I ate pasta yesterday.",
                         }
@@ -3755,6 +3756,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         clear_message_feedback_cache()
 
     def test_session_feedback_openapi_keeps_assessment_core_contract(self):
+        """다섯 영역 구조와 정수 점수의 1~100 OpenAPI 범위를 검증한다."""
         schemas = create_app(make_settings()).openapi()["components"]["schemas"]
 
         self.assertEqual(
@@ -3767,10 +3769,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 "interactionPragmatics",
             },
         )
-        level_schema = schemas["SessionAssessmentDomain"]["properties"]["level"]
+        level_schema = schemas["SessionAssessmentDomain"]["properties"]["score"]
         self.assertEqual(
             level_schema["anyOf"][0]["maximum"],
-            5,
+            100,
         )
         self.assertEqual(
             level_schema["anyOf"][0]["minimum"],
@@ -3778,10 +3780,11 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
 
     def test_level_assessment_core_rejects_boolean_integer_fields(self):
+        """Python bool이 정수로 취급돼 점수나 메시지 ID에 들어오는 것을 차단한다."""
         with self.assertRaises(ValidationError):
             conversation_models.SessionAssessmentDomain.model_validate(
                 {
-                    "level": True,
+                    "score": True,
                     "evidenceStatus": "OBSERVED",
                     "evidenceExcerpt": "answer",
                 },
@@ -3793,7 +3796,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                     "taskPerformance": "ACHIEVED",
                     "domains": {
                         name: {
-                            "level": 1,
+                            "score": 10,
                             "evidenceStatus": "OBSERVED",
                             "evidenceExcerpt": "answer",
                         }
@@ -4209,6 +4212,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(data["summaryMessage"], "총평")
 
     def test_session_level_assessment_returns_question_level_assessment_core(self):
+        """평가 API가 질문별 점수와 관찰 상태를 보존한 core를 반환하는지 검증한다."""
         app = self._app()
         ai_response = {
             "sessionId": 100,
@@ -4234,8 +4238,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
             [1001, 1003],
         )
         self.assertEqual(
-            assessment["core"]["messages"][0]["domains"]["grammar"]["level"],
-            4,
+            assessment["core"]["messages"][0]["domains"]["grammar"]["score"],
+            70,
         )
         self.assertEqual(assessment["details"]["strength"], "이유를 덧붙여 답변했어요.")
         response_format = fake_openai.completions.calls[0]["response_format"]
@@ -4447,6 +4451,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Fabricated fluent answer.", messages[1]["content"])
 
     def test_assessment_excludes_non_latin_evidence_without_losing_english_turns(self):
+        """최초·재시도 모두 비라틴 발화만 미관찰 처리하고 영어 발화 평가는 보존한다."""
         for retry in (False, True):
             with self.subTest(retry=retry):
                 payload = valid_session_feedback_payload()
@@ -4467,7 +4472,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 self.assertIsNotNone(actual)
                 for domain in actual["core"]["messages"][0]["domains"].values():
                     self.assertEqual(domain, {
-                        "level": None, "evidenceStatus": "NOT_OBSERVED",
+                        "score": None, "evidenceStatus": "NOT_OBSERVED",
                         "evidenceExcerpt": None,
                     })
                 self.assertEqual(actual["core"]["messages"][1], assessment["core"]["messages"][1])
@@ -4490,6 +4495,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 self.assertEqual(actual.model_dump(mode="json"), assessment)
 
     def test_assessment_excludes_only_non_latin_excerpt_domains(self):
+        """혼합 언어 발화에서 비라틴 인용 영역만 제거하고 다른 점수와 원본은 보존한다."""
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         text = "I like 피자 because it is spicy."
@@ -4503,12 +4509,13 @@ class SessionFeedbackApiTests(unittest.TestCase):
         actual = next_message_service._recover_session_level_assessment(
             {"sessionId": 100, "levelAssessment": assessment}, request, None,
         )
-        self.assertIsNone(actual.core.messages[0].domains.vocabulary.level)
-        self.assertEqual(actual.core.messages[0].domains.grammar.level, 4)
+        self.assertIsNone(actual.core.messages[0].domains.vocabulary.score)
+        self.assertEqual(actual.core.messages[0].domains.grammar.score, 70)
         self.assertIsNone(actual.details)
-        self.assertEqual(domains["vocabulary"]["level"], 3)
+        self.assertEqual(domains["vocabulary"]["score"], 50)
 
     def test_assessment_excludes_non_latin_scripts_but_keeps_source_validation(self):
+        """비라틴 문자 제외 이후에도 원문에 없는 근거는 평가 실패로 처리한다."""
         for text in ("저는 개발자예요.", "ㅈㅓㄴㅡㄴ ㅎㅏㄱㅅㅐㅇ", "我喜欢旅行。", "Я люблю путешествия."):
             payload = valid_session_feedback_payload()
             payload["assessmentMessages"] = valid_assessment_messages()
@@ -4519,11 +4526,12 @@ class SessionFeedbackApiTests(unittest.TestCase):
             request = conversation_models.SessionLevelAssessmentRequest.model_validate(payload)
             data = {"sessionId": 100, "levelAssessment": assessment}
             actual = next_message_service._recover_session_level_assessment(data, request, None)
-            self.assertIsNone(actual.core.messages[0].domains.grammar.level)
+            self.assertIsNone(actual.core.messages[0].domains.grammar.score)
             assessment["core"]["messages"][0]["domains"]["grammar"]["evidenceExcerpt"] = "없는 근거"
             self.assertIsNone(next_message_service._recover_session_level_assessment(data, request, None))
 
     def test_assessment_all_non_latin_turns_return_unobserved_core_without_retry(self):
+        """모든 발화가 비라틴 문자인 경우 재시도 없이 미관찰 core를 반환한다."""
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         assessment = valid_level_assessment()
@@ -4541,7 +4549,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIsNotNone(actual)
         self.assertIsNone(actual["details"])
         self.assertTrue(all(
-            domain["level"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
+            domain["score"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
             for message in actual["core"]["messages"] for domain in message["domains"].values()
         ))
         self.assertEqual(len(fake.completions.calls), 1)

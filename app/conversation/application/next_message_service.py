@@ -2617,7 +2617,7 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
 
 
 def _session_feedback_system_prompt(include_level_assessment: bool = True) -> str:
-    """총평과 비교 카드의 근거 규칙을 지정하고 요청에 따라 평가 정책을 붙인다."""
+    """총평·비교 카드의 근거 규칙과 선택적인 100점 평가 계약을 결합한다."""
     return "\n\n".join(section for section in [
         (
             "Role:\n"
@@ -2657,8 +2657,8 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
             "Judge taskPerformance against requiredElements. "
             "Assess situationPerformance, grammar, vocabulary, discourse, and interactionPragmatics. "
-            "Each domain must use level 1 through 5 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
-            "Use null level and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
+            "Each domain must use integer score 1 through 100 only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in evidenceExcerpt. "
+            "Use null score and null evidenceExcerpt for NOT_OBSERVED or INSUFFICIENT_EVIDENCE; apply their distinct meanings in the rubric below. "
             f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
             "details is required Korean strength and improvement text. Ground both in observed conversation evidence and cached feedback. "
             "When no specific error is observed, state a cautious next step without inventing a mistake."
@@ -2679,7 +2679,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
             + (
-                '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[],"levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"level":1,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
+                '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[],"levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
                 if include_level_assessment
                 else '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[]}. '
             )
@@ -2689,16 +2689,16 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
 
 
 def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
-    """실패 필드 정보를 전달해 평가와 필수 설명을 함께 복구하도록 요청한다."""
+    """최초와 같은 100점 기준으로 필수 설명까지 복구하고 안전한 검증 사유를 전달한다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
         "Return the complete levelAssessment with core and details for the assessment messages. "
         "Judge taskPerformance against requiredElements. "
         "Assess situationPerformance, grammar, vocabulary, discourse, and "
-        "interactionPragmatics. Each domain must use level 1 through 5 only when "
+        "interactionPragmatics. Each domain must use integer score 1 through 100 only when "
         "evidenceStatus is OBSERVED and must quote an exact substring of userMessage "
-        "in evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED "
+        "in evidenceExcerpt. Use null score and null evidenceExcerpt for NOT_OBSERVED "
         "or INSUFFICIENT_EVIDENCE. Apply the same rubric as the initial assessment.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}"
         f"{_session_level_assessment_retry_feedback(failure)}"
@@ -2723,23 +2723,23 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
             "paraphrase, correct, translate, combine separate spans, or insert ellipses. "
             "Do not quote evaluationContext, requiredElements, or another message. "
             "A full userMessage is allowed when the whole utterance supports the judgment. "
-            "Keep the rubric and evidence-status rules unchanged; do not lower a level "
+            "Keep the rubric and evidence-status rules unchanged; do not lower a score "
             "or mark observable performance as unobserved merely to avoid a quote error."
         )
     return feedback
 
 
 def _session_level_assessment_system_prompt() -> str:
-    """질문별 수행 근거와 관찰 가능한 발화를 기준으로 수준과 설명을 생성시킨다."""
+    """원문 근거에 따른 100점 영역 평가와 필수 설명의 최초 생성 계약을 반환한다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
         "Return one JSON object containing the exact sessionId and levelAssessment. "
         "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
         "Judge taskPerformance against requiredElements. Assess situationPerformance, grammar, "
-        "vocabulary, discourse, and interactionPragmatics. Each domain must use level 1 through 5 "
+        "vocabulary, discourse, and interactionPragmatics. Each domain must use integer score 1 through 100 "
         "only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in "
-        "evidenceExcerpt. Use null level and null evidenceExcerpt for NOT_OBSERVED or "
+        "evidenceExcerpt. Use null score and null evidenceExcerpt for NOT_OBSERVED or "
         "INSUFFICIENT_EVIDENCE. Details is required and must be Korean. Ground both fields in observed conversation evidence; never invent an error.\n"
         f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
         "Output Schema: Return ONLY valid JSON matching this shape: "
