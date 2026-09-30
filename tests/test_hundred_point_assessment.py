@@ -1,8 +1,10 @@
 # 100점 평가의 숫자·근거 계약과 학습 레벨 변환 경계를 검증한다.
+import json
 import unittest
 
 from pydantic import ValidationError
 
+from app.conversation.application.next_message_service import _session_feedback_system_prompt
 from app.models.conversation import SessionAssessmentDomain
 from scripts.evaluate_onboarding_level_blind import be_policy
 from test_conversation_api import valid_level_assessment
@@ -56,3 +58,21 @@ class HundredPointAssessmentTests(unittest.TestCase):
                 self.assertEqual(result["overallScore"], f"{score:.2f}")
                 self.assertEqual(result["assessedLevel"], expected)
                 self.assertEqual(result["appliedLevel"], expected)
+
+    def test_combined_feedback_schema_preserves_scores_without_highlight(self):
+        """총평의 강조 문구 제거와 100점 영역 계약이 평가 포함 여부와 무관하게 공존한다."""
+        for include_assessment in (False, True):
+            with self.subTest(include_assessment=include_assessment):
+                prompt = _session_feedback_system_prompt(include_assessment)
+                schema_text = prompt.split("Output Schema:", 1)[1]
+                example, _ = json.JSONDecoder().raw_decode(schema_text[schema_text.index("{"):])
+                expected = {"sessionId", "summaryMessage", "growthFeedback", "usedExpressions"}
+                if include_assessment:
+                    expected.add("levelAssessment")
+                self.assertEqual(set(example), expected)
+                self.assertNotIn("highlightMessage", prompt)
+                if include_assessment:
+                    domains = example["levelAssessment"]["core"]["messages"][0]["domains"]
+                    self.assertEqual(len(domains), 5)
+                    for domain in domains.values():
+                        self.assertIsNotNone(SessionAssessmentDomain.model_validate(domain).score)

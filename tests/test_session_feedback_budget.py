@@ -32,7 +32,7 @@ class SessionFeedbackBudgetTests(unittest.TestCase):
         """성장 카드와 표현 50개를 포함한 유효 JSON이 확대된 예산 안에 들어간다."""
         sentence = "Yesterday I decided to take a break with my friends."
         result = SessionFeedbackSummary.model_validate({
-            "sessionId": 100, "highlightMessage": "배운 표현을 활용했어요.",
+            "sessionId": 100,
             "summaryMessage": "이번에는 과거형을 정확히 썼어요. 이유도 덧붙여 보세요.",
             "growthFeedback": {
                 "pattern": "TENSE", "previousMessageId": 90,

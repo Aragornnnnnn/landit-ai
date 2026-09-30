@@ -1293,7 +1293,6 @@ def generate_session_feedback(
         sessionId=request.sessionId,
         nativeScore=native_score,
         starRating=_star_rating_from_native_score(native_score),
-        highlightMessage=summary.highlightMessage,
         summaryMessage=summary.summaryMessage,
         messageFeedbacks=message_feedbacks,
         growthFeedback=summary.growthFeedback,
@@ -1560,11 +1559,6 @@ def _recover_session_feedback_summary(
     """총평 문구를 보존하면서 형식이 잘못된 부가 카드만 독립적으로 제외한다."""
     return SessionFeedbackSummary(
         sessionId=session_id,
-        highlightMessage=_response_text(
-            data,
-            "highlightMessage",
-            "이번 대화에서 영어로 자신의 생각을 표현했어요.",
-        ),
         summaryMessage=_response_text(
             data,
             "summaryMessage",
@@ -2627,7 +2621,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
     return "\n\n".join(section for section in [
         (
             "Role:\n"
-            "You generate the final session-level highlight badge and summary for a Korean learner's English role-play session."
+            "You generate the final session-level summary for a Korean learner's English role-play session."
         ),
         (
             "Priority:\n"
@@ -2635,18 +2629,6 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "The final feedback must be grounded in the cached message-level feedback, not generic encouragement."
         ),
         _shared_safety_policy(),
-        (
-            "Highlight Policy:\n"
-            "highlightMessage must be written in Korean. "
-            "It is a title-like badge phrase that hooks the user into reading message-level feedback. "
-            "Prefer a concise badge phrase such as 한국인의 23%가 놓치는 복수+s를 챙긴 사람. "
-            "Only cached GOOD benchmarkMessage may provide a quantitative highlight candidate. "
-            "Do not invent a new percentage hook that is not present in cached benchmarkMessage. "
-            "If Allowed quantitative highlight candidates JSON is empty, highlightMessage must not contain %, 퍼센트, or count-based claims. "
-            "When allowed candidates exist, copy one candidate exactly. "
-            "When no quantitative candidate exists, use repeated concrete themes from the cached feedback without adding numbers. "
-            "When the NEEDS_IMPROVEMENT count is greater than 0, do not claim that every answer was natural or perfect."
-        ),
         (
             "Summary Policy:\n"
             "summaryMessage must be written in Korean. "
@@ -2683,13 +2665,12 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
         ) if include_level_assessment else "",
         (
             "Self-check before final JSON:\n"
-            "1. highlightMessage is Korean and badge-like. "
-            "2. summaryMessage is Korean and sounds natural to a learner. "
-            "3. Both fields are grounded in cached message feedback. "
-            "4. Comparison cards use only supplied prior correction and current utterance evidence; learned expression matches use exact copied text. "
-            "5. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
+            "1. summaryMessage is Korean and sounds natural to a learner. "
+            "2. It is grounded in cached message feedback. "
+            "3. Comparison cards use only supplied prior correction and current utterance evidence; learned expression matches use exact copied text. "
+            "4. Do not include nativeScore, starRating, messageFeedbacks, or missingMessageIds."
             + (
-                " 6. levelAssessment.core is grounded in the exact assessment messages."
+                " 5. levelAssessment.core is grounded in the exact assessment messages."
                 if include_level_assessment
                 else ""
             )
@@ -2698,9 +2679,9 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
             "Output Schema:\n"
             "Return ONLY valid JSON matching this schema exactly: "
             + (
-                '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","growthFeedback":null,"usedExpressions":[],"levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
+                '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[],"levelAssessment":{"core":{"messages":[{"messageId":1,"taskPerformance":"FAILED|PARTIAL|ACHIEVED","domains":{"situationPerformance":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"grammar":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"vocabulary":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"discourse":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"},"interactionPragmatics":{"score":50,"evidenceStatus":"OBSERVED","evidenceExcerpt":"exact user substring"}}}]},"details":{"strength":"Korean","improvement":"Korean"}}}. '
                 if include_level_assessment
-                else '{"sessionId":"copy the exact Session ID from the user message","highlightMessage":"...","summaryMessage":"...","growthFeedback":null,"usedExpressions":[]}. '
+                else '{"sessionId":"copy the exact Session ID from the user message","summaryMessage":"...","growthFeedback":null,"usedExpressions":[]}. '
             )
             + "Return one JSON object, not an array."
         ),
@@ -2822,11 +2803,6 @@ def _session_feedback_user_prompt(
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    quantitative_candidate_json = json.dumps(
-        _quantitative_highlight_candidates(message_feedbacks),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
     prompt = (
         f"Session ID: {request.sessionId}\n"
         f"Scenario ID: {request.scenario.scenarioId}\n"
@@ -2839,7 +2815,6 @@ def _session_feedback_user_prompt(
         f"Cached message feedback counts: GOOD={good_count}, NEEDS_IMPROVEMENT={needs_count}\n\n"
         f"Cached message feedback JSON:\n{feedback_json}\n\n"
         f"Cached user message JSON:\n{user_message_json}\n\n"
-        f"Allowed quantitative highlight candidates JSON:\n{quantitative_candidate_json}\n\n"
         f"Previous completed session mistake evidence JSON:\n"
         f"{json.dumps([mistake.model_dump(mode='json') for mistake in request.previousMistakes], ensure_ascii=False, separators=(',', ':'))}\n\n"
         f"Learned expression candidates JSON:\n"
@@ -2853,21 +2828,6 @@ def _session_feedback_user_prompt(
         separators=(",", ":"),
     )
     return f"{prompt}\n\nAssessment messages JSON:\n{assessment_message_json}"
-
-
-def _quantitative_highlight_candidates(message_feedbacks: list[MessageFeedbackData]) -> list[str]:
-    candidates: list[str] = []
-    seen_candidates: set[str] = set()
-    for feedback in message_feedbacks:
-        if (
-            feedback.feedbackType == FeedbackType.GOOD
-            and feedback.benchmarkMessage
-            and _contains_quantitative_hook(feedback.benchmarkMessage)
-            and feedback.benchmarkMessage not in seen_candidates
-        ):
-            seen_candidates.add(feedback.benchmarkMessage)
-            candidates.append(feedback.benchmarkMessage)
-    return candidates
 
 
 def _contains_quantitative_hook(value: str) -> bool:
