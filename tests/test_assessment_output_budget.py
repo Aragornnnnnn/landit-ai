@@ -148,6 +148,7 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
         self.assertEqual(assessment_output_budget([huge]), 16384)
 
     def test_schema_and_message_id_failures_remain_distinct_from_json_failures(self):
+        """범위 밖 점수와 메시지 ID 오류가 JSON 파싱 실패와 구별되는지 검증한다."""
         schema_invalid = deepcopy(self.valid)
         schema_invalid["levelAssessment"]["core"]["messages"][0]["domains"]["grammar"]["score"] = 101
         message_invalid = deepcopy(self.valid)

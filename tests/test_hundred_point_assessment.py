@@ -9,7 +9,9 @@ from test_conversation_api import valid_level_assessment
 
 
 class HundredPointAssessmentTests(unittest.TestCase):
+    """100점 스키마와 20점 구간 학습 레벨의 경계 계약을 검증한다."""
     def test_every_integer_score_is_valid_and_preserved(self):
+        """1부터 100까지 모든 정수를 환산 없이 보존하고 구버전 level 필드를 내보내지 않는다."""
         for score in range(1, 101):
             with self.subTest(score=score):
                 domain = SessionAssessmentDomain.model_validate({
@@ -19,6 +21,7 @@ class HundredPointAssessmentTests(unittest.TestCase):
                 self.assertNotIn("level", domain.model_dump())
 
     def test_invalid_scores_and_legacy_level_are_rejected(self):
+        """범위 밖 값, 비정수 타입과 구버전 level 입력을 거부한다."""
         for score in (0, 101, -1, 50.5, "50", True, None):
             with self.subTest(score=score), self.assertRaises(ValidationError):
                 SessionAssessmentDomain.model_validate({
@@ -30,6 +33,7 @@ class HundredPointAssessmentTests(unittest.TestCase):
             })
 
     def test_unobserved_domains_do_not_invent_scores(self):
+        """미관찰 점수와 인용 없는 관찰 점수를 모두 거부한다."""
         for status in ("NOT_OBSERVED", "INSUFFICIENT_EVIDENCE"):
             self.assertIsNone(SessionAssessmentDomain(evidenceStatus=status).score)
             with self.assertRaises(ValidationError):
@@ -38,6 +42,7 @@ class HundredPointAssessmentTests(unittest.TestCase):
             SessionAssessmentDomain(score=50, evidenceStatus="OBSERVED")
 
     def test_evaluation_runner_matches_twenty_point_learning_level_bands(self):
+        """평가 도구의 종합 점수와 학습 레벨이 각 20점 구간 양 끝에서 일치한다."""
         for score, expected in ((1, 1), (20, 1), (21, 2), (40, 2), (41, 3),
                                 (60, 3), (61, 4), (80, 4), (81, 5), (100, 5)):
             with self.subTest(score=score):

@@ -154,6 +154,7 @@ class SessionAssessmentDomain(BaseModel):
 
     @model_validator(mode="after")
     def evidence_and_score_must_match_status(self) -> Self:
+        """관찰 영역에는 점수와 인용을 요구하고, 미관찰 영역의 두 값은 null로 제한한다."""
         if self.evidenceStatus == AssessmentEvidenceStatus.OBSERVED:
             if self.score is None or not self.evidenceExcerpt or not self.evidenceExcerpt.strip():
                 raise ValueError("observed domain requires score and evidenceExcerpt")

@@ -210,6 +210,7 @@ def file_sha256(path: Path) -> str:
 
 
 def write_manifest(args: argparse.Namespace) -> None:
+    """평가 버전과 입력 해시를 기록하고 설정이 다른 기존 측정 결과의 재사용을 거부한다."""
     manifest_path = args.output_dir / "manifest.json"
     repository = Path(__file__).resolve().parents[1]
     revision = subprocess.run(
@@ -266,6 +267,7 @@ def append_jsonl(path: Path, value: dict[str, Any]) -> None:
 
 
 def reference_prompt(case: dict[str, Any]) -> str:
+    """의도된 레벨과 제품 결과를 숨긴 채 100점 평가와 허용 학습 레벨을 요청한다."""
     visible = [
         {"question": question["text"], "answer": answer}
         for question, answer in zip(QUESTIONS, case["answers"], strict=True)
@@ -285,6 +287,7 @@ def reference_prompt(case: dict[str, Any]) -> str:
 
 
 def parse_reference(raw: str, case: dict[str, Any]) -> dict[str, Any]:
+    """참조 응답의 1~5 허용 레벨, 1~100 영역 점수 및 원문 인용 계약을 검증한다."""
     try:
         value = next_message_service._parse_json_object(raw)
     except next_message_service.AiResponseInvalidError:
@@ -417,6 +420,7 @@ def decimal(value: Decimal) -> str:
 
 
 def be_policy(level_assessment: dict[str, Any] | None) -> dict[str, Any]:
+    """진단 질문의 100점 집계와 최초 레벨 확정을 재현하며 BE 서버나 DB는 호출하지 않는다."""
     if not level_assessment:
         return {
             "source": "FALLBACK",
@@ -599,6 +603,7 @@ def distance_to_range(level: int | None, allowed: list[int]) -> int | None:
 
 
 def score(args: argparse.Namespace, cases: list[dict[str, Any]]) -> None:
+    """저장된 제품·참조 결과의 레벨 일치, 영역 점수 오차와 반복 평가 변동을 집계한다."""
     references = {
         row["caseId"]: row
         for row in read_jsonl(args.output_dir / "reference.jsonl")

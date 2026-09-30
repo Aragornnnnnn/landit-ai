@@ -77,6 +77,7 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         self.assertNotIn("Server validation JSON", calls[0]["messages"][0]["content"])
 
     def test_schema_retry_contains_field_and_type_but_no_invalid_output(self):
+        """점수 검증 실패의 필드·유형만 재시도에 전달하고 잘못된 원문은 제외하는지 검증한다."""
         invalid = valid_level_assessment()
         invalid["core"]["messages"][0]["domains"]["grammar"]["score"] = "private-response"
         valid = valid_level_assessment()

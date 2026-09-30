@@ -2590,6 +2590,7 @@ def _closing_message_user_prompt(request: ClosingMessageRequest) -> str:
 
 
 def _session_feedback_system_prompt(include_level_assessment: bool = True) -> str:
+    """캐시된 피드백의 총평 지침과 선택적인 100점 평가 계약을 결합한다."""
     return "\n\n".join(section for section in [
         (
             "Role:\n"
@@ -2660,6 +2661,7 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
 
 
 def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
+    """최초 평가와 같은 100점 기준에 안전한 검증 사유를 더해 core 재시도를 안내한다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
@@ -2700,6 +2702,7 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
 
 
 def _session_level_assessment_system_prompt() -> str:
+    """원문 근거에 따른 100점 영역 평가와 선택 설명의 최초 생성 계약을 반환한다."""
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "

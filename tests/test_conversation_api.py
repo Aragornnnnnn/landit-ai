@@ -199,6 +199,7 @@ def valid_assessment_messages():
 
 
 def valid_level_assessment():
+    """원문 인용과 100점 영역 점수를 갖춘 유효한 평가 응답 fixture를 만든다."""
     domains = {
         "situationPerformance": {
             "score": 70,
@@ -3756,6 +3757,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         clear_message_feedback_cache()
 
     def test_session_feedback_openapi_keeps_assessment_core_contract(self):
+        """선택 설명과 필수 core 구조, 정수 점수의 1~100 OpenAPI 범위를 검증한다."""
         schemas = create_app(make_settings()).openapi()["components"]["schemas"]
 
         self.assertEqual(
@@ -3779,6 +3781,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
 
     def test_level_assessment_core_rejects_boolean_integer_fields(self):
+        """Python bool이 정수로 취급돼 점수나 메시지 ID에 들어오는 것을 차단한다."""
         with self.assertRaises(ValidationError):
             conversation_models.SessionAssessmentDomain.model_validate(
                 {
@@ -4080,6 +4083,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(fake_openai.completions.kwargs["max_tokens"], 512)
 
     def test_session_level_assessment_returns_question_level_assessment_core(self):
+        """평가 API가 질문별 점수와 관찰 상태를 보존한 core를 반환하는지 검증한다."""
         app = self._app()
         ai_response = {
             "sessionId": 100,
@@ -4315,6 +4319,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Fabricated fluent answer.", messages[1]["content"])
 
     def test_assessment_excludes_non_latin_evidence_without_losing_english_turns(self):
+        """최초·재시도 모두 비라틴 발화만 미관찰 처리하고 영어 발화 평가는 보존한다."""
         for retry in (False, True):
             with self.subTest(retry=retry):
                 payload = valid_session_feedback_payload()
@@ -4358,6 +4363,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 self.assertEqual(actual.model_dump(mode="json"), assessment)
 
     def test_assessment_excludes_only_non_latin_excerpt_domains(self):
+        """혼합 언어 발화에서 비라틴 인용 영역만 제거하고 다른 점수와 원본은 보존한다."""
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         text = "I like 피자 because it is spicy."
@@ -4377,6 +4383,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(domains["vocabulary"]["score"], 50)
 
     def test_assessment_excludes_non_latin_scripts_but_keeps_source_validation(self):
+        """비라틴 문자 제외 이후에도 원문에 없는 근거는 평가 실패로 처리한다."""
         for text in ("저는 개발자예요.", "ㅈㅓㄴㅡㄴ ㅎㅏㄱㅅㅐㅇ", "我喜欢旅行。", "Я люблю путешествия."):
             payload = valid_session_feedback_payload()
             payload["assessmentMessages"] = valid_assessment_messages()
@@ -4392,6 +4399,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
             self.assertIsNone(next_message_service._recover_session_level_assessment(data, request, None))
 
     def test_assessment_all_non_latin_turns_return_unobserved_core_without_retry(self):
+        """모든 발화가 비라틴 문자인 경우 재시도 없이 미관찰 core를 반환한다."""
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         assessment = valid_level_assessment()
