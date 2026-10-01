@@ -111,6 +111,20 @@ class PendingFollowUpApiTests(unittest.TestCase):
         self.assertEqual(data["followUpId"], 501)
         self.assertEqual(data["usedMemoryIds"], [9020])
 
+    def test_opening_can_resume_a_follow_up_without_selecting_a_topic(self):
+        fake = FakeOpenAI(contents=[json.dumps(asked_opening(usedMemoryIds=[]))])
+        payload = valid_opening_payload() | {
+            "topic": None,
+            "pendingFollowUp": pending_follow_up(memoryId=None),
+        }
+
+        response = self._post(OPENING_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["followUpId"], 501)
+        self.assertTrue(response.json()["data"]["followUpAsked"])
+
+
     def test_asked_follow_up_counts_its_memory_as_used_even_when_the_model_omits_it(self):
         fake = FakeOpenAI(contents=[json.dumps(asked_turn(usedMemoryIds=[]))])
         payload = valid_turn_payload(
