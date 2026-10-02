@@ -4041,7 +4041,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(body["data"]["sessionId"], 100)
         self.assertEqual(body["data"]["nativeScore"], 93)
         self.assertEqual(body["data"]["starRating"], 3.0)
-        self.assertNotIn("highlightMessage", body["data"])
+        self.assertEqual(body["data"]["highlightMessage"], body["data"]["summaryMessage"])
         self.assertEqual(
             body["data"]["summaryMessage"],
             "전체적으로 의도 전달이 명확했고 이유를 덧붙이려는 점이 좋았어요.",
@@ -4174,7 +4174,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                         )
                     self.assertEqual(response.status_code, 200)
                     data = response.json()["data"]
-                    self.assertNotIn("highlightMessage", data)
+                    self.assertEqual(data["highlightMessage"], data["summaryMessage"])
                     self.assertEqual(data["summaryMessage"], ai_response["summaryMessage"])
                     self.assertIsNone(data["growthFeedback"])
                     self.assertEqual(data["usedExpressions"], [])
@@ -4208,7 +4208,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         data = response.json()["data"]
         self.assertEqual(data["growthFeedback"], growth)
         self.assertEqual(data["usedExpressions"], [valid])
-        self.assertNotIn("highlightMessage", data)
+        self.assertEqual(data["highlightMessage"], data["summaryMessage"])
         self.assertEqual(data["summaryMessage"], "총평")
 
     def test_session_level_assessment_returns_question_level_assessment_core(self):
@@ -4228,6 +4228,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4274,6 +4275,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4315,6 +4317,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4342,6 +4345,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4374,6 +4378,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4410,6 +4415,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4442,6 +4448,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4465,7 +4472,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 fake = FakeOpenAI(contents=contents)
                 with patch("app.core.openai_client.OpenAI", return_value=fake):
                     response = make_client(self._app()).post(
-                        "/api/v1/conversation/session-level-assessment", json=payload,
+                        "/api/v1/conversation/session-level-assessment",
+                        headers={"X-Landit-Assessment-Version": "text-score-v2.0"}, json=payload,
                     )
                 self.assertEqual(response.status_code, 200)
                 actual = response.json()["data"]["levelAssessment"]
@@ -4542,7 +4550,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
         fake = FakeOpenAI(content=json.dumps({"sessionId": 100, "levelAssessment": assessment}))
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             response = make_client(self._app()).post(
-                "/api/v1/conversation/session-level-assessment", json=payload,
+                "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"}, json=payload,
             )
         self.assertEqual(response.status_code, 200)
         actual = response.json()["data"]["levelAssessment"]
@@ -4572,6 +4581,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
