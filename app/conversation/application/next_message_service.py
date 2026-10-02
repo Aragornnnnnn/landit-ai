@@ -29,6 +29,7 @@ from app.conversation.application.session_assessment_evidence import (
 )
 from app.conversation.application.session_assessment_rubric import (
     SESSION_LEVEL_ASSESSMENT_RUBRIC,
+    LEGACY_SESSION_LEVEL_ASSESSMENT_RUBRIC,
 )
 from app.common.failure_observation import observe
 from app.conversation.llm.assessment_budget import assessment_output_budget
@@ -77,6 +78,10 @@ from app.models.conversation import (
     SessionFeedbackGrowthCandidate,
     SessionFeedbackUsedExpression,
     SessionLevelAssessment,
+    SessionAssessmentVersion,
+    LegacySessionLevelAssessment,
+    LegacySessionLevelAssessmentCandidate,
+    LegacySessionLevelAssessmentCore,
     SessionLevelAssessmentCandidate,
     SessionLevelAssessmentCore,
     SessionLevelAssessmentDetails,
@@ -1306,6 +1311,7 @@ def generate_session_feedback(
 def generate_session_level_assessment(
     request: SessionLevelAssessmentRequest,
     settings: Settings | None = None,
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
 ) -> SessionLevelAssessmentResponse:
     """캐시와 독립적으로 세션의 텍스트 수준 평가를 생성한다."""
     resolved_settings = settings or Settings()
@@ -1314,15 +1320,15 @@ def generate_session_level_assessment(
     level_assessment: SessionLevelAssessment | None = None
     failures: list[Exception] = []
     selected_response_format: dict[str, Any] | None = (
-        _session_level_assessment_response_format()
+        _session_level_assessment_response_format(assessment_version)
     )
     try:
         data, selected_response_format = _request_json_completion_with_format_fallback(
             resolved_settings,
-            system_prompt=_session_level_assessment_system_prompt(),
+            system_prompt=_session_level_assessment_system_prompt(assessment_version),
             user_prompt=user_prompt,
             max_tokens=assessment_output_budget(request.assessmentMessages),
-            response_format=_session_level_assessment_response_format(),
+            response_format=_session_level_assessment_response_format(assessment_version),
             deadline=deadline,
         )
     except AiResponseInvalidError as exc:
@@ -1342,6 +1348,7 @@ def generate_session_level_assessment(
             None,
             require_session_id=True,
             failures=failures,
+            assessment_version=assessment_version,
         )
     retried = level_assessment is None
     if retried:
@@ -1353,6 +1360,7 @@ def generate_session_level_assessment(
             selected_response_format,
             deadline=deadline,
             failures=failures,
+            assessment_version=assessment_version,
         )
     if level_assessment is None:
         observe(workflow="level_assessment", failure_stage="core_validation",
@@ -1364,6 +1372,7 @@ def generate_session_level_assessment(
     return SessionLevelAssessmentResponse(
         sessionId=request.sessionId,
         levelAssessment=level_assessment,
+        assessmentVersion=assessment_version,
     )
 
 
@@ -1419,11 +1428,12 @@ def _retry_session_level_assessment(
     response_format: dict[str, Any] | None | object = _USE_STRICT_RESPONSE_FORMAT,
     deadline: float | None = None,
     failures: list[Exception] | None = None,
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
 ) -> SessionLevelAssessment | None:
     """남은 제한 시간 안에서 점수 근거와 두 설명을 함께 재생성하고 검증한다."""
     begin_assessment_retry()
     selected_response_format = (
-        _session_level_assessment_retry_response_format()
+        _session_level_assessment_retry_response_format(assessment_version)
         if response_format is _USE_STRICT_RESPONSE_FORMAT
         else response_format
     )
@@ -1431,12 +1441,12 @@ def _retry_session_level_assessment(
         isinstance(selected_response_format, dict)
         and selected_response_format.get("type") == "json_schema"
     ):
-        selected_response_format = _session_level_assessment_retry_response_format()
+        selected_response_format = _session_level_assessment_retry_response_format(assessment_version)
     try:
         retry_data = _request_json_completion(
             settings,
             system_prompt=_session_level_assessment_retry_system_prompt(
-                failures[-1] if failures else None,
+                failures[-1] if failures else None, assessment_version,
             ),
             user_prompt=user_prompt,
             max_tokens=assessment_output_budget(request.assessmentMessages or []),
@@ -1460,6 +1470,7 @@ def _retry_session_level_assessment(
         feedback_entries,
         require_session_id=False,
         failures=failures,
+        assessment_version=assessment_version,
     )
 
 
@@ -1484,9 +1495,12 @@ def _recover_session_level_assessment(
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     require_session_id: bool = True,
     failures: list[Exception] | None = None,
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
 ) -> SessionLevelAssessment | None:
     try:
-        return _validate_session_level_assessment(data, request, feedback_entries, require_session_id)
+        return _validate_session_level_assessment(
+            data, request, feedback_entries, require_session_id, assessment_version,
+        )
     except AiResponseInvalidError as exc:
         remember(exc)
         record_validation_failure(exc)
@@ -1500,6 +1514,7 @@ def _validate_session_level_assessment(
     request: SessionFeedbackRequest | SessionLevelAssessmentRequest,
     feedback_entries: list[_MessageFeedbackCacheEntry] | None,
     require_session_id: bool = True,
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
 ) -> SessionLevelAssessment:
     """세션·발화 근거와 필수 설명을 검증한 뒤 언어 안전 필터를 적용한다."""
     if require_session_id and data.get("sessionId") != request.sessionId:
@@ -1509,8 +1524,12 @@ def _validate_session_level_assessment(
         raise AssessmentValidationError("assessment_missing", "levelAssessment")
     if not request.assessmentMessages:
         raise AssessmentValidationError("assessment_messages_missing", "assessmentMessages")
+    legacy = assessment_version == SessionAssessmentVersion.LEGACY
+    core_type = LegacySessionLevelAssessmentCore if legacy else SessionLevelAssessmentCore
+    candidate_type = LegacySessionLevelAssessmentCandidate if legacy else SessionLevelAssessmentCandidate
+    result_type = LegacySessionLevelAssessment if legacy else SessionLevelAssessment
     try:
-        core = SessionLevelAssessmentCore.model_validate(raw_assessment.get("core"))
+        core = core_type.model_validate(raw_assessment.get("core"))
     except ValidationError as exc:
         remember(exc)
         raise AssessmentValidationError("assessment_core_schema", "core") from exc
@@ -1541,7 +1560,7 @@ def _validate_session_level_assessment(
                     f"core.messages.[].domains.{domain_name}.evidenceExcerpt",
                 )
     try:
-        candidate = SessionLevelAssessmentCandidate.model_validate(raw_assessment)
+        candidate = candidate_type.model_validate(raw_assessment)
     except ValidationError as exc:
         remember(exc)
         raise AssessmentValidationError("assessment_details_schema", "details") from exc
@@ -1549,7 +1568,7 @@ def _validate_session_level_assessment(
     filtered_core = filter_non_latin_assessment_evidence(core, expected_messages)
     if filtered_core is not core:
         details = None
-    return SessionLevelAssessment(core=filtered_core, details=details)
+    return result_type(core=filtered_core, details=details)
 
 
 def _recover_session_feedback_summary(
@@ -1679,10 +1698,17 @@ def _session_feedback_response_format(
     return _json_schema_response_format(name, schema)
 
 
-def _session_level_assessment_retry_response_format() -> dict[str, Any]:
+def _session_level_assessment_retry_response_format(
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
+) -> dict[str, Any]:
     """재시도에서도 core와 details를 모두 요구하는 구조화 출력 계약을 만든다."""
+    candidate_type = (
+        LegacySessionLevelAssessmentCandidate
+        if assessment_version == SessionAssessmentVersion.LEGACY
+        else SessionLevelAssessmentCandidate
+    )
     assessment_schema = _strict_output_schema(
-        SessionLevelAssessmentCandidate.model_json_schema(),
+        candidate_type.model_json_schema(),
     )
     definitions = assessment_schema.pop("$defs", None)
     schema: dict[str, Any] = {
@@ -1696,10 +1722,17 @@ def _session_level_assessment_retry_response_format() -> dict[str, Any]:
     return _json_schema_response_format("session_level_assessment_retry", schema)
 
 
-def _session_level_assessment_response_format() -> dict[str, Any]:
+def _session_level_assessment_response_format(
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
+) -> dict[str, Any]:
     """최초 수준 평가에 세션 식별자와 필수 설명을 포함한 후보 계약을 적용한다."""
+    candidate_type = (
+        LegacySessionLevelAssessmentCandidate
+        if assessment_version == SessionAssessmentVersion.LEGACY
+        else SessionLevelAssessmentCandidate
+    )
     assessment_schema = _strict_output_schema(
-        SessionLevelAssessmentCandidate.model_json_schema(),
+        candidate_type.model_json_schema(),
     )
     definitions = assessment_schema.pop("$defs", None)
     schema: dict[str, Any] = {
@@ -2688,19 +2721,25 @@ def _session_feedback_system_prompt(include_level_assessment: bool = True) -> st
     ] if section)
 
 
-def _session_level_assessment_retry_system_prompt(failure: Exception | None = None) -> str:
-    """최초와 같은 100점 기준으로 필수 설명까지 복구하고 안전한 검증 사유를 전달한다."""
+def _session_level_assessment_retry_system_prompt(
+    failure: Exception | None = None,
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
+) -> str:
+    """최초와 같은 평가 척도로 필수 설명까지 복구하고 안전한 검증 사유를 전달한다."""
+    legacy = assessment_version == SessionAssessmentVersion.LEGACY
+    field, maximum = ("level", 5) if legacy else ("score", 100)
+    rubric = LEGACY_SESSION_LEVEL_ASSESSMENT_RUBRIC if legacy else SESSION_LEVEL_ASSESSMENT_RUBRIC
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
         "Return the complete levelAssessment with core and details for the assessment messages. "
         "Judge taskPerformance against requiredElements. "
         "Assess situationPerformance, grammar, vocabulary, discourse, and "
-        "interactionPragmatics. Each domain must use integer score 1 through 100 only when "
+        f"interactionPragmatics. Each domain must use integer {field} 1 through {maximum} only when "
         "evidenceStatus is OBSERVED and must quote an exact substring of userMessage "
-        "in evidenceExcerpt. Use null score and null evidenceExcerpt for NOT_OBSERVED "
+        f"in evidenceExcerpt. Use null {field} and null evidenceExcerpt for NOT_OBSERVED "
         "or INSUFFICIENT_EVIDENCE. Apply the same rubric as the initial assessment.\n"
-        f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}"
+        f"{rubric}"
         f"{_session_level_assessment_retry_feedback(failure)}"
     )
 
@@ -2729,19 +2768,24 @@ def _session_level_assessment_retry_feedback(failure: Exception | None) -> str:
     return feedback
 
 
-def _session_level_assessment_system_prompt() -> str:
-    """원문 근거에 따른 100점 영역 평가와 필수 설명의 최초 생성 계약을 반환한다."""
+def _session_level_assessment_system_prompt(
+    assessment_version: SessionAssessmentVersion = SessionAssessmentVersion.SCORE,
+) -> str:
+    """원문 근거와 요청 척도에 따른 영역 평가와 필수 설명의 최초 생성 계약을 반환한다."""
+    legacy = assessment_version == SessionAssessmentVersion.LEGACY
+    field, maximum = ("level", 5) if legacy else ("score", 100)
+    rubric = LEGACY_SESSION_LEVEL_ASSESSMENT_RUBRIC if legacy else SESSION_LEVEL_ASSESSMENT_RUBRIC
     return (
         "You assess a Korean learner's English text conversation. "
         f"{_shared_safety_policy()} "
         "Return one JSON object containing the exact sessionId and levelAssessment. "
         "Judge only the learner's text; never infer pronunciation, intonation, or audio fluency. "
         "Judge taskPerformance against requiredElements. Assess situationPerformance, grammar, "
-        "vocabulary, discourse, and interactionPragmatics. Each domain must use integer score 1 through 100 "
+        f"vocabulary, discourse, and interactionPragmatics. Each domain must use integer {field} 1 through {maximum} "
         "only when evidenceStatus is OBSERVED and must quote an exact substring of userMessage in "
-        "evidenceExcerpt. Use null score and null evidenceExcerpt for NOT_OBSERVED or "
+        f"evidenceExcerpt. Use null {field} and null evidenceExcerpt for NOT_OBSERVED or "
         "INSUFFICIENT_EVIDENCE. Details is required and must be Korean. Ground both fields in observed conversation evidence; never invent an error.\n"
-        f"{SESSION_LEVEL_ASSESSMENT_RUBRIC}\n"
+        f"{rubric}\n"
         "Output Schema: Return ONLY valid JSON matching this shape: "
         '{"sessionId":1,"levelAssessment":{"core":{"messages":[]},'
         '"details":{"strength":"Korean","improvement":"Korean"}}}. '
