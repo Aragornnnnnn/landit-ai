@@ -1,5 +1,5 @@
 # 대화 생성 API 라우터를 정의하는 모듈
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, Request
 
 from app.common.observation_context import ObservationRoute, observe_operation
 from app.common.errors import ApiException, ErrorCode
@@ -16,6 +16,7 @@ from app.models.conversation import (
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     SessionLevelAssessmentRequest,
+    SessionAssessmentVersion,
     SessionLevelAssessmentResponse,
 )
 from app.conversation.application.next_message_service import (
@@ -178,9 +179,14 @@ def create_session_feedback(
 def create_session_level_assessment(
     payload: SessionLevelAssessmentRequest,
     request: Request,
+    assessment_version: SessionAssessmentVersion = Header(
+        default=SessionAssessmentVersion.LEGACY, alias="X-Landit-Assessment-Version",
+    ),
 ) -> ApiResponse[SessionLevelAssessmentResponse]:
     try:
-        response = generate_session_level_assessment(payload, request.app.state.settings)
+        response = generate_session_level_assessment(
+            payload, request.app.state.settings, assessment_version,
+        )
     except AiResponseInvalidError as exc:
         raise ApiException(
             status_code=502,

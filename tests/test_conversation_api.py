@@ -199,29 +199,30 @@ def valid_assessment_messages():
 
 
 def valid_level_assessment():
+    """원문 인용과 100점 영역 점수를 갖춘 유효한 평가 응답 fixture를 만든다."""
     domains = {
         "situationPerformance": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza because it is spicy.",
         },
         "grammar": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "because it is spicy",
         },
         "vocabulary": {
-            "level": 3,
+            "score": 50,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "pizza",
         },
         "discourse": {
-            "level": 4,
+            "score": 70,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza because it is spicy.",
         },
         "interactionPragmatics": {
-            "level": 3,
+            "score": 50,
             "evidenceStatus": "OBSERVED",
             "evidenceExcerpt": "I like pizza",
         },
@@ -239,7 +240,7 @@ def valid_level_assessment():
                     "taskPerformance": "ACHIEVED",
                     "domains": {
                         name: {
-                            "level": 3,
+                            "score": 50,
                             "evidenceStatus": "OBSERVED",
                             "evidenceExcerpt": "I ate pasta yesterday.",
                         }
@@ -2485,7 +2486,6 @@ class MessageFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "대화 의도를 전달했어요.",
                     "summaryMessage": "메시지별 피드백을 확인해 보세요.",
                 },
             ),
@@ -3756,6 +3756,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         clear_message_feedback_cache()
 
     def test_session_feedback_openapi_keeps_assessment_core_contract(self):
+        """다섯 영역 구조와 정수 점수의 1~100 OpenAPI 범위를 검증한다."""
         schemas = create_app(make_settings()).openapi()["components"]["schemas"]
 
         self.assertEqual(
@@ -3768,10 +3769,10 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 "interactionPragmatics",
             },
         )
-        level_schema = schemas["SessionAssessmentDomain"]["properties"]["level"]
+        level_schema = schemas["SessionAssessmentDomain"]["properties"]["score"]
         self.assertEqual(
             level_schema["anyOf"][0]["maximum"],
-            5,
+            100,
         )
         self.assertEqual(
             level_schema["anyOf"][0]["minimum"],
@@ -3779,10 +3780,11 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
 
     def test_level_assessment_core_rejects_boolean_integer_fields(self):
+        """Python bool이 정수로 취급돼 점수나 메시지 ID에 들어오는 것을 차단한다."""
         with self.assertRaises(ValidationError):
             conversation_models.SessionAssessmentDomain.model_validate(
                 {
-                    "level": True,
+                    "score": True,
                     "evidenceStatus": "OBSERVED",
                     "evidenceExcerpt": "answer",
                 },
@@ -3794,7 +3796,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                     "taskPerformance": "ACHIEVED",
                     "domains": {
                         name: {
-                            "level": 1,
+                            "score": 10,
                             "evidenceStatus": "OBSERVED",
                             "evidenceExcerpt": "answer",
                         }
@@ -3873,7 +3875,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "대화 의도를 정확히 전달했어요.",
                     "summaryMessage": "상황에 맞게 대화를 이어갔어요.",
                 },
             ),
@@ -4006,6 +4007,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["starRating"], 2.5)
 
     def test_session_feedback_returns_summary_score_star_and_cached_feedbacks(self):
+        """총평 문구와 서버 계산 점수·별점 및 기존 메시지 피드백을 함께 반환한다."""
         app = self._app()
         self._cache_feedback(
             app,
@@ -4019,7 +4021,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         ai_response = {
             "sessionId": 100,
-            "highlightMessage": "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
             "summaryMessage": "전체적으로 의도 전달이 명확했고 이유를 덧붙이려는 점이 좋았어요.",
             "nativeScore": 100,
             "starRating": 3.0,
@@ -4040,14 +4041,13 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertEqual(body["data"]["sessionId"], 100)
         self.assertEqual(body["data"]["nativeScore"], 93)
         self.assertEqual(body["data"]["starRating"], 3.0)
-        self.assertEqual(
-            body["data"]["highlightMessage"],
-            "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
-        )
+        self.assertEqual(body["data"]["highlightMessage"], body["data"]["summaryMessage"])
         self.assertEqual(
             body["data"]["summaryMessage"],
             "전체적으로 의도 전달이 명확했고 이유를 덧붙이려는 점이 좋았어요.",
         )
+        self.assertIsNone(body["data"]["growthFeedback"])
+        self.assertEqual(body["data"]["usedExpressions"], [])
         self.assertEqual(
             [feedback["messageId"] for feedback in body["data"]["messageFeedbacks"]],
             [1001, 1003],
@@ -4075,11 +4075,144 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Expected message IDs: [1001, 1003]", messages[1]["content"])
         self.assertIn("Cached message feedback counts: GOOD=1, NEEDS_IMPROVEMENT=1", messages[1]["content"])
         self.assertIn("summaryMessage", messages[0]["content"])
+        self.assertNotIn("highlightMessage", messages[0]["content"])
+        summary_schema = fake_openai.completions.kwargs["response_format"]["json_schema"]["schema"]
+        self.assertEqual(
+            set(summary_schema["properties"]),
+            {"sessionId", "summaryMessage", "growthFeedback", "usedExpressions"},
+        )
+        self.assertNotIn("Allowed quantitative highlight candidates", messages[1]["content"])
         self.assertNotIn("Level Assessment Policy", messages[0]["content"])
         self.assertNotIn("Assessment messages JSON", messages[1]["content"])
         self.assertEqual(fake_openai.completions.kwargs["max_tokens"], 512)
 
+    def test_session_feedback_returns_evidence_backed_growth_and_expression_reuse(self):
+        """전달된 비교·표현 후보를 프롬프트에 넣고 생성한 카드를 API 응답에 포함한다."""
+        app = self._app()
+        self._cache_feedback(
+            app,
+            good_message_feedback(1001),
+            user_message="I used to go to work by bus.",
+        )
+        ai_response = {
+            "sessionId": 100,
+            "summaryMessage": "지난번보다 시제를 정확히 사용했고 배운 표현도 대화에 활용했어요.",
+            "growthFeedback": {
+                "pattern": "TENSE",
+                "previousMessageId": 9001,
+                "previousSentence": "I go to work yesterday.",
+                "previousWrongSpan": "go",
+                "currentMessageId": 1001,
+                "currentSentence": "I used to go to work by bus.",
+                "currentSpan": "used to go",
+                "succeeded": True,
+            },
+            "usedExpressions": [
+                {"expressionId": 812, "messageId": 1001, "matchedText": "used to go"},
+            ],
+        }
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        payload["previousMistakes"] = [
+            {
+                "messageId": 9001,
+                "userMessage": "I go to work yesterday.",
+                "correctionExpression": "I went to work yesterday.",
+                "correctionReason": "과거의 일을 말할 때는 동사를 과거형으로 써요.",
+            },
+        ]
+        payload["learnedExpressions"] = [
+            {"expressionId": 812, "text": "used to", "meaning": "예전에 ~하곤 했다"},
+        ]
+        fake_openai = FakeOpenAI(content=json.dumps(ai_response))
+
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback",
+                json=payload,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()["data"]
+        self.assertEqual(body["growthFeedback"]["pattern"], "TENSE")
+        self.assertEqual(body["growthFeedback"]["previousMessageId"], 9001)
+        self.assertEqual(body["usedExpressions"][0]["expressionId"], 812)
+        self.assertEqual(body["usedExpressions"][0]["matchedText"], "used to go")
+        self.assertGreater(fake_openai.completions.kwargs["max_tokens"], 512)
+        user_prompt = fake_openai.completions.kwargs["messages"][1]["content"]
+        self.assertIn('"messageId":9001', user_prompt)
+        self.assertIn('"expressionId":812', user_prompt)
+
+    def test_session_feedback_recovers_invalid_cards_in_all_output_formats(self):
+        """스키마 재시도와 출력 형식 fallback 모두 정상 총평 문구를 보존한다."""
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        for format_name in ("json_schema", "json_object", "prompt"):
+            for invalid_value in (None, "invalid", {"unexpected": True}):
+                with self.subTest(format=format_name, invalid=invalid_value):
+                    errors = []
+                    if format_name != "json_schema":
+                        error = RuntimeError("response_format json_schema is not supported")
+                        error.status_code = 400
+                        errors.append(error)
+                    if format_name == "prompt":
+                        error = RuntimeError("response_format json_object is not supported")
+                        error.status_code = 400
+                        errors.append(error)
+                    ai_response = {
+                        "sessionId": 100,
+                        "summaryMessage": "정상적으로 생성한 총평을 보존해요.",
+                        "growthFeedback": invalid_value,
+                        "usedExpressions": invalid_value,
+                    }
+                    fake_openai = FakeOpenAI(content=json.dumps(ai_response), errors=errors)
+                    with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+                        response = make_client(app).post(
+                            "/api/v1/conversation/session-feedback", json=payload,
+                        )
+                    self.assertEqual(response.status_code, 200)
+                    data = response.json()["data"]
+                    self.assertEqual(data["highlightMessage"], data["summaryMessage"])
+                    self.assertEqual(data["summaryMessage"], ai_response["summaryMessage"])
+                    self.assertIsNone(data["growthFeedback"])
+                    self.assertEqual(data["usedExpressions"], [])
+                    self.assertEqual(len(data["messageFeedbacks"]), 1)
+                    expected_calls = 3 if format_name == "prompt" else 2
+                    self.assertEqual(len(fake_openai.completions.calls), expected_calls)
+
+    def test_session_feedback_preserves_valid_cards_among_invalid_expression_items(self):
+        """표현 일부가 잘못되어도 유효한 비교 카드와 나머지 표현은 그대로 반환한다."""
+        app = self._app()
+        self._cache_feedback(app, good_message_feedback(1001))
+        payload = valid_session_feedback_payload()
+        payload["expectedMessageIds"] = [1001]
+        growth = {
+            "pattern": "TENSE", "previousMessageId": 9001,
+            "previousSentence": "I go yesterday.", "previousWrongSpan": "go",
+            "currentMessageId": 1001, "currentSentence": "I went yesterday.",
+            "currentSpan": "went", "succeeded": True,
+        }
+        valid = {"expressionId": 812, "messageId": 1001, "matchedText": "used to"}
+        fake_openai = FakeOpenAI(content=json.dumps({
+            "sessionId": 100, "summaryMessage": "총평",
+            "growthFeedback": growth,
+            "usedExpressions": [None, {"expressionId": -1}, valid, "invalid"],
+        }))
+        with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
+            response = make_client(app).post(
+                "/api/v1/conversation/session-feedback", json=payload,
+            )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["growthFeedback"], growth)
+        self.assertEqual(data["usedExpressions"], [valid])
+        self.assertEqual(data["highlightMessage"], data["summaryMessage"])
+        self.assertEqual(data["summaryMessage"], "총평")
+
     def test_session_level_assessment_returns_question_level_assessment_core(self):
+        """평가 API가 질문별 점수와 관찰 상태를 보존한 core를 반환하는지 검증한다."""
         app = self._app()
         ai_response = {
             "sessionId": 100,
@@ -4095,6 +4228,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4105,8 +4239,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
             [1001, 1003],
         )
         self.assertEqual(
-            assessment["core"]["messages"][0]["domains"]["grammar"]["level"],
-            4,
+            assessment["core"]["messages"][0]["domains"]["grammar"]["score"],
+            70,
         )
         self.assertEqual(assessment["details"]["strength"], "이유를 덧붙여 답변했어요.")
         response_format = fake_openai.completions.calls[0]["response_format"]
@@ -4125,15 +4259,15 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertNotIn("extra_body", fake_openai.completions.calls[0])
 
-    def test_session_level_assessment_retries_only_level_core_after_invalid_json(self):
+    def test_session_level_assessment_retries_core_and_required_details_after_invalid_json(self):
+        """최초 JSON 오류 뒤에 core와 필수 설명을 함께 재요청한다."""
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         retry_assessment = valid_level_assessment()
-        retry_assessment.pop("details")
         fake_openai = FakeOpenAI(
             contents=[
-                '{"sessionId":100,"highlightMessage":"좋아요"',
+                '{"sessionId":100,"summaryMessage":"좋아요"',
                 json.dumps({"levelAssessment": retry_assessment}),
             ],
         )
@@ -4141,21 +4275,22 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()["data"]
         self.assertIsNotNone(body["levelAssessment"]["core"])
-        self.assertIsNone(body["levelAssessment"]["details"])
+        self.assertIsNotNone(body["levelAssessment"]["details"])
         self.assertEqual(len(fake_openai.completions.calls), 2)
         retry_format = fake_openai.completions.calls[1]["response_format"]
         self.assertEqual(
             retry_format["json_schema"]["name"],
-            "session_level_assessment_core",
+            "session_level_assessment_retry",
         )
         self.assertNotIn(
-            "highlightMessage",
+            "summaryMessage",
             retry_format["json_schema"]["schema"]["properties"],
         )
 
@@ -4182,6 +4317,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4198,7 +4334,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
         )
         self.assertNotIn("response_format", fake_openai.completions.calls[2])
 
-    def test_session_level_assessment_returns_without_level_when_core_retry_is_invalid(self):
+    def test_session_level_assessment_returns_without_level_when_retry_is_invalid(self):
+        """재시도까지 잘못된 평가를 반환하면 유효하지 않은 수준을 응답에 넣지 않는다."""
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["expectedMessageIds"] = [1001]
@@ -4208,6 +4345,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4215,7 +4353,8 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIsNone(response.json()["data"]["levelAssessment"])
         self.assertEqual(len(fake_openai.completions.calls), 2)
 
-    def test_session_level_assessment_drops_invalid_details_without_losing_core(self):
+    def test_session_level_assessment_retries_invalid_required_details(self):
+        """잘못된 필수 설명을 그대로 수용하지 않고 평가 전체를 재시도한다."""
         app = self._app()
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
@@ -4224,19 +4363,22 @@ class SessionFeedbackApiTests(unittest.TestCase):
         assessment = valid_level_assessment()
         assessment["core"]["messages"] = [assessment["core"]["messages"][0]]
         assessment["details"] = {"strength": "", "improvement": 3}
-        ai_response = {
+        valid_response = {
             "sessionId": 100,
-            "highlightMessage": "대화 목적을 잘 달성했어요.",
             "summaryMessage": "이유를 분명하게 전달했어요.",
             "levelAssessment": assessment,
         }
+        retry_assessment = valid_level_assessment()
+        retry_assessment["core"]["messages"] = [retry_assessment["core"]["messages"][0]]
+        retry_response = {"levelAssessment": retry_assessment}
 
         with patch(
             "app.core.openai_client.OpenAI",
-            return_value=FakeOpenAI(content=json.dumps(ai_response)),
+            return_value=FakeOpenAI(contents=[json.dumps(valid_response), json.dumps(retry_response)]),
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4244,7 +4386,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("levelAssessment", response.json()["data"])
         assessment_response = response.json()["data"]["levelAssessment"]
         self.assertIsNotNone(assessment_response["core"])
-        self.assertIsNone(assessment_response["details"])
+        self.assertEqual(assessment_response["details"]["strength"], "이유를 덧붙여 답변했어요.")
 
     def test_session_level_assessment_drops_core_with_evidence_not_found_in_user_message(self):
         app = self._app()
@@ -4273,6 +4415,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4294,7 +4437,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "대화를 완료했어요.",
                     "summaryMessage": "답변을 이어갔어요.",
                     "levelAssessment": assessment,
                 },
@@ -4306,6 +4448,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         ):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4315,6 +4458,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         self.assertIn("Fabricated fluent answer.", messages[1]["content"])
 
     def test_assessment_excludes_non_latin_evidence_without_losing_english_turns(self):
+        """최초·재시도 모두 비라틴 발화만 미관찰 처리하고 영어 발화 평가는 보존한다."""
         for retry in (False, True):
             with self.subTest(retry=retry):
                 payload = valid_session_feedback_payload()
@@ -4328,14 +4472,15 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 fake = FakeOpenAI(contents=contents)
                 with patch("app.core.openai_client.OpenAI", return_value=fake):
                     response = make_client(self._app()).post(
-                        "/api/v1/conversation/session-level-assessment", json=payload,
+                        "/api/v1/conversation/session-level-assessment",
+                        headers={"X-Landit-Assessment-Version": "text-score-v2.0"}, json=payload,
                     )
                 self.assertEqual(response.status_code, 200)
                 actual = response.json()["data"]["levelAssessment"]
                 self.assertIsNotNone(actual)
                 for domain in actual["core"]["messages"][0]["domains"].values():
                     self.assertEqual(domain, {
-                        "level": None, "evidenceStatus": "NOT_OBSERVED",
+                        "score": None, "evidenceStatus": "NOT_OBSERVED",
                         "evidenceExcerpt": None,
                     })
                 self.assertEqual(actual["core"]["messages"][1], assessment["core"]["messages"][1])
@@ -4358,6 +4503,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
                 self.assertEqual(actual.model_dump(mode="json"), assessment)
 
     def test_assessment_excludes_only_non_latin_excerpt_domains(self):
+        """혼합 언어 발화에서 비라틴 인용 영역만 제거하고 다른 점수와 원본은 보존한다."""
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         text = "I like 피자 because it is spicy."
@@ -4371,12 +4517,13 @@ class SessionFeedbackApiTests(unittest.TestCase):
         actual = next_message_service._recover_session_level_assessment(
             {"sessionId": 100, "levelAssessment": assessment}, request, None,
         )
-        self.assertIsNone(actual.core.messages[0].domains.vocabulary.level)
-        self.assertEqual(actual.core.messages[0].domains.grammar.level, 4)
+        self.assertIsNone(actual.core.messages[0].domains.vocabulary.score)
+        self.assertEqual(actual.core.messages[0].domains.grammar.score, 70)
         self.assertIsNone(actual.details)
-        self.assertEqual(domains["vocabulary"]["level"], 3)
+        self.assertEqual(domains["vocabulary"]["score"], 50)
 
     def test_assessment_excludes_non_latin_scripts_but_keeps_source_validation(self):
+        """비라틴 문자 제외 이후에도 원문에 없는 근거는 평가 실패로 처리한다."""
         for text in ("저는 개발자예요.", "ㅈㅓㄴㅡㄴ ㅎㅏㄱㅅㅐㅇ", "我喜欢旅行。", "Я люблю путешествия."):
             payload = valid_session_feedback_payload()
             payload["assessmentMessages"] = valid_assessment_messages()
@@ -4387,11 +4534,12 @@ class SessionFeedbackApiTests(unittest.TestCase):
             request = conversation_models.SessionLevelAssessmentRequest.model_validate(payload)
             data = {"sessionId": 100, "levelAssessment": assessment}
             actual = next_message_service._recover_session_level_assessment(data, request, None)
-            self.assertIsNone(actual.core.messages[0].domains.grammar.level)
+            self.assertIsNone(actual.core.messages[0].domains.grammar.score)
             assessment["core"]["messages"][0]["domains"]["grammar"]["evidenceExcerpt"] = "없는 근거"
             self.assertIsNone(next_message_service._recover_session_level_assessment(data, request, None))
 
     def test_assessment_all_non_latin_turns_return_unobserved_core_without_retry(self):
+        """모든 발화가 비라틴 문자인 경우 재시도 없이 미관찰 core를 반환한다."""
         payload = valid_session_feedback_payload()
         payload["assessmentMessages"] = valid_assessment_messages()
         assessment = valid_level_assessment()
@@ -4402,14 +4550,15 @@ class SessionFeedbackApiTests(unittest.TestCase):
         fake = FakeOpenAI(content=json.dumps({"sessionId": 100, "levelAssessment": assessment}))
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             response = make_client(self._app()).post(
-                "/api/v1/conversation/session-level-assessment", json=payload,
+                "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"}, json=payload,
             )
         self.assertEqual(response.status_code, 200)
         actual = response.json()["data"]["levelAssessment"]
         self.assertIsNotNone(actual)
         self.assertIsNone(actual["details"])
         self.assertTrue(all(
-            domain["level"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
+            domain["score"] is None and domain["evidenceStatus"] == "NOT_OBSERVED"
             for message in actual["core"]["messages"] for domain in message["domains"].values()
         ))
         self.assertEqual(len(fake.completions.calls), 1)
@@ -4432,6 +4581,7 @@ class SessionFeedbackApiTests(unittest.TestCase):
         with patch("app.core.openai_client.OpenAI", return_value=fake_openai):
             response = make_client(app).post(
                 "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"},
                 json=payload,
             )
 
@@ -4480,9 +4630,9 @@ class SessionFeedbackApiTests(unittest.TestCase):
     def test_session_feedback_prompt_rejects_absolute_praise_for_mixed_feedback(self):
         prompt = next_message_service._session_feedback_system_prompt()
 
-        self.assertIn("NEEDS_IMPROVEMENT count is greater than 0", prompt)
+        self.assertIn("When any message needs improvement", prompt)
         self.assertIn(
-            "do not claim that every answer was natural or perfect",
+            "take strengths only from cached GOOD feedback",
             prompt,
         )
 
@@ -4534,7 +4684,6 @@ class SessionFeedbackApiTests(unittest.TestCase):
             content=json.dumps(
                 {
                     "sessionId": 100,
-                    "highlightMessage": "한국인의 23%가 놓치는 이유 연결을 챙긴 사람.",
                 },
             ),
         )

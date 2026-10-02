@@ -3,7 +3,7 @@ import re
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN = re.compile(
@@ -145,18 +145,22 @@ class SessionAssessmentMessage(BaseModel):
 class SessionAssessmentDomain(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    level: int | None = Field(default=None, strict=True, ge=1, le=5)
+    score: int | None = Field(
+        default=None, strict=True, ge=1, le=100,
+        description="Observed domain score from 1 to 100; not the learning level",
+    )
     evidenceStatus: AssessmentEvidenceStatus
     evidenceExcerpt: str | None = None
 
     @model_validator(mode="after")
-    def evidence_and_level_must_match_status(self) -> Self:
+    def evidence_and_score_must_match_status(self) -> Self:
+        """관찰 영역에는 점수와 인용을 요구하고, 미관찰 영역의 두 값은 null로 제한한다."""
         if self.evidenceStatus == AssessmentEvidenceStatus.OBSERVED:
-            if self.level is None or not self.evidenceExcerpt or not self.evidenceExcerpt.strip():
-                raise ValueError("observed domain requires level and evidenceExcerpt")
+            if self.score is None or not self.evidenceExcerpt or not self.evidenceExcerpt.strip():
+                raise ValueError("observed domain requires score and evidenceExcerpt")
             return self
-        if self.level is not None or self.evidenceExcerpt is not None:
-            raise ValueError("unobserved domain must not contain level or evidenceExcerpt")
+        if self.score is not None or self.evidenceExcerpt is not None:
+            raise ValueError("unobserved domain must not contain score or evidenceExcerpt")
         return self
 
 
@@ -201,6 +205,112 @@ class SessionLevelAssessment(BaseModel):
 
     core: SessionLevelAssessmentCore
     details: SessionLevelAssessmentDetails | None = None
+
+
+class SessionLevelAssessmentCandidate(BaseModel):
+    """LLM 응답에서 필수로 받아야 하는 수준 평가와 설명이다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    core: SessionLevelAssessmentCore
+    details: SessionLevelAssessmentDetails
+
+
+class SessionAssessmentVersion(StrEnum):
+    """요청 헤더로 선택하는 평가 척도이며 기본 HTTP 계약은 기존 5단계다."""
+
+    LEGACY = "text-level-v1.3"
+    SCORE = "text-score-v2.0"
+
+
+class LegacySessionAssessmentDomain(SessionAssessmentDomain):
+    """기존 level 필드를 받아 내부 근거 검증을 동일하게 적용한다."""
+
+    score: int | None = Field(default=None, alias="level", strict=True, ge=1, le=5)
+
+
+class LegacySessionAssessmentDomains(SessionAssessmentDomains):
+    situationPerformance: LegacySessionAssessmentDomain
+    grammar: LegacySessionAssessmentDomain
+    vocabulary: LegacySessionAssessmentDomain
+    discourse: LegacySessionAssessmentDomain
+    interactionPragmatics: LegacySessionAssessmentDomain
+
+
+class LegacySessionMessageLevelAssessment(SessionMessageLevelAssessment):
+    domains: LegacySessionAssessmentDomains
+
+
+class LegacySessionLevelAssessmentCore(SessionLevelAssessmentCore):
+    messages: list[LegacySessionMessageLevelAssessment] = Field(min_length=1)
+
+
+class LegacySessionLevelAssessment(SessionLevelAssessment):
+    core: LegacySessionLevelAssessmentCore
+
+
+class LegacySessionLevelAssessmentCandidate(SessionLevelAssessmentCandidate):
+    core: LegacySessionLevelAssessmentCore
+
+
+class SessionFeedbackMistakePattern(StrEnum):
+    """직전 대화와 비교할 수 있는 대표 문법 실수 유형이다."""
+
+    TENSE = "TENSE"
+    SUBJECT_VERB_AGREEMENT = "SUBJECT_VERB_AGREEMENT"
+    VERB_FORM = "VERB_FORM"
+    ARTICLE = "ARTICLE"
+    PLURAL = "PLURAL"
+    PRONOUN = "PRONOUN"
+    PREPOSITION = "PREPOSITION"
+    NEGATION = "NEGATION"
+    QUESTION_FORM = "QUESTION_FORM"
+
+
+class SessionFeedbackPreviousMistake(BaseModel):
+    """직전 완료 세션에서 교정된 실제 발화와 교정 근거다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    messageId: int = Field(gt=0)
+    userMessage: str = Field(min_length=1)
+    correctionExpression: str = Field(min_length=1)
+    correctionReason: str = Field(min_length=1)
+
+
+class SessionFeedbackLearnedExpression(BaseModel):
+    """실제 재사용 여부를 판정할 학습 완료 표현 후보다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expressionId: int = Field(gt=0)
+    text: str = Field(min_length=1)
+    meaning: str = Field(min_length=1)
+
+
+class SessionFeedbackGrowthCandidate(BaseModel):
+    """직전 교정과 현재 발화가 실제로 이어질 때 표시할 비교 근거다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: SessionFeedbackMistakePattern
+    previousMessageId: int = Field(gt=0)
+    previousSentence: str = Field(min_length=1)
+    previousWrongSpan: str | None = None
+    currentMessageId: int = Field(gt=0)
+    currentSentence: str = Field(min_length=1)
+    currentSpan: str | None = None
+    succeeded: bool
+
+
+class SessionFeedbackUsedExpression(BaseModel):
+    """AI가 실제로 사용했다고 판정한 학습 표현과 발화 내 근거다."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expressionId: int = Field(gt=0)
+    messageId: int = Field(gt=0)
+    matchedText: str = Field(min_length=1)
 
 
 class NextFixedQuestion(BaseModel):
@@ -644,6 +754,8 @@ class SessionFeedbackRequest(BaseModel):
     expectedMessageIds: list[int]
     assessmentMessages: list[SessionAssessmentMessage] = Field(default_factory=list)
     completedFeedbacks: list[CompletedMessageFeedback] | None = None
+    previousMistakes: list[SessionFeedbackPreviousMistake] = Field(default_factory=list)
+    learnedExpressions: list[SessionFeedbackLearnedExpression] = Field(default_factory=list)
 
     @field_validator("expectedMessageIds")
     @classmethod
@@ -673,15 +785,27 @@ class SessionFeedbackRequest(BaseModel):
             raise ValueError("assessmentMessages must match expectedMessageIds in order")
         return self
 
+    @model_validator(mode="after")
+    def supplemental_evidence_ids_must_be_unique(self) -> Self:
+        """같은 ID가 서로 다른 비교 근거로 해석되지 않도록 후보 중복을 거부한다."""
+        mistake_ids = [mistake.messageId for mistake in self.previousMistakes]
+        if len(mistake_ids) != len(set(mistake_ids)):
+            raise ValueError("previousMistakes must not contain duplicate message IDs")
+        expression_ids = [expression.expressionId for expression in self.learnedExpressions]
+        if len(expression_ids) != len(set(expression_ids)):
+            raise ValueError("learnedExpressions must not contain duplicate expression IDs")
+        return self
+
 
 class SessionFeedbackSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     sessionId: int = Field(gt=0)
-    highlightMessage: str
     summaryMessage: str
+    growthFeedback: SessionFeedbackGrowthCandidate | None = None
+    usedExpressions: list[SessionFeedbackUsedExpression] = Field(default_factory=list)
 
-    @field_validator("highlightMessage", "summaryMessage")
+    @field_validator("summaryMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
@@ -693,9 +817,16 @@ class SessionFeedbackResponse(BaseModel):
     sessionId: int = Field(gt=0)
     nativeScore: int = Field(ge=0, le=100)
     starRating: float
-    highlightMessage: str
     summaryMessage: str
     messageFeedbacks: list[MessageFeedbackData]
+    growthFeedback: SessionFeedbackGrowthCandidate | None = None
+    usedExpressions: list[SessionFeedbackUsedExpression] = Field(default_factory=list)
+
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def highlightMessage(self) -> str:
+        """구버전 BE의 필수 문구를 이미 생성한 총평으로 제공한다."""
+        return self.summaryMessage
 
     @field_validator("starRating")
     @classmethod
@@ -704,7 +835,7 @@ class SessionFeedbackResponse(BaseModel):
             raise ValueError("starRating must be one of 1.0, 1.5, 2.0, 2.5, 3.0")
         return value
 
-    @field_validator("highlightMessage", "summaryMessage")
+    @field_validator("summaryMessage")
     @classmethod
     def text_fields_must_not_be_blank(cls, value: str) -> str:
         return _validate_not_blank(value)
@@ -742,4 +873,5 @@ class SessionLevelAssessmentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessionId: int = Field(gt=0)
-    levelAssessment: SessionLevelAssessment | None = None
+    levelAssessment: LegacySessionLevelAssessment | SessionLevelAssessment | None = None
+    assessmentVersion: SessionAssessmentVersion = SessionAssessmentVersion.SCORE

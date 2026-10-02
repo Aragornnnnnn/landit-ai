@@ -120,6 +120,7 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
             self.assertEqual(service._request_json_completion(self.settings, "system", "user", 10), {})
 
     def test_output_budget_handles_multiple_messages_and_long_escaped_evidence(self):
+        """여러 발화와 긴 이스케이프 인용 및 필수 설명이 출력 예산에 들어가는지 확인한다."""
         encoding = tiktoken.get_encoding("o200k_base")
         for count in (1, 3, 10):
             for utterance in ("Please email me tomorrow.", 'I said "yes".\n서울 at 9:00. ' * 8):
@@ -139,7 +140,10 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
                         for domain in row["domains"].values():
                             domain["evidenceExcerpt"] = utterance
                         rows.append(row)
-                    data = {"sessionId": 100, "levelAssessment": {"core": {"messages": rows}}}
+                    data = {"sessionId": 100, "levelAssessment": {
+                        "core": {"messages": rows},
+                        "details": valid_level_assessment()["details"],
+                    }}
                     budget = assessment_output_budget(messages)
                     tokens = len(encoding.encode(json.dumps(data, ensure_ascii=False)))
                     self.assertLess(tokens, budget)
@@ -148,8 +152,9 @@ class AssessmentOutputBudgetTests(unittest.TestCase):
         self.assertEqual(assessment_output_budget([huge]), 16384)
 
     def test_schema_and_message_id_failures_remain_distinct_from_json_failures(self):
+        """범위 밖 점수와 메시지 ID 오류가 JSON 파싱 실패와 구별되는지 검증한다."""
         schema_invalid = deepcopy(self.valid)
-        schema_invalid["levelAssessment"]["core"]["messages"][0]["domains"]["grammar"]["level"] = 99
+        schema_invalid["levelAssessment"]["core"]["messages"][0]["domains"]["grammar"]["score"] = 101
         message_invalid = deepcopy(self.valid)
         message_invalid["levelAssessment"]["core"]["messages"][0]["messageId"] = 9999
         for value, reason in (

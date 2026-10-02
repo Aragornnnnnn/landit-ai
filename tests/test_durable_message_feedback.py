@@ -38,7 +38,7 @@ class DurableMessageFeedbackTests(unittest.TestCase):
         self.payload["assessmentMessages"] = []
 
     def _summary(self, payload):
-        with patch("app.core.openai_client.OpenAI", return_value=FakeOpenAI(content=json.dumps({"sessionId": 100, "highlightMessage": "의도를 잘 전달했어요.", "summaryMessage": "질문에 맞춰 대답했어요."}))):
+        with patch("app.core.openai_client.OpenAI", return_value=FakeOpenAI(content=json.dumps({"sessionId": 100, "summaryMessage": "질문에 맞춰 대답했어요."}))):
             return self.client.post("/api/v1/conversation/session-feedback", json=payload)
 
     def test_saved_result_survives_instance_change_and_repeated_request(self):
