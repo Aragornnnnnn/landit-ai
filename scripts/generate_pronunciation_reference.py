@@ -113,6 +113,14 @@ SYLLABLE_OVERRIDES: dict[str, list[str]] = {
     "video": ["vi", "de", "o"],
     "videos": ["vi", "de", "os"],
     "whatsoever": ["what", "so", "ev", "er"],
+    # LAN-601 시나리오 41~70 표현 검수
+    "carrier": ["car", "ri", "er"],
+    "jiyu": ["JI", "YU"],
+    "layers": ["lay", "ers"],
+    "management": ["man", "age", "ment"],
+    "simpler": ["sim", "pler"],
+    "somewhere": ["some", "where"],
+    "usb": ["U", "S", "B"],
 }
 
 # 억양 대조에서 제외한 단어. 이유:
