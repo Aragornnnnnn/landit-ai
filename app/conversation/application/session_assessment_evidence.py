@@ -3,7 +3,6 @@ import unicodedata
 
 from app.models.conversation import (
     AssessmentEvidenceStatus,
-    SessionAssessmentDomain,
     SessionAssessmentMessage,
     SessionLevelAssessmentCore,
     SessionMessageLevelAssessment,
@@ -26,7 +25,7 @@ def _filter_message_evidence(
         if domain.evidenceStatus == AssessmentEvidenceStatus.OBSERVED and (
             non_latin_answer or _has_only_non_latin_letters(domain.evidenceExcerpt or "")
         ):
-            replacements[name] = SessionAssessmentDomain(
+            replacements[name] = type(domain)(
                 evidenceStatus=AssessmentEvidenceStatus.NOT_OBSERVED,
             )
     if not replacements:

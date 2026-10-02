@@ -28,7 +28,8 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
         fake = FakeOpenAI(contents=[json.dumps(value) for value in responses])
         with patch("app.core.openai_client.OpenAI", return_value=fake):
             response = make_client(create_app(self.settings)).post(
-                "/api/v1/conversation/session-level-assessment", json=self.payload,
+                "/api/v1/conversation/session-level-assessment",
+                headers={"X-Landit-Assessment-Version": "text-score-v2.0"}, json=self.payload,
             )
         self.assertEqual(response.status_code, 200)
         return response.json()["data"]["levelAssessment"], fake.completions.calls
@@ -143,7 +144,8 @@ class AssessmentEvidenceRetryTests(unittest.TestCase):
                 core = assessment.core.model_dump(mode="json")
             else:
                 response = make_client(create_app(self.settings)).post(
-                    "/api/v1/conversation/session-level-assessment", json=self.payload,
+                    "/api/v1/conversation/session-level-assessment",
+                    headers={"X-Landit-Assessment-Version": "text-score-v2.0"}, json=self.payload,
                 )
                 self.assertEqual(response.status_code, 200)
                 core = response.json()["data"]["levelAssessment"]["core"]

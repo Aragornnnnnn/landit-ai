@@ -105,6 +105,7 @@ AI 서버 캐시에 저장된 메시지별 피드백을 `expectedMessageIds` 기
 - `nativeScore`
 - `starRating`
 - `summaryMessage`
+- `highlightMessage`: 구형 BE의 필수 필드를 유지하는 호환 문구. `summaryMessage`와 같으며 새 소비자는 사용하지 않습니다.
 - `messageFeedbacks`
 
 `summaryMessage`는 LLM이 생성합니다. `nativeScore`와 `starRating`은 LLM이 생성하지 않고 AI 서버가 deterministic하게 계산합니다. 별점 구간별 강조 문구는 AI 서버가 아니라 BE가 시나리오 문구 테이블에서 채웁니다.
@@ -140,3 +141,20 @@ AI 서버 캐시에 저장된 메시지별 피드백을 `expectedMessageIds` 기
 | 90~100 | 3.0 |
 
 세션에 발화가 3개 이상이고 `GOOD` 비율이 1/3 이하이면, 모든 발화가 개선 필요인데 높은 별점이 표시되지 않도록 `starRating`을 최대 2.0으로 제한합니다. 이 제한은 `nativeScore`를 바꾸지 않으며, 발화가 1개 또는 2개인 세션에는 적용하지 않습니다.
+
+
+## `POST /api/v1/conversation/session-level-assessment`
+
+요청 본문은 `sessionId`, `scenario`, `expectedMessageIds`, `assessmentMessages`를 받습니다. 평가 버전은 본문에 추가하지 않고 `X-Landit-Assessment-Version` 헤더로 전달합니다.
+
+| 요청 헤더 | 응답 영역 필드 | 평가 방식 |
+| --- | --- | --- |
+| 생략 또는 `text-level-v1.3` | `level`: 1~5 정수 또는 null | 기존 5단계 루브릭으로 직접 생성 |
+| `text-score-v2.0` | `score`: 1~100 정수 또는 null | 기존 100점 루브릭으로 직접 생성 |
+
+- 알려지지 않은 버전은 LLM 호출 전에 400으로 거부합니다.
+- 성공 응답 data는 `sessionId`, `levelAssessment`, 실제 `assessmentVersion`을 포함합니다.
+- 평가 척도는 최초 생성, 응답 형식 대체, 보정 재시도, 근거 필터, HTTP 직렬화까지 요청마다 보존합니다. 다른 요청의 버전에 영향을 주는 전역 설정은 없습니다.
+- 정상 평가의 모델 호출은 한 번입니다. 기존 형식 대체와 보정 재시도는 유지하며, 두 척도를 동시에 생성하거나 20배 환산하지 않습니다.
+- `OBSERVED`는 해당 척도의 정수와 원문 인용이 필요합니다. 미관찰은 값과 인용 모두 null입니다. 복구 실패 시 기존처럼 `levelAssessment=null`을 반환합니다.
+- 기본 계약은 운영 구형 BE를 위한 v1입니다. BE/AI의 호환 빌드 배포가 완료된 뒤 BE에서 v2 헤더를 활성화합니다. v2 데이터를 저장한 후 구형 BE 바이너리로 롤백하지 않고, 양쪽 척도를 읽는 호환 BE를 유지해야 합니다.

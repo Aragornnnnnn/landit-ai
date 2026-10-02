@@ -3,7 +3,7 @@ import re
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 _CORRECTION_EXPRESSION_PLACEHOLDER_PATTERN = re.compile(
@@ -214,6 +214,43 @@ class SessionLevelAssessmentCandidate(BaseModel):
 
     core: SessionLevelAssessmentCore
     details: SessionLevelAssessmentDetails
+
+
+class SessionAssessmentVersion(StrEnum):
+    """요청 헤더로 선택하는 평가 척도이며 기본 HTTP 계약은 기존 5단계다."""
+
+    LEGACY = "text-level-v1.3"
+    SCORE = "text-score-v2.0"
+
+
+class LegacySessionAssessmentDomain(SessionAssessmentDomain):
+    """기존 level 필드를 받아 내부 근거 검증을 동일하게 적용한다."""
+
+    score: int | None = Field(default=None, alias="level", strict=True, ge=1, le=5)
+
+
+class LegacySessionAssessmentDomains(SessionAssessmentDomains):
+    situationPerformance: LegacySessionAssessmentDomain
+    grammar: LegacySessionAssessmentDomain
+    vocabulary: LegacySessionAssessmentDomain
+    discourse: LegacySessionAssessmentDomain
+    interactionPragmatics: LegacySessionAssessmentDomain
+
+
+class LegacySessionMessageLevelAssessment(SessionMessageLevelAssessment):
+    domains: LegacySessionAssessmentDomains
+
+
+class LegacySessionLevelAssessmentCore(SessionLevelAssessmentCore):
+    messages: list[LegacySessionMessageLevelAssessment] = Field(min_length=1)
+
+
+class LegacySessionLevelAssessment(SessionLevelAssessment):
+    core: LegacySessionLevelAssessmentCore
+
+
+class LegacySessionLevelAssessmentCandidate(SessionLevelAssessmentCandidate):
+    core: LegacySessionLevelAssessmentCore
 
 
 class SessionFeedbackMistakePattern(StrEnum):
@@ -785,6 +822,12 @@ class SessionFeedbackResponse(BaseModel):
     growthFeedback: SessionFeedbackGrowthCandidate | None = None
     usedExpressions: list[SessionFeedbackUsedExpression] = Field(default_factory=list)
 
+    @computed_field(json_schema_extra={"deprecated": True})
+    @property
+    def highlightMessage(self) -> str:
+        """구버전 BE의 필수 문구를 이미 생성한 총평으로 제공한다."""
+        return self.summaryMessage
+
     @field_validator("starRating")
     @classmethod
     def star_rating_must_be_supported_value(cls, value: float) -> float:
@@ -830,4 +873,5 @@ class SessionLevelAssessmentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessionId: int = Field(gt=0)
-    levelAssessment: SessionLevelAssessment | None = None
+    levelAssessment: LegacySessionLevelAssessment | SessionLevelAssessment | None = None
+    assessmentVersion: SessionAssessmentVersion = SessionAssessmentVersion.SCORE
