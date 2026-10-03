@@ -111,6 +111,18 @@ _KOREAN_PARTICLE_SUFFIXES = (
     "로",
 )
 _KOREAN_VERB_SUFFIXES = ("한다고", "합니다", "한다", "했다", "해요", "하다")
+# 의문사·회상 표현·일반 진행 상태는 특정 예고 질문을 했다는 근거가 아니다.
+_FOLLOW_UP_GENERIC_TOKENS = frozenset("""
+    어떻게 어때 어땠어 어땠어요 어땠나요 됐어 됐어요 됐나요 되었어 되었어요
+    되어가 돼가 지냈어 지냈어요 지내 해봤어 해봤어요 했어 했어요 했지 한다고
+    하기로 말한 말했던 말했지 이야기 얘기 그거 그건 그것 저번 지난번 지난주
+    요즘 지금 아직 최근 오늘 내일 다시 그때 어떤 언제 무엇 누구 어디 지냈나요
+    잘 좀 혹시 궁금 준비 계획 결과 상황
+    how what when where why which who did does doing do was were have has been
+    about your you that this it last time today again going went things go
+    are is can would could should will get got feel feeling tell me remember said before lately
+""".split())
+_FOLLOW_UP_QUESTION_CLAUSES = re.compile(r"[^,.!?，。！？]*[?？]")
 # 후속 질문이 있을 때만 붙는 프롬프트 절 제목. 없을 때는 기존 프롬프트가 그대로 유지된다.
 PENDING_FOLLOW_UP_HEADING = "Pending Follow-up:"
 UNVERIFIED_FOLLOW_UP_WORKFLOW = "free_talk_follow_up_unverified"
@@ -918,10 +930,18 @@ def _follow_up_asked(
     if pending is None or not candidate.followUpAsked:
         return False
     translated = (candidate.translatedMessage or "").lower()
+    questions = _FOLLOW_UP_QUESTION_CLAUSES.findall(translated)
     tokens = _follow_up_tokens(payload)
+    # 원문 전체가 일치하면 원래 질문 안의 쉼표는 오탐 근거 분리 대상이 아니다.
+    original_question = pending.question.strip().lower()
+    exact_question = original_question.endswith(("?", "？")) and original_question in translated
     # 조사·어미가 달라도 잡히도록 토큰 일치가 아니라 어간 포함으로 본다 (제주 ⊂ 제주도는).
-    # 질문이 너무 짧아 대조할 단어가 없으면 검증할 수 없으므로 보고를 그대로 믿는다.
-    if not tokens or any(token in translated for token in tokens):
+    # 근거가 없거나 인사·평서문에만 등장한 단어는 질문 사용을 확정하지 않는다.
+    if (
+        re.search(r"[?？]", candidate.aiMessage or "")
+        and tokens
+        and (exact_question or any(token in question for token in tokens for question in questions))
+    ):
         return True
     logger.warning(
         "프리톡 후속 질문을 꺼냈다는 보고를 응답에서 확인하지 못했습니다. "
@@ -975,7 +995,7 @@ def _follow_up_tokens(payload: FreeTalkOpeningRequest | FreeTalkTurnRequest) -> 
     for memory in payload.memoryContext:
         if memory.memoryId == pending.memoryId:
             tokens |= _distinctive_memory_tokens(memory.content)
-    return tokens
+    return tokens - _FOLLOW_UP_GENERIC_TOKENS
 
 
 def _with_follow_up_memory(

@@ -641,6 +641,8 @@ class FreeTalkOpeningRequest(FreeTalkContext):
 
     @model_validator(mode="after")
     def topic_must_be_complete(self) -> Self:
+        if self.pendingFollowUp is not None and self.topic is None:
+            return self
         if (
             self.topic is None
             or self.topic.topicId is None

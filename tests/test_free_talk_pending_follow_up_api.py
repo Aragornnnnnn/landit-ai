@@ -111,6 +111,20 @@ class PendingFollowUpApiTests(unittest.TestCase):
         self.assertEqual(data["followUpId"], 501)
         self.assertEqual(data["usedMemoryIds"], [9020])
 
+    def test_opening_can_resume_a_follow_up_without_selecting_a_topic(self):
+        fake = FakeOpenAI(contents=[json.dumps(asked_opening(usedMemoryIds=[]))])
+        payload = valid_opening_payload() | {
+            "topic": None,
+            "pendingFollowUp": pending_follow_up(memoryId=None),
+        }
+
+        response = self._post(OPENING_PATH, payload, fake)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["followUpId"], 501)
+        self.assertTrue(response.json()["data"]["followUpAsked"])
+
+
     def test_asked_follow_up_counts_its_memory_as_used_even_when_the_model_omits_it(self):
         fake = FakeOpenAI(contents=[json.dumps(asked_turn(usedMemoryIds=[]))])
         payload = valid_turn_payload(
@@ -217,7 +231,7 @@ class PendingFollowUpApiTests(unittest.TestCase):
 
                 self.assertEqual(len(fake.completions.calls), 1)
 
-    def test_question_too_short_to_verify_trusts_the_report_without_repair(self):
+    def test_question_without_identifiable_evidence_is_not_marked_asked(self):
         fake = FakeOpenAI(contents=[json.dumps(NOT_ASKED_TURN)])
         payload = valid_turn_payload(
             pendingFollowUp=pending_follow_up(memoryId=None, question="왜?"),
@@ -225,8 +239,83 @@ class PendingFollowUpApiTests(unittest.TestCase):
 
         data = self._post(TURN_PATH, payload, fake).json()["data"]
 
+        self.assertFalse(data["followUpAsked"])
+        self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_english_generic_question_does_not_confirm_a_follow_up(self):
+        completion = asked_turn(
+            aiMessage="Hey! How is your day going?",
+            translatedMessage="Hey! How is your day going?",
+        )
+        fake = FakeOpenAI(contents=[json.dumps(completion)])
+        payload = valid_turn_payload(
+            baseLocale="EN",
+            pendingFollowUp=pending_follow_up(memoryId=None, question="How did it go?"),
+        )
+
+        data = self._post(TURN_PATH, payload, fake).json()["data"]
+
+        self.assertFalse(data["followUpAsked"])
+        self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_generic_words_or_topic_in_greeting_do_not_confirm_the_question(self):
+        replies = [
+            ("Hey! How are you doing today?", "안녕! 오늘은 어떻게 지냈어?"),
+            ("I remember your interview. How are you?", "면접 얘기 기억나. 오늘은 어떻게 지냈어?"),
+            ("I remember your interview, how are you?", "면접 얘기 기억나, 오늘은 어떻게 지냈어?"),
+            ("I remember your interview, how are you?", "면접 얘기 기억나， 오늘은 어떻게 지냈어？"),
+            ("Hey! Tell me about your interview.", "안녕! 면접 이야기 들려줘."),
+        ]
+        for path in (OPENING_PATH, TURN_PATH):
+            for ai_message, translated in replies:
+                with self.subTest(path=path, reply=ai_message):
+                    completion = (asked_opening if path == OPENING_PATH else asked_turn)(
+                        aiMessage=ai_message, translatedMessage=translated, usedMemoryIds=[],
+                    )
+                    fake = FakeOpenAI(contents=[json.dumps(completion)])
+                    payload = (valid_opening_payload() | {"topic": None}
+                               if path == OPENING_PATH else valid_turn_payload())
+                    payload["pendingFollowUp"] = pending_follow_up(memoryId=None)
+
+                    data = self._post(path, payload, fake).json()["data"]
+
+                    self.assertFalse(data["followUpAsked"])
+                    self.assertEqual(data["usedMemoryIds"], [])
+                    self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_generic_opening_is_repaired_to_the_actual_follow_up(self):
+        unrelated = asked_opening(
+            aiMessage="Hey! How are you doing today?",
+            translatedMessage="안녕! 오늘은 어떻게 지냈어?",
+        )
+        fake = FakeOpenAI(contents=[json.dumps(unrelated), json.dumps(asked_opening())])
+        payload = valid_opening_payload() | {
+            "topic": None, "pendingFollowUp": pending_follow_up(memoryId=None),
+        }
+
+        data = self._post(OPENING_PATH, payload, fake).json()["data"]
+
         self.assertTrue(data["followUpAsked"])
-        self.assertEqual(len(fake.completions.calls), 1)
+        self.assertIn("interview", data["aiMessage"])
+        self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_topic_before_comma_is_repaired_to_a_question_after_comma(self):
+        """쉼표 앞 단서의 오탐은 재생성하고 뒤 질문의 실제 단서는 인정한다."""
+        unrelated = asked_opening(
+            aiMessage="I remember your interview, how are you today?",
+            translatedMessage="면접 얘기 기억나, 오늘은 어떻게 지냈어?",
+        )
+        fake = FakeOpenAI(contents=[json.dumps(unrelated), json.dumps(asked_opening())])
+        payload = valid_opening_payload() | {
+            "topic": None, "pendingFollowUp": pending_follow_up(memoryId=None),
+        }
+
+        data = self._post(OPENING_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertEqual(data["followUpId"], 501)
+        self.assertEqual(data["translatedMessage"], asked_opening()["translatedMessage"])
+        self.assertEqual(len(fake.completions.calls), 2)
 
     def test_ask_is_verified_even_when_particles_and_endings_differ(self):
         # 실제 호출 사례: 질문은 "제주도 … 어땠어?", 번역문은 "제주도는 어땠어요?"
