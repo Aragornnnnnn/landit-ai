@@ -122,7 +122,7 @@ _FOLLOW_UP_GENERIC_TOKENS = frozenset("""
     about your you that this it last time today again going went things go
     are is can would could should will get got feel feeling tell me remember said before lately
 """.split())
-_FOLLOW_UP_QUESTION_CLAUSES = re.compile(r"[^.!?。！？]*[?？]")
+_FOLLOW_UP_QUESTION_CLAUSES = re.compile(r"[^,.!?，。！？]*[?？]")
 # 후속 질문이 있을 때만 붙는 프롬프트 절 제목. 없을 때는 기존 프롬프트가 그대로 유지된다.
 PENDING_FOLLOW_UP_HEADING = "Pending Follow-up:"
 UNVERIFIED_FOLLOW_UP_WORKFLOW = "free_talk_follow_up_unverified"
@@ -929,15 +929,18 @@ def _follow_up_asked(
     pending = payload.pendingFollowUp
     if pending is None or not candidate.followUpAsked:
         return False
-    questions = _FOLLOW_UP_QUESTION_CLAUSES.findall(
-        (candidate.translatedMessage or "").lower(),
-    )
+    translated = (candidate.translatedMessage or "").lower()
+    questions = _FOLLOW_UP_QUESTION_CLAUSES.findall(translated)
     tokens = _follow_up_tokens(payload)
+    # 원문 전체가 일치하면 원래 질문 안의 쉼표는 오탐 근거 분리 대상이 아니다.
+    original_question = pending.question.strip().lower()
+    exact_question = original_question.endswith(("?", "？")) and original_question in translated
     # 조사·어미가 달라도 잡히도록 토큰 일치가 아니라 어간 포함으로 본다 (제주 ⊂ 제주도는).
     # 근거가 없거나 인사·평서문에만 등장한 단어는 질문 사용을 확정하지 않는다.
     if (
         re.search(r"[?？]", candidate.aiMessage or "")
-        and any(token in question for token in tokens for question in questions)
+        and tokens
+        and (exact_question or any(token in question for token in tokens for question in questions))
     ):
         return True
     logger.warning(

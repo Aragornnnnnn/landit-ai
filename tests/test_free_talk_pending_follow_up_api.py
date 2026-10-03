@@ -262,6 +262,8 @@ class PendingFollowUpApiTests(unittest.TestCase):
         replies = [
             ("Hey! How are you doing today?", "안녕! 오늘은 어떻게 지냈어?"),
             ("I remember your interview. How are you?", "면접 얘기 기억나. 오늘은 어떻게 지냈어?"),
+            ("I remember your interview, how are you?", "면접 얘기 기억나, 오늘은 어떻게 지냈어?"),
+            ("I remember your interview, how are you?", "면접 얘기 기억나， 오늘은 어떻게 지냈어？"),
             ("Hey! Tell me about your interview.", "안녕! 면접 이야기 들려줘."),
         ]
         for path in (OPENING_PATH, TURN_PATH):
@@ -295,6 +297,24 @@ class PendingFollowUpApiTests(unittest.TestCase):
 
         self.assertTrue(data["followUpAsked"])
         self.assertIn("interview", data["aiMessage"])
+        self.assertEqual(len(fake.completions.calls), 2)
+
+    def test_topic_before_comma_is_repaired_to_a_question_after_comma(self):
+        """쉼표 앞 단서의 오탐은 재생성하고 뒤 질문의 실제 단서는 인정한다."""
+        unrelated = asked_opening(
+            aiMessage="I remember your interview, how are you today?",
+            translatedMessage="면접 얘기 기억나, 오늘은 어떻게 지냈어?",
+        )
+        fake = FakeOpenAI(contents=[json.dumps(unrelated), json.dumps(asked_opening())])
+        payload = valid_opening_payload() | {
+            "topic": None, "pendingFollowUp": pending_follow_up(memoryId=None),
+        }
+
+        data = self._post(OPENING_PATH, payload, fake).json()["data"]
+
+        self.assertTrue(data["followUpAsked"])
+        self.assertEqual(data["followUpId"], 501)
+        self.assertEqual(data["translatedMessage"], asked_opening()["translatedMessage"])
         self.assertEqual(len(fake.completions.calls), 2)
 
     def test_ask_is_verified_even_when_particles_and_endings_differ(self):
